@@ -291,7 +291,7 @@ void GaussianSplatting::initRtPipeline()
 //--------------------------------------------------------------------------------------------------
 // Ray Tracing the scene
 //
-void GaussianSplatting::raytrace(const VkCommandBuffer& cmdBuf, bool meshDepthOnly)
+void GaussianSplatting::raytrace(const VkCommandBuffer& cmdBuf, bool meshDepthOnly, glm::ivec2 viewportOffset, glm::ivec2 viewportSize)
 {
   NVVK_DBG_SCOPE(cmdBuf);
 
@@ -299,12 +299,17 @@ void GaussianSplatting::raytrace(const VkCommandBuffer& cmdBuf, bool meshDepthOn
 
   auto timerSection = m_profilerGpuTimer.cmdFrameSection(cmdBuf, name);
 
+  // Use provided viewport size or fall back to full viewport
+  const uint32_t traceWidth  = (viewportSize.x > 0) ? static_cast<uint32_t>(viewportSize.x) : static_cast<uint32_t>(m_viewSize.x);
+  const uint32_t traceHeight = (viewportSize.y > 0) ? static_cast<uint32_t>(viewportSize.y) : static_cast<uint32_t>(m_viewSize.y);
+
   // Initializing push constant values
   m_pcRay.modelMatrix        = m_splatSetVk.transform;
   m_pcRay.modelMatrixInverse = m_splatSetVk.transformInverse;
   // cast to mat3 extracts only the rot/scale part of the transform
   m_pcRay.modelMatrixRotScaleInverse = glm::inverse(glm::mat3(m_splatSetVk.transform));
   m_pcRay.meshDepthOnly              = meshDepthOnly;
+  m_pcRay.viewportOffset             = viewportOffset;
 
   std::vector<VkDescriptorSet> descSets{m_descriptorSet, m_rtDescriptorSet};
   vkCmdBindPipeline(cmdBuf, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, m_rtPipeline);
@@ -321,7 +326,7 @@ void GaussianSplatting::raytrace(const VkCommandBuffer& cmdBuf, bool meshDepthOn
 
 
   vkCmdTraceRaysKHR(cmdBuf, &m_sbtRegions.raygen, &m_sbtRegions.miss, &m_sbtRegions.hit, &m_sbtRegions.callable,
-                    uint32_t(m_viewSize[0]), uint32_t(m_viewSize[1]), 1);
+                    traceWidth, traceHeight, 1);
 }
 
 

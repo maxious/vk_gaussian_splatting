@@ -1041,6 +1041,18 @@ void GaussianSplattingUI::guiDrawRendererProperties()
 
   PE::end();
 
+  PE::begin("## SBS Stereo");
+  PE::Checkbox("Enable SBS Stereo", &m_renderSBS, "Render side-by-side stereo for VR headsets");
+  ImGui::BeginDisabled(!m_renderSBS);
+  float ipdMM = m_stereoSeparation * 1000.0f;
+  if(PE::SliderFloat("IPD (mm)", &ipdMM, 50.0f, 73.0f, "%.1f", 0,
+                     "Inter-pupillary distance (eye separation). Default is 63mm."))
+  {
+    m_stereoSeparation = ipdMM / 1000.0f;
+  }
+  ImGui::EndDisabled();
+  PE::end();
+
   ImGuiTabBarFlags tab_bar_flags = ImGuiTabBarFlags_None;
   if(ImGui::BeginTabBar("##SpecificsBar", tab_bar_flags))
   {

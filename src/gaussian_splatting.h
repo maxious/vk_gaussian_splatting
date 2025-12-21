@@ -179,6 +179,8 @@ private:
 
   // Updates frame information uniform buffer and frame camera info
   void updateAndUploadFrameInfoUBO(VkCommandBuffer cmd, const uint32_t splatCount);
+  void updateAndUploadFrameInfoUBO(VkCommandBuffer cmd, const uint32_t splatCount, const glm::mat4& view,
+                                   const glm::mat4& proj, const glm::vec3& eye, const glm::vec2& viewport);
 
   void tryConsumeAndUploadCpuSortingResult(VkCommandBuffer cmd, const uint32_t splatCount);
 
@@ -206,7 +208,8 @@ private:
   void initRtDescriptorSet();
   void updateRtDescriptorSet();
   void initRtPipeline();
-  void raytrace(const VkCommandBuffer& cmdBuf, bool meshDepthOnly = false);
+  void raytrace(const VkCommandBuffer& cmdBuf, bool meshDepthOnly = false,
+                glm::ivec2 viewportOffset = {0, 0}, glm::ivec2 viewportSize = {0, 0});
 
   //////////////
   // Post processing
@@ -259,6 +262,10 @@ protected:
   bool m_requestUpdateLightsBuffer = false;
   // trigger the deletion of the selected mesh object
   bool m_requestDeleteSelectedMesh = false;
+
+  // SBS Stereo
+  bool  m_renderSBS        = false;
+  float m_stereoSeparation = 0.063f;  // 63mm default IPD
 
   nvapp::Application*         m_app{nullptr};
   nvutils::ProfilerManager*   m_profilerManager;

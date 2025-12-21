@@ -59,6 +59,9 @@ void main()
 
   uint2 launchID   = DispatchRaysIndex().xy;
   uint2 launchSize = DispatchRaysDimensions().xy;
+  
+  // Output pixel position includes viewport offset for SBS stereo rendering
+  uint2 outputPixel = launchID + uint2(pcRay.viewportOffset);
 
   // generate the ray for this pixel
 #if CAMERA_TYPE == CAMERA_PINHOLE
@@ -66,7 +69,7 @@ void main()
 #else
   if(!generateFisheyeRay(launchID, float2(launchSize), frameInfo.fovRad, float2(0.0), frameInfo.viewInverse, rayOrigin, rayDirection))
   {
-    image[launchID] = float4(0.0, 0.0, 0.0, 1.0);
+    image[outputPixel] = float4(0.0, 0.0, 0.0, 1.0);
     return;
   }
 #endif
@@ -106,9 +109,9 @@ void main()
 #if HYBRID_ENABLED
   float4 pixel;
   if(frameInfo.frameSampleId <= 0)  // no temporal or first frame
-    pixel = image[launchID];
+    pixel = image[outputPixel];
   else
-    pixel = imageAux[launchID];
+    pixel = imageAux[outputPixel];
   radiance      = pixel.xyz;
   transmittance = float3(1.0 - pixel.w);
 #endif
@@ -189,12 +192,12 @@ void main()
       {
         const float4 clip = mul(mul(float4(meshHitWorldPos, 1.0), frameInfo.viewMatrix), frameInfo.projectionMatrix);
         const float3 ndc  = clip.xyz / clip.w;
-        depthBuffer[launchID] = ndc.z;
+        depthBuffer[outputPixel] = ndc.z;
         // clear image buffer
         if(frameInfo.frameSampleId <= 0)  // < 0 means temporal sampling off, 0 means first frame
-          image[launchID] = float4(0.0, 0.0, 0.0, 1.0);
+          image[outputPixel] = float4(0.0, 0.0, 0.0, 1.0);
         else
-          imageAux[launchID] = float4(0.0, 0.0, 0.0, 1.0);
+          imageAux[outputPixel] = float4(0.0, 0.0, 0.0, 1.0);
         return;
       }
       //
@@ -204,12 +207,12 @@ void main()
     else if(pcRay.meshDepthOnly)
     {
       // Early return if meshDepthOnly pre-pass
-      depthBuffer[launchID] = 1.0;
+      depthBuffer[outputPixel] = 1.0;
       // clear image buffer
       if(frameInfo.frameSampleId <= 0)  // < 0 means temporal sampling off, 0 means first frame
-        image[launchID] = float4(0.0, 0.0, 0.0, 1.0);
+        image[outputPixel] = float4(0.0, 0.0, 0.0, 1.0);
       else
-        imageAux[launchID] = float4(0.0, 0.0, 0.0, 1.0);
+        imageAux[outputPixel] = float4(0.0, 0.0, 0.0, 1.0);
       return;
     }
 #endif
@@ -372,9 +375,9 @@ void main()
   if(meshHit)
   {
     if(frameInfo.frameSampleId <= 0)  // < 0 means temporal sampling off, 0 means first frame
-      image[launchID] = float4(fragRadiance, 1.0);
+      image[outputPixel] = float4(fragRadiance, 1.0);
     else
-      imageAux[launchID] = float4(fragRadiance, 1.0);
+      imageAux[outputPixel] = float4(fragRadiance, 1.0);
   }
   return;
 #else
@@ -382,7 +385,7 @@ void main()
   {
     // Do accumulation over time
     const float  a        = 1.0F / float(frameInfo.frameSampleId + 1);
-    const float4 oldColor = image[launchID];
+    const float4 oldColor = image[outputPixel];
     fragRadiance          = lerp(oldColor, float4(fragRadiance, 1.0), a).xyz;
   }
 #endif
@@ -390,5 +393,5 @@ void main()
 
 // depending on previous build conditions this code might become unreachable (which is normal)
 #pragma warning(disable: 41000)  // Disable warning warning 41000: unreachable code detected
-  image[launchID] = float4(fragRadiance, 1.0);
+  image[outputPixel] = float4(fragRadiance, 1.0);
 }

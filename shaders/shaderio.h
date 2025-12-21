@@ -237,6 +237,8 @@ struct PushConstantRay
   uint64_t indexAddress;   // Address of the index buffer
   // set to true will raytrace the mesh depth as a pre-pass
   bool meshDepthOnly;
+  // viewport offset for SBS stereo rendering
+  int2 viewportOffset DEFAULT(int2(0, 0));
 };
 
 #ifdef __cplusplus
