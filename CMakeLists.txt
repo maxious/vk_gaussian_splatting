@@ -100,7 +100,8 @@ include_directories(
   ${CMAKE_CURRENT_SOURCE_DIR}/shaders 
   ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/miniply
   ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/vrdx
-  ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/spz/src/cc)
+  ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/spz/src/cc
+  ${CMAKE_CURRENT_SOURCE_DIR}/nvpro_core2/third_party/meshoptimizer/src)
 
 #####################################################################################
 # Executable
@@ -140,6 +141,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
   nvpro2::nvgpu_monitor
   vk_radix_sort
   spz::spz
+  meshoptimizer
 )
 
 # OpenXR linkage
