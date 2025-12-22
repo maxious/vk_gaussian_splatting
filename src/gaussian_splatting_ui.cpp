@@ -1045,11 +1045,17 @@ void GaussianSplattingUI::guiDrawRendererProperties()
   PE::Checkbox("Enable SBS Stereo", &m_renderSBS, "Render side-by-side stereo for VR headsets");
   ImGui::BeginDisabled(!m_renderSBS);
   float ipdMM = m_stereoSeparation * 1000.0f;
-  if(PE::SliderFloat("IPD (mm)", &ipdMM, 50.0f, 73.0f, "%.1f", 0,
+  if(PE::SliderFloat("IPD (mm)", &ipdMM, 50.0f, 80.0f, "%.1f", 0,
                      "Inter-pupillary distance (eye separation). Default is 63mm."))
   {
     m_stereoSeparation = ipdMM / 1000.0f;
   }
+  PE::SliderFloat("Convergence (m)", &m_stereoConvergence, 0.1f, 10.0f, "%.2f", 0,
+                  "Distance where stereo images overlap perfectly (zero parallax). "
+                  "Set closer for near objects, farther for distant scenes.");
+  PE::Checkbox("Off-Axis Projection", &m_stereoOffAxisProj,
+               "Use asymmetric frustum projection for proper stereo convergence. "
+               "Reduces eye strain and improves depth perception at the convergence distance.");
   ImGui::EndDisabled();
   PE::end();
 

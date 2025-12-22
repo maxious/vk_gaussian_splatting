@@ -264,8 +264,10 @@ protected:
   bool m_requestDeleteSelectedMesh = false;
 
   // SBS Stereo
-  bool  m_renderSBS        = false;
-  float m_stereoSeparation = 0.063f;  // 63mm default IPD
+  bool  m_renderSBS           = false;
+  float m_stereoSeparation    = 0.063f;  // 63mm default IPD (in meters)
+  float m_stereoConvergence   = 1.0f;    // Convergence distance in meters (where stereo images overlap)
+  bool  m_stereoOffAxisProj   = true;    // Use off-axis (asymmetric) frustum projection
 
   nvapp::Application*         m_app{nullptr};
   nvutils::ProfilerManager*   m_profilerManager;

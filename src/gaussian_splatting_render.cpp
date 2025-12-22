@@ -21,6 +21,35 @@
 
 namespace vk_gaussian_splatting {
 
+// Helper function to create an off-axis (asymmetric) stereo projection matrix
+// This produces proper stereo with zero parallax at the convergence distance
+// eyeOffset: positive for right eye, negative for left eye
+static glm::mat4 makeOffAxisStereoProjection(float fovYRad, float aspect, float nearZ, float farZ, float eyeOffset, float convergenceDist)
+{
+  const float top    = nearZ * tanf(fovYRad * 0.5f);
+  const float bottom = -top;
+  const float width  = top * aspect;
+
+  // Shift the frustum based on eye offset and convergence distance
+  // At convergence distance, both eyes see the same point at screen center
+  const float frustumShift = (eyeOffset * nearZ) / convergenceDist;
+
+  const float left  = -width + frustumShift;
+  const float right = width + frustumShift;
+
+  // Build asymmetric frustum projection matrix (Vulkan-style with Y flip)
+  glm::mat4 proj(0.0f);
+  proj[0][0] = (2.0f * nearZ) / (right - left);
+  proj[1][1] = -(2.0f * nearZ) / (top - bottom);  // Y flip for Vulkan
+  proj[2][0] = (right + left) / (right - left);
+  proj[2][1] = (top + bottom) / (top - bottom);
+  proj[2][2] = farZ / (nearZ - farZ);
+  proj[2][3] = -1.0f;
+  proj[3][2] = (nearZ * farZ) / (nearZ - farZ);
+
+  return proj;
+}
+
 void GaussianSplatting::onRender(VkCommandBuffer cmd)
 {
   NVVK_DBG_SCOPE(cmd);
@@ -67,20 +96,39 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
 
       const glm::vec3 rightDir = glm::vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]);
 
-      glm::mat4 stereoProj = glm::perspective(fovRad, halfAspect, clipPlanes.x, clipPlanes.y);
-      stereoProj[1][1] *= -1;
-
       const uint32_t halfWidth = static_cast<uint32_t>(m_viewSize.x) / 2;
       const uint32_t height    = static_cast<uint32_t>(m_viewSize.y);
 
+      // Left eye
       glm::vec3 leftEye  = m_eye - (rightDir * halfSeparation);
       glm::mat4 leftView = glm::lookAt(leftEye, m_center, m_up);
-      updateAndUploadFrameInfoUBO(cmd, splatCount, leftView, stereoProj, leftEye, glm::vec2(halfWidth, height));
+      glm::mat4 leftProj;
+      if(m_stereoOffAxisProj)
+      {
+        leftProj = makeOffAxisStereoProjection(fovRad, halfAspect, clipPlanes.x, clipPlanes.y, -halfSeparation, m_stereoConvergence);
+      }
+      else
+      {
+        leftProj = glm::perspective(fovRad, halfAspect, clipPlanes.x, clipPlanes.y);
+        leftProj[1][1] *= -1;
+      }
+      updateAndUploadFrameInfoUBO(cmd, splatCount, leftView, leftProj, leftEye, glm::vec2(halfWidth, height));
       raytrace(cmd, false, glm::ivec2(0, 0), glm::ivec2(halfWidth, height));
 
+      // Right eye
       glm::vec3 rightEye  = m_eye + (rightDir * halfSeparation);
       glm::mat4 rightView = glm::lookAt(rightEye, m_center, m_up);
-      updateAndUploadFrameInfoUBO(cmd, splatCount, rightView, stereoProj, rightEye, glm::vec2(halfWidth, height));
+      glm::mat4 rightProj;
+      if(m_stereoOffAxisProj)
+      {
+        rightProj = makeOffAxisStereoProjection(fovRad, halfAspect, clipPlanes.x, clipPlanes.y, halfSeparation, m_stereoConvergence);
+      }
+      else
+      {
+        rightProj = glm::perspective(fovRad, halfAspect, clipPlanes.x, clipPlanes.y);
+        rightProj[1][1] *= -1;
+      }
+      updateAndUploadFrameInfoUBO(cmd, splatCount, rightView, rightProj, rightEye, glm::vec2(halfWidth, height));
       raytrace(cmd, false, glm::ivec2(halfWidth, 0), glm::ivec2(halfWidth, height));
     }
     else
@@ -129,25 +177,40 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
 
     const glm::vec3 rightDir = glm::vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]);
 
-    glm::mat4 stereoProj = glm::perspective(fovRad, halfAspect, clipPlanes.x, clipPlanes.y);
-    stereoProj[1][1] *= -1;
-
     const float    halfWidth    = float(m_viewSize.x) * 0.5f;
     const uint32_t halfWidthInt = static_cast<uint32_t>(halfWidth);
     const uint32_t heightInt    = static_cast<uint32_t>(m_viewSize.y);
 
+    // Left eye
     StereoView left;
-    left.eye      = m_eye - (rightDir * halfSeparation);
-    left.view     = glm::lookAt(left.eye, m_center, m_up);
-    left.proj     = stereoProj;
+    left.eye  = m_eye - (rightDir * halfSeparation);
+    left.view = glm::lookAt(left.eye, m_center, m_up);
+    if(m_stereoOffAxisProj)
+    {
+      left.proj = makeOffAxisStereoProjection(fovRad, halfAspect, clipPlanes.x, clipPlanes.y, -halfSeparation, m_stereoConvergence);
+    }
+    else
+    {
+      left.proj = glm::perspective(fovRad, halfAspect, clipPlanes.x, clipPlanes.y);
+      left.proj[1][1] *= -1;
+    }
     left.viewport = {0.0f, 0.0f, halfWidth, float(m_viewSize.y), 0.0f, 1.0f};
     left.scissor  = {{0, 0}, {halfWidthInt, heightInt}};
     views.push_back(left);
 
+    // Right eye
     StereoView right;
-    right.eye      = m_eye + (rightDir * halfSeparation);
-    right.view     = glm::lookAt(right.eye, m_center, m_up);
-    right.proj     = stereoProj;
+    right.eye  = m_eye + (rightDir * halfSeparation);
+    right.view = glm::lookAt(right.eye, m_center, m_up);
+    if(m_stereoOffAxisProj)
+    {
+      right.proj = makeOffAxisStereoProjection(fovRad, halfAspect, clipPlanes.x, clipPlanes.y, halfSeparation, m_stereoConvergence);
+    }
+    else
+    {
+      right.proj = glm::perspective(fovRad, halfAspect, clipPlanes.x, clipPlanes.y);
+      right.proj[1][1] *= -1;
+    }
     right.viewport = {halfWidth, 0.0f, halfWidth, float(m_viewSize.y), 0.0f, 1.0f};
     right.scissor  = {{static_cast<int32_t>(halfWidth), 0}, {halfWidthInt, heightInt}};
     views.push_back(right);
