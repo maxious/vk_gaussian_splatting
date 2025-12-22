@@ -136,6 +136,23 @@ int main(int argc, char** argv)
     vkSetup.deviceExtensions.emplace_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
   }
 
+#ifdef WITH_OPENXR
+  // Query OpenXR required Vulkan extensions before creating Vulkan context
+  // Store extension strings in static vectors to keep pointers valid
+  static std::vector<std::string> xrInstanceExts, xrDeviceExts;
+  if(gaussianSplatting->queryOpenXrVulkanExtensions(xrInstanceExts, xrDeviceExts))
+  {
+    for(const auto& ext : xrInstanceExts)
+    {
+      vkSetup.instanceExtensions.emplace_back(ext.c_str());
+    }
+    for(const auto& ext : xrDeviceExts)
+    {
+      vkSetup.deviceExtensions.emplace_back(ext.c_str(), nullptr, false);
+    }
+  }
+#endif
+
   // Setting up the validation layers
   nvvk::ValidationSettings vvlInfo{};
   // vvlInfo.validate_best_practices = true;

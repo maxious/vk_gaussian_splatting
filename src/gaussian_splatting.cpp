@@ -185,6 +185,29 @@ void GaussianSplatting::onResize(VkCommandBuffer cmd, const VkExtent2D& viewport
 void GaussianSplatting::onPreRender()
 {
   m_profilerTimeline->frameAdvance();
+
+#ifdef WITH_OPENXR
+  // Check if XR requires GBuffer resize (must happen before command buffer recording)
+  if(m_xrInitialized && m_xr && m_xr->isValid())
+  {
+    VkExtent2D xrExtent = m_xr->getFullExtent();
+    if(xrExtent.width > 0 && xrExtent.height > 0
+       && (m_viewSize.x != xrExtent.width || m_viewSize.y != xrExtent.height))
+    {
+      // Wait for GPU to finish all work before resizing
+      vkDeviceWaitIdle(m_device);
+
+      // Create a temporary command buffer for the resize operation
+      VkCommandBuffer cmd = m_app->createTempCmdBuffer();
+      m_viewSize = glm::vec2(xrExtent.width, xrExtent.height);
+      NVVK_CHECK(m_gBuffers.update(cmd, xrExtent));
+      updateRtDescriptorSet();
+      updateDescriptorSetPostProcessing();
+      resetFrameCounter();
+      m_app->submitAndWaitTempCmdBuffer(cmd);
+    }
+  }
+#endif
 }
 
 void GaussianSplatting::deinitAll()
@@ -278,9 +301,22 @@ void GaussianSplatting::benchmarkAdvance()
 }
 
 #ifdef WITH_OPENXR
+bool GaussianSplatting::queryOpenXrVulkanExtensions(std::vector<std::string>& outInstanceExtensions,
+                                                     std::vector<std::string>& outDeviceExtensions)
+{
+  if(!m_xr)
+  {
+    m_xr = std::make_unique<GsOpenXr>();
+  }
+  return m_xr->queryRequiredVulkanExtensions(outInstanceExtensions, outDeviceExtensions);
+}
+
 void GaussianSplatting::initializeOpenXR()
 {
-  m_xr = std::make_unique<GsOpenXr>();
+  if(!m_xr)
+  {
+    m_xr = std::make_unique<GsOpenXr>();
+  }
 
   if(!m_xr->initialize(m_app->getInstance(), m_app->getPhysicalDevice(), m_app->getDevice(),
                        m_app->getQueue(0).familyIndex, 0, m_colorFormat, m_depthFormat))
@@ -356,13 +392,15 @@ void GaussianSplatting::copyToXrSwapchain(VkCommandBuffer cmd)
   }
 
   // Transition source images to transfer src layout
+  // Note: Ray tracing uses VK_IMAGE_LAYOUT_GENERAL, rasterization uses COLOR_ATTACHMENT_OPTIMAL
+  // We use GENERAL as the source layout since RTX path uses it
   {
     VkImageMemoryBarrier barriers[2] = {};
 
     barriers[0].sType                           = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    barriers[0].srcAccessMask                   = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    barriers[0].srcAccessMask                   = VK_ACCESS_SHADER_WRITE_BIT;
     barriers[0].dstAccessMask                   = VK_ACCESS_TRANSFER_READ_BIT;
-    barriers[0].oldLayout                       = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    barriers[0].oldLayout                       = VK_IMAGE_LAYOUT_GENERAL;
     barriers[0].newLayout                       = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
     barriers[0].image                           = srcColorImage;
     barriers[0].subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
@@ -372,9 +410,9 @@ void GaussianSplatting::copyToXrSwapchain(VkCommandBuffer cmd)
     barriers[0].subresourceRange.layerCount     = 1;
 
     barriers[1].sType                           = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    barriers[1].srcAccessMask                   = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    barriers[1].srcAccessMask                   = VK_ACCESS_SHADER_WRITE_BIT;
     barriers[1].dstAccessMask                   = VK_ACCESS_TRANSFER_READ_BIT;
-    barriers[1].oldLayout                       = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    barriers[1].oldLayout                       = VK_IMAGE_LAYOUT_GENERAL;
     barriers[1].newLayout                       = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
     barriers[1].image                           = srcDepthImage;
     barriers[1].subresourceRange.aspectMask     = VK_IMAGE_ASPECT_DEPTH_BIT;
@@ -383,7 +421,7 @@ void GaussianSplatting::copyToXrSwapchain(VkCommandBuffer cmd)
     barriers[1].subresourceRange.baseArrayLayer = 0;
     barriers[1].subresourceRange.layerCount     = 1;
 
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
                          VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 2, barriers);
   }
 
@@ -458,15 +496,15 @@ void GaussianSplatting::copyToXrSwapchain(VkCommandBuffer cmd)
                          0, nullptr, 0, nullptr, 2, barriers);
   }
 
-  // Transition source images back to attachment optimal
+  // Transition source images back to GENERAL layout for next frame's ray tracing
   {
     VkImageMemoryBarrier barriers[2] = {};
 
     barriers[0].sType                           = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
     barriers[0].srcAccessMask                   = VK_ACCESS_TRANSFER_READ_BIT;
-    barriers[0].dstAccessMask                   = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    barriers[0].dstAccessMask                   = VK_ACCESS_SHADER_WRITE_BIT;
     barriers[0].oldLayout                       = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-    barriers[0].newLayout                       = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    barriers[0].newLayout                       = VK_IMAGE_LAYOUT_GENERAL;
     barriers[0].image                           = srcColorImage;
     barriers[0].subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
     barriers[0].subresourceRange.baseMipLevel   = 0;
@@ -476,9 +514,9 @@ void GaussianSplatting::copyToXrSwapchain(VkCommandBuffer cmd)
 
     barriers[1].sType                           = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
     barriers[1].srcAccessMask                   = VK_ACCESS_TRANSFER_READ_BIT;
-    barriers[1].dstAccessMask                   = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    barriers[1].dstAccessMask                   = VK_ACCESS_SHADER_WRITE_BIT;
     barriers[1].oldLayout                       = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-    barriers[1].newLayout                       = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    barriers[1].newLayout                       = VK_IMAGE_LAYOUT_GENERAL;
     barriers[1].image                           = srcDepthImage;
     barriers[1].subresourceRange.aspectMask     = VK_IMAGE_ASPECT_DEPTH_BIT;
     barriers[1].subresourceRange.baseMipLevel   = 0;
@@ -487,7 +525,7 @@ void GaussianSplatting::copyToXrSwapchain(VkCommandBuffer cmd)
     barriers[1].subresourceRange.layerCount     = 1;
 
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, 0,
+                         VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, 0,
                          0, nullptr, 0, nullptr, 2, barriers);
   }
 }

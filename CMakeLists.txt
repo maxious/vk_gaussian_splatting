@@ -15,6 +15,13 @@ endif()
 set(PROJECT_NAME "vk_gaussian_splatting")
 Project(${PROJECT_NAME} LANGUAGES C CXX)
 
+# Enable PDB generation for all build types on MSVC
+if(MSVC)
+  set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /Zi")
+  set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} /Zi")
+  set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} /DEBUG /OPT:REF /OPT:ICF")
+endif()
+
 # Add the cmake folder to the module path
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 

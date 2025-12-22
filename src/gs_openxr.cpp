@@ -27,6 +27,7 @@
 #include <thread>
 #include <chrono>
 #include <cmath>
+#include <sstream>
 
 namespace vk_gaussian_splatting {
 
@@ -106,7 +107,7 @@ void GsOpenXr::shutdown()
 
 std::vector<const char*> GsOpenXr::getRequiredInstanceExtensions() const
 {
-  return {"XR_KHR_vulkan_enable2"};
+  return {"XR_KHR_vulkan_enable"};
 }
 
 std::vector<const char*> GsOpenXr::getRequiredDeviceExtensions() const
@@ -124,13 +125,17 @@ bool GsOpenXr::initialize(VkInstance       vkInstance,
 {
   m_device = device;
 
-  if(!createInstance())
-    return false;
+  // If instance not created yet (queryRequiredVulkanExtensions not called), create it now
+  if(m_instance == XR_NULL_HANDLE)
+  {
+    if(!createInstance())
+      return false;
 
-  loadXrFunctions();
+    loadXrFunctions();
 
-  if(!getSystem())
-    return false;
+    if(!getSystem())
+      return false;
+  }
 
   if(!createSession(vkInstance, physicalDevice, device, graphicsQueueFamilyIndex, graphicsQueueIndex))
     return false;
@@ -147,7 +152,7 @@ bool GsOpenXr::initialize(VkInstance       vkInstance,
 
 bool GsOpenXr::createInstance()
 {
-  std::vector<const char*> extensions = {"XR_KHR_vulkan_enable2"};
+  std::vector<const char*> extensions = {"XR_KHR_vulkan_enable"};
 
   XrInstanceCreateInfo createInfo{XR_TYPE_INSTANCE_CREATE_INFO};
   strcpy_s(createInfo.applicationInfo.applicationName, "vk_gaussian_splatting");
@@ -176,14 +181,82 @@ bool GsOpenXr::createInstance()
 
 void GsOpenXr::loadXrFunctions()
 {
-  xrGetInstanceProcAddr(m_instance, "xrGetVulkanGraphicsRequirements2KHR",
-                        (PFN_xrVoidFunction*)&m_xrGetVulkanGraphicsRequirements2KHR);
-  xrGetInstanceProcAddr(m_instance, "xrGetVulkanGraphicsDevice2KHR",
-                        (PFN_xrVoidFunction*)&m_xrGetVulkanGraphicsDevice2KHR);
-  xrGetInstanceProcAddr(m_instance, "xrCreateVulkanInstanceKHR",
-                        (PFN_xrVoidFunction*)&m_xrCreateVulkanInstanceKHR);
-  xrGetInstanceProcAddr(m_instance, "xrCreateVulkanDeviceKHR",
-                        (PFN_xrVoidFunction*)&m_xrCreateVulkanDeviceKHR);
+  xrGetInstanceProcAddr(m_instance, "xrGetVulkanGraphicsRequirementsKHR",
+                        (PFN_xrVoidFunction*)&m_xrGetVulkanGraphicsRequirementsKHR);
+  xrGetInstanceProcAddr(m_instance, "xrGetVulkanGraphicsDeviceKHR",
+                        (PFN_xrVoidFunction*)&m_xrGetVulkanGraphicsDeviceKHR);
+  xrGetInstanceProcAddr(m_instance, "xrGetVulkanInstanceExtensionsKHR",
+                        (PFN_xrVoidFunction*)&m_xrGetVulkanInstanceExtensionsKHR);
+  xrGetInstanceProcAddr(m_instance, "xrGetVulkanDeviceExtensionsKHR",
+                        (PFN_xrVoidFunction*)&m_xrGetVulkanDeviceExtensionsKHR);
+}
+
+bool GsOpenXr::queryRequiredVulkanExtensions(std::vector<std::string>& outInstanceExtensions,
+                                              std::vector<std::string>& outDeviceExtensions)
+{
+  outInstanceExtensions.clear();
+  outDeviceExtensions.clear();
+
+  // Create temporary OpenXR instance to query extensions
+  if(!createInstance())
+    return false;
+
+  loadXrFunctions();
+
+  if(!getSystem())
+  {
+    xrDestroyInstance(m_instance);
+    m_instance = XR_NULL_HANDLE;
+    return false;
+  }
+
+  // Query required Vulkan instance extensions
+  if(m_xrGetVulkanInstanceExtensionsKHR)
+  {
+    uint32_t bufferSize = 0;
+    m_xrGetVulkanInstanceExtensionsKHR(m_instance, m_systemId, 0, &bufferSize, nullptr);
+    if(bufferSize > 0)
+    {
+      std::string extensions(bufferSize, '\0');
+      m_xrGetVulkanInstanceExtensionsKHR(m_instance, m_systemId, bufferSize, &bufferSize, extensions.data());
+      
+      // Parse space-separated extension names
+      std::istringstream iss(extensions);
+      std::string ext;
+      while(iss >> ext)
+      {
+        if(!ext.empty())
+          outInstanceExtensions.push_back(ext);
+      }
+      LOGI("OpenXR requires %zu Vulkan instance extensions\n", outInstanceExtensions.size());
+    }
+  }
+
+  // Query required Vulkan device extensions
+  if(m_xrGetVulkanDeviceExtensionsKHR)
+  {
+    uint32_t bufferSize = 0;
+    m_xrGetVulkanDeviceExtensionsKHR(m_instance, m_systemId, 0, &bufferSize, nullptr);
+    if(bufferSize > 0)
+    {
+      std::string extensions(bufferSize, '\0');
+      m_xrGetVulkanDeviceExtensionsKHR(m_instance, m_systemId, bufferSize, &bufferSize, extensions.data());
+      
+      // Parse space-separated extension names
+      std::istringstream iss(extensions);
+      std::string ext;
+      while(iss >> ext)
+      {
+        if(!ext.empty())
+          outDeviceExtensions.push_back(ext);
+      }
+      LOGI("OpenXR requires %zu Vulkan device extensions\n", outDeviceExtensions.size());
+    }
+  }
+
+  // Keep the instance alive for later use - don't destroy it
+  // The systemId is also kept for session creation
+  return true;
 }
 
 bool GsOpenXr::getSystem()
@@ -253,12 +326,43 @@ bool GsOpenXr::createSession(VkInstance       vkInstance,
                              uint32_t         graphicsQueueFamilyIndex,
                              uint32_t         graphicsQueueIndex)
 {
-  // Check graphics requirements
-  XrGraphicsRequirementsVulkan2KHR graphicsRequirements{XR_TYPE_GRAPHICS_REQUIREMENTS_VULKAN2_KHR};
-  XR_CHECK(m_xrGetVulkanGraphicsRequirements2KHR(m_instance, m_systemId, &graphicsRequirements),
-           "Failed to get Vulkan graphics requirements");
+  // Ensure function pointers are loaded
+  if(!m_xrGetVulkanGraphicsRequirementsKHR || !m_xrGetVulkanGraphicsDeviceKHR)
+  {
+    LOGE("OpenXR Vulkan extension functions not loaded\n");
+    return false;
+  }
 
-  // Create session with Vulkan binding
+  // Check graphics requirements (using v1 extension) - MUST be called before xrCreateSession
+  XrGraphicsRequirementsVulkanKHR graphicsRequirements{XR_TYPE_GRAPHICS_REQUIREMENTS_VULKAN_KHR};
+  XR_CHECK(m_xrGetVulkanGraphicsRequirementsKHR(m_instance, m_systemId, &graphicsRequirements),
+           "Failed to get Vulkan graphics requirements");
+  LOGI("OpenXR Vulkan requirements: minApiVersion=%d.%d.%d, maxApiVersion=%d.%d.%d\n",
+       VK_API_VERSION_MAJOR(graphicsRequirements.minApiVersionSupported),
+       VK_API_VERSION_MINOR(graphicsRequirements.minApiVersionSupported),
+       VK_API_VERSION_PATCH(graphicsRequirements.minApiVersionSupported),
+       VK_API_VERSION_MAJOR(graphicsRequirements.maxApiVersionSupported),
+       VK_API_VERSION_MINOR(graphicsRequirements.maxApiVersionSupported),
+       VK_API_VERSION_PATCH(graphicsRequirements.maxApiVersionSupported));
+
+  // Get the physical device OpenXR wants - MUST be called before xrCreateSession
+  VkPhysicalDevice xrPhysicalDevice = VK_NULL_HANDLE;
+  XR_CHECK(m_xrGetVulkanGraphicsDeviceKHR(m_instance, m_systemId, vkInstance, &xrPhysicalDevice),
+           "Failed to get Vulkan graphics device from OpenXR");
+  LOGI("OpenXR xrGetVulkanGraphicsDeviceKHR called successfully\n");
+
+  if(xrPhysicalDevice != physicalDevice)
+  {
+    LOGE("OpenXR runtime expects a DIFFERENT physical device! App: %p, XR: %p\n",
+         (void*)physicalDevice, (void*)xrPhysicalDevice);
+    LOGE("This will likely cause VK_ERROR_DEVICE_LOST. The app must use the XR-provided GPU.\n");
+  }
+  else
+  {
+    LOGI("Physical device matches OpenXR requirement: %p\n", (void*)physicalDevice);
+  }
+
+  // Create session with Vulkan binding (using v1 structure)
   XrGraphicsBindingVulkanKHR graphicsBinding{XR_TYPE_GRAPHICS_BINDING_VULKAN_KHR};
   graphicsBinding.instance         = vkInstance;
   graphicsBinding.physicalDevice   = physicalDevice;
@@ -272,7 +376,7 @@ bool GsOpenXr::createSession(VkInstance       vkInstance,
 
   XR_CHECK(xrCreateSession(m_instance, &sessionCreateInfo, &m_session), "Failed to create XR session");
 
-  // Wait for session to be ready
+  // Wait for session to be ready - xrBeginSession will be called in handleSessionStateChange
   LOGI("Waiting for XR session to become ready...\n");
   while(m_sessionState != XR_SESSION_STATE_READY)
   {
@@ -282,15 +386,22 @@ bool GsOpenXr::createSession(VkInstance       vkInstance,
       LOGE("XR session lost during initialization\n");
       return false;
     }
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
 
-  // Begin session
-  XrSessionBeginInfo sessionBeginInfo{XR_TYPE_SESSION_BEGIN_INFO};
-  sessionBeginInfo.primaryViewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
-  XR_CHECK(xrBeginSession(m_session, &sessionBeginInfo), "Failed to begin XR session");
+  // Note: xrBeginSession is now called in handleSessionStateChange when we receive READY state
+  // Wait a bit more for the session to actually start
+  while(!m_sessionRunning)
+  {
+    pollEvents();
+    if(m_sessionState == XR_SESSION_STATE_LOSS_PENDING || m_sessionState == XR_SESSION_STATE_EXITING)
+    {
+      LOGE("XR session lost during initialization\n");
+      return false;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
 
-  m_sessionRunning = true;
   LOGI("XR session started\n");
   return true;
 }
@@ -420,9 +531,22 @@ void GsOpenXr::handleSessionStateChange(const XrEventDataSessionStateChanged& ev
 
   switch(m_sessionState)
   {
-    case XR_SESSION_STATE_READY:
+    case XR_SESSION_STATE_READY: {
       LOGI("XR session state: READY\n");
+      // Begin session when we receive READY state
+      XrSessionBeginInfo sessionBeginInfo{XR_TYPE_SESSION_BEGIN_INFO};
+      sessionBeginInfo.primaryViewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
+      XrResult result = xrBeginSession(m_session, &sessionBeginInfo);
+      if(XR_FAILED(result))
+      {
+        LOGE("Failed to begin XR session (result=%d)\n", (int)result);
+      }
+      else
+      {
+        m_sessionRunning = true;
+      }
       break;
+    }
     case XR_SESSION_STATE_SYNCHRONIZED:
       LOGI("XR session state: SYNCHRONIZED\n");
       break;
@@ -455,12 +579,21 @@ void GsOpenXr::handleSessionStateChange(const XrEventDataSessionStateChanged& ev
   }
 }
 
-bool GsOpenXr::beginFrame()
+GsOpenXr::BeginFrameResult GsOpenXr::beginFrame()
 {
   pollEvents();
 
   if(!m_sessionRunning)
-    return false;
+    return BeginFrameResult::SkipFully;
+
+  // Only proceed with frame if session is in an active state
+  // READY and SYNCHRONIZED mean we should wait but not render
+  // VISIBLE and FOCUSED mean we should render
+  if(m_sessionState != XR_SESSION_STATE_READY && m_sessionState != XR_SESSION_STATE_SYNCHRONIZED
+     && m_sessionState != XR_SESSION_STATE_VISIBLE && m_sessionState != XR_SESSION_STATE_FOCUSED)
+  {
+    return BeginFrameResult::SkipFully;
+  }
 
   XrFrameWaitInfo frameWaitInfo{XR_TYPE_FRAME_WAIT_INFO};
   XrFrameState    frameState{XR_TYPE_FRAME_STATE};
@@ -469,7 +602,7 @@ bool GsOpenXr::beginFrame()
   if(XR_FAILED(result))
   {
     LOGE("xrWaitFrame failed (result=%d)\n", (int)result);
-    return false;
+    return BeginFrameResult::SkipFully;
   }
 
   m_predictedDisplayTime = frameState.predictedDisplayTime;
@@ -480,11 +613,14 @@ bool GsOpenXr::beginFrame()
   if(XR_FAILED(result))
   {
     LOGE("xrBeginFrame failed (result=%d)\n", (int)result);
-    return false;
+    return BeginFrameResult::SkipFully;
   }
 
   m_swapchainImageState = SwapchainImageState::UNTOUCHED;
-  return m_shouldRender;
+  
+  // After calling xrBeginFrame, we MUST call xrEndFrame
+  // Return SkipRender if shouldRender is false (but caller must still call endFrame)
+  return m_shouldRender ? BeginFrameResult::RenderFully : BeginFrameResult::SkipRender;
 }
 
 void GsOpenXr::locateViews(float nearZ, float farZ)

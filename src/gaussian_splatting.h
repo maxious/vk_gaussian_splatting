@@ -112,6 +112,12 @@ public:
   // invoked by parameter sequencer
   void benchmarkAdvance();
 
+#ifdef WITH_OPENXR
+  // Query OpenXR required Vulkan extensions (call before Vulkan context creation)
+  bool queryOpenXrVulkanExtensions(std::vector<std::string>& outInstanceExtensions,
+                                   std::vector<std::string>& outDeviceExtensions);
+#endif
+
 public:
   // Camera manipulator
   // public so that it can be accessed by main

@@ -43,6 +43,7 @@
 #include <array>
 #include <vector>
 #include <optional>
+#include <string>
 
 namespace vk_gaussian_splatting {
 
@@ -62,11 +63,16 @@ public:
   GsOpenXr();
   ~GsOpenXr();
 
-  // Must be called before initialize() to get required Vulkan extensions
+  // Phase 1: Query required Vulkan extensions from OpenXR (call before creating Vulkan instance)
+  // Returns true if OpenXR is available, fills outInstanceExtensions and outDeviceExtensions
+  bool queryRequiredVulkanExtensions(std::vector<std::string>& outInstanceExtensions,
+                                     std::vector<std::string>& outDeviceExtensions);
+
+  // Legacy: Returns OpenXR extension names (not Vulkan extensions)
   std::vector<const char*> getRequiredInstanceExtensions() const;
   std::vector<const char*> getRequiredDeviceExtensions() const;
 
-  // Initialize OpenXR with existing Vulkan resources
+  // Phase 2: Initialize OpenXR with existing Vulkan resources
   bool initialize(VkInstance     vkInstance,
                   VkPhysicalDevice physicalDevice,
                   VkDevice       device,
@@ -81,9 +87,16 @@ public:
   VkExtent2D getPerEyeExtent() const { return m_perEyeExtent; }
   VkExtent2D getFullExtent() const { return m_fullExtent; }  // 2 * perEye.width x perEye.height
 
+  // Begin frame result
+  enum class BeginFrameResult
+  {
+    RenderFully,  // Render and submit frame
+    SkipRender,   // Don't render, but still call endFrame
+    SkipFully     // Session not ready, don't call endFrame
+  };
+
   // Frame lifecycle
-  // Returns false if frame should not be rendered (e.g., headset not visible)
-  bool beginFrame();
+  BeginFrameResult beginFrame();
   
   // Locate views - call after beginFrame()
   void locateViews(float nearZ, float farZ);
@@ -150,11 +163,11 @@ private:
   // Cached Vulkan handles
   VkDevice m_device = VK_NULL_HANDLE;
 
-  // Function pointers for Vulkan-OpenXR interop
-  PFN_xrGetVulkanGraphicsRequirements2KHR   m_xrGetVulkanGraphicsRequirements2KHR   = nullptr;
-  PFN_xrGetVulkanGraphicsDevice2KHR         m_xrGetVulkanGraphicsDevice2KHR         = nullptr;
-  PFN_xrCreateVulkanInstanceKHR             m_xrCreateVulkanInstanceKHR             = nullptr;
-  PFN_xrCreateVulkanDeviceKHR               m_xrCreateVulkanDeviceKHR               = nullptr;
+  // Function pointers for Vulkan-OpenXR interop (v1 extension - XR_KHR_vulkan_enable)
+  PFN_xrGetVulkanGraphicsRequirementsKHR  m_xrGetVulkanGraphicsRequirementsKHR  = nullptr;
+  PFN_xrGetVulkanGraphicsDeviceKHR        m_xrGetVulkanGraphicsDeviceKHR        = nullptr;
+  PFN_xrGetVulkanInstanceExtensionsKHR    m_xrGetVulkanInstanceExtensionsKHR    = nullptr;
+  PFN_xrGetVulkanDeviceExtensionsKHR      m_xrGetVulkanDeviceExtensionsKHR      = nullptr;
 
   // Helper methods
   bool createInstance();

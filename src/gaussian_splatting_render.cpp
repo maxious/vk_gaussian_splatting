@@ -58,25 +58,30 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
 #ifdef WITH_OPENXR
   // Handle OpenXR frame lifecycle
   bool xrFrameActive = false;
+  bool xrShouldRender = false;
   if(m_xrInitialized && m_xr && m_xr->isValid())
   {
-    if(!m_xr->beginFrame())
+    GsOpenXr::BeginFrameResult frameResult = m_xr->beginFrame();
+    
+    if(frameResult == GsOpenXr::BeginFrameResult::SkipFully)
     {
-      // XR says don't render this frame (headset not visible, etc.)
-      // Still process update requests and return
+      // Session not ready, skip everything
       processUpdateRequests();
       return;
     }
+    
     xrFrameActive = true;
-
-    // Get XR extent and resize if needed
-    VkExtent2D xrExtent = m_xr->getFullExtent();
-    if(m_viewSize.x != xrExtent.width || m_viewSize.y != xrExtent.height)
+    xrShouldRender = (frameResult == GsOpenXr::BeginFrameResult::RenderFully);
+    
+    if(!xrShouldRender)
     {
-      // Need to resize our GBuffers to match XR resolution
-      // This will be handled by the application's resize mechanism
-      m_viewSize = glm::vec2(xrExtent.width, xrExtent.height);
+      // Must still call endFrame even when not rendering
+      processUpdateRequests();
+      m_xr->endFrame();
+      return;
     }
+
+    // GBuffer resize is now handled in onPreRender() before command recording
 
     // Acquire XR swapchain images
     if(!m_xr->acquireSwapchainImages(m_xrColorImage, m_xrDepthImage))

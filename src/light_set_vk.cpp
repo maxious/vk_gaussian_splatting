@@ -44,7 +44,11 @@ void LightSetVk::init(nvapp::Application* app, nvvk::ResourceAllocator* alloc, n
 // free the vulkan buffer and clear the light set
 void LightSetVk::deinit()
 {
+  if(!m_alloc)
+    return;
+
   m_alloc->destroyBuffer(lightsBuffer);
+  m_alloc = nullptr;
   // reset default light
   numLights = 1;
   lights[0] = shaderio::LightSource();
