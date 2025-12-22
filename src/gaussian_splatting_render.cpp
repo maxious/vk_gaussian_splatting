@@ -73,13 +73,13 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
       const uint32_t halfWidth = static_cast<uint32_t>(m_viewSize.x) / 2;
       const uint32_t height    = static_cast<uint32_t>(m_viewSize.y);
 
-      glm::mat4 leftView = glm::translate(glm::mat4(1.0f), glm::vec3(halfSeparation, 0.0f, 0.0f)) * viewMatrix;
       glm::vec3 leftEye  = m_eye - (rightDir * halfSeparation);
+      glm::mat4 leftView = glm::lookAt(leftEye, m_center, m_up);
       updateAndUploadFrameInfoUBO(cmd, splatCount, leftView, stereoProj, leftEye, glm::vec2(halfWidth, height));
       raytrace(cmd, false, glm::ivec2(0, 0), glm::ivec2(halfWidth, height));
 
-      glm::mat4 rightView = glm::translate(glm::mat4(1.0f), glm::vec3(-halfSeparation, 0.0f, 0.0f)) * viewMatrix;
       glm::vec3 rightEye  = m_eye + (rightDir * halfSeparation);
+      glm::mat4 rightView = glm::lookAt(rightEye, m_center, m_up);
       updateAndUploadFrameInfoUBO(cmd, splatCount, rightView, stereoProj, rightEye, glm::vec2(halfWidth, height));
       raytrace(cmd, false, glm::ivec2(halfWidth, 0), glm::ivec2(halfWidth, height));
     }
@@ -137,16 +137,16 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
     const uint32_t heightInt    = static_cast<uint32_t>(m_viewSize.y);
 
     StereoView left;
-    left.view     = glm::translate(glm::mat4(1.0f), glm::vec3(halfSeparation, 0.0f, 0.0f)) * viewMatrix;
     left.eye      = m_eye - (rightDir * halfSeparation);
+    left.view     = glm::lookAt(left.eye, m_center, m_up);
     left.proj     = stereoProj;
     left.viewport = {0.0f, 0.0f, halfWidth, float(m_viewSize.y), 0.0f, 1.0f};
     left.scissor  = {{0, 0}, {halfWidthInt, heightInt}};
     views.push_back(left);
 
     StereoView right;
-    right.view     = glm::translate(glm::mat4(1.0f), glm::vec3(-halfSeparation, 0.0f, 0.0f)) * viewMatrix;
     right.eye      = m_eye + (rightDir * halfSeparation);
+    right.view     = glm::lookAt(right.eye, m_center, m_up);
     right.proj     = stereoProj;
     right.viewport = {halfWidth, 0.0f, halfWidth, float(m_viewSize.y), 0.0f, 1.0f};
     right.scissor  = {{static_cast<int32_t>(halfWidth), 0}, {halfWidthInt, heightInt}};
@@ -196,17 +196,54 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
                                     VK_IMAGE_LAYOUT_GENERAL,
                                     {VK_IMAGE_ASPECT_DEPTH_BIT, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS}});
 
+  // Clear the full framebuffer once before the view loop (for SBS stereo or mono)
+  // This ensures both eye regions are properly cleared
+  {
+    VkRenderingAttachmentInfo colorAttachment = DEFAULT_VkRenderingAttachmentInfo;
+    colorAttachment.imageView                 = m_gBuffers.getColorImageView(colorBufferId);
+    colorAttachment.loadOp                    = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    colorAttachment.clearValue                = {m_clearColor};
+
+    VkRenderingAttachmentInfo depthAttachment = DEFAULT_VkRenderingAttachmentInfo;
+    depthAttachment.imageView                 = m_gBuffers.getDepthImageView();
+    depthAttachment.loadOp                    = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    depthAttachment.clearValue                = {.depthStencil = DEFAULT_VkClearDepthStencilValue};
+
+    VkRenderingInfo clearRenderingInfo      = DEFAULT_VkRenderingInfo;
+    clearRenderingInfo.renderArea           = {{0, 0}, {static_cast<uint32_t>(m_viewSize.x), static_cast<uint32_t>(m_viewSize.y)}};
+    clearRenderingInfo.colorAttachmentCount = 1;
+    clearRenderingInfo.pColorAttachments    = &colorAttachment;
+    clearRenderingInfo.pDepthAttachment     = &depthAttachment;
+
+    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getColorImage(colorBufferId), VK_IMAGE_LAYOUT_GENERAL,
+                                      VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL});
+    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getDepthImage(),
+                                      VK_IMAGE_LAYOUT_GENERAL,
+                                      VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                                      {VK_IMAGE_ASPECT_DEPTH_BIT, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS}});
+
+    vkCmdBeginRendering(cmd, &clearRenderingInfo);
+    vkCmdEndRendering(cmd);
+
+    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getColorImage(colorBufferId),
+                                      VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL});
+    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getDepthImage(),
+                                      VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                                      VK_IMAGE_LAYOUT_GENERAL,
+                                      {VK_IMAGE_ASPECT_DEPTH_BIT, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS}});
+  }
+
   // RENDER LOOP FOR VIEWS
   for(size_t viewIndex = 0; viewIndex < views.size(); ++viewIndex)
   {
-    const auto& view    = views[viewIndex];
-    const bool  isFirst = (viewIndex == 0);
+    const auto& view = views[viewIndex];
 
     updateAndUploadFrameInfoUBO(cmd, splatCount, view.view, view.proj, view.eye, {view.viewport.width, view.viewport.height});
 
     if(raytraceMeshDepth)
     {
-      raytrace(cmd, true);
+      raytrace(cmd, true, glm::ivec2(view.viewport.x, view.viewport.y),
+               glm::ivec2(view.viewport.width, view.viewport.height));
     }
 
     // Drawing the primitives in the G-Buffer
@@ -215,29 +252,14 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
 
       VkRenderingAttachmentInfo colorAttachment = DEFAULT_VkRenderingAttachmentInfo;
       colorAttachment.imageView                 = m_gBuffers.getColorImageView(colorBufferId);
-      colorAttachment.loadOp                    = isFirst ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
-      if(isFirst)
-      {
-        colorAttachment.clearValue = {m_clearColor};
-      }
+      colorAttachment.loadOp                    = VK_ATTACHMENT_LOAD_OP_LOAD;
 
       VkRenderingAttachmentInfo depthAttachment = DEFAULT_VkRenderingAttachmentInfo;
       depthAttachment.imageView                 = m_gBuffers.getDepthImageView();
-      if(raytraceMeshDepth)
-      {
-        depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
-      }
-      else
-      {
-        depthAttachment.loadOp = isFirst ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
-        if(isFirst)
-        {
-          depthAttachment.clearValue = {.depthStencil = DEFAULT_VkClearDepthStencilValue};
-        }
-      }
+      depthAttachment.loadOp                    = VK_ATTACHMENT_LOAD_OP_LOAD;
 
       VkRenderingInfo renderingInfo      = DEFAULT_VkRenderingInfo;
-      renderingInfo.renderArea           = DEFAULT_VkRect2D(m_gBuffers.getSize());
+      renderingInfo.renderArea           = {{0, 0}, {static_cast<uint32_t>(m_viewSize.x), static_cast<uint32_t>(m_viewSize.y)}};
       renderingInfo.colorAttachmentCount = 1;
       renderingInfo.pColorAttachments    = &colorAttachment;
       renderingInfo.pDepthAttachment     = &depthAttachment;
@@ -279,7 +301,8 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
     if(m_shaders.valid && splatCount && m_splatSetVk.rtxValid && !m_meshSetVk.instances.empty()
        && (prmSelectedPipeline == PIPELINE_HYBRID || prmSelectedPipeline == PIPELINE_HYBRID_3DGUT))
     {
-      raytrace(cmd);
+      raytrace(cmd, false, glm::ivec2(view.viewport.x, view.viewport.y),
+               glm::ivec2(view.viewport.width, view.viewport.height));
     }
   }  // End View Loop
 
