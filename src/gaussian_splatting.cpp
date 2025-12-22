@@ -124,10 +124,22 @@ void GaussianSplatting::onAttach(nvapp::Application* app)
   m_splatSetVk.init(m_app, &m_alloc, &m_uploader, &m_sampler, &m_physicalDeviceInfo, &m_accelStructProps);
   m_meshSetVk.init(m_app, &m_alloc, &m_uploader, &m_accelStructProps);
   m_cameraSet.init(cameraManip.get());
+
+#ifdef WITH_OPENXR
+  // Initialize OpenXR if enabled
+  if(m_useXrHmd)
+  {
+    initializeOpenXR();
+  }
+#endif
 };
 
 void GaussianSplatting::onDetach()
 {
+#ifdef WITH_OPENXR
+  shutdownOpenXR();
+#endif
+
   // stops the threads
   m_plyLoader.shutdown();
   m_cpuSorter.shutdown();
@@ -245,6 +257,222 @@ void GaussianSplatting::benchmarkAdvance()
 
   m_benchmarkId++;
 }
+
+#ifdef WITH_OPENXR
+void GaussianSplatting::initializeOpenXR()
+{
+  m_xr = std::make_unique<GsOpenXr>();
+
+  if(!m_xr->initialize(m_app->getInstance(), m_app->getPhysicalDevice(), m_app->getDevice(),
+                       m_app->getQueue(0).familyIndex, 0, m_colorFormat, m_depthFormat))
+  {
+    LOGE("Failed to initialize OpenXR\n");
+    m_xr.reset();
+    m_xrInitialized = false;
+    m_useXrHmd      = false;
+    return;
+  }
+
+  m_xrInitialized = true;
+
+  // Get the XR resolution and resize our buffers to match
+  VkExtent2D xrExtent = m_xr->getFullExtent();
+  LOGI("OpenXR initialized. Full extent: %dx%d\n", xrExtent.width, xrExtent.height);
+
+  // Force SBS mode when XR is enabled
+  m_renderSBS = true;
+}
+
+void GaussianSplatting::shutdownOpenXR()
+{
+  if(m_xr)
+  {
+    m_xr->shutdown();
+    m_xr.reset();
+  }
+  m_xrInitialized = false;
+}
+
+void GaussianSplatting::copyToXrSwapchain(VkCommandBuffer cmd)
+{
+  if(!m_xrInitialized || !m_xr || m_xrColorImage == VK_NULL_HANDLE)
+    return;
+
+  // Get the source image (our rendered GBuffer)
+  VkImage srcColorImage = m_gBuffers.getColorImage(COLOR_MAIN);
+  VkImage srcDepthImage = m_gBuffers.getDepthImage();
+
+  VkExtent2D extent = m_xr->getFullExtent();
+
+  // Transition XR images to transfer dst layout
+  {
+    VkImageMemoryBarrier barriers[2] = {};
+
+    barriers[0].sType                           = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barriers[0].srcAccessMask                   = 0;
+    barriers[0].dstAccessMask                   = VK_ACCESS_TRANSFER_WRITE_BIT;
+    barriers[0].oldLayout                       = VK_IMAGE_LAYOUT_UNDEFINED;
+    barriers[0].newLayout                       = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    barriers[0].image                           = m_xrColorImage;
+    barriers[0].subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+    barriers[0].subresourceRange.baseMipLevel   = 0;
+    barriers[0].subresourceRange.levelCount     = 1;
+    barriers[0].subresourceRange.baseArrayLayer = 0;
+    barriers[0].subresourceRange.layerCount     = 1;
+
+    barriers[1].sType                           = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barriers[1].srcAccessMask                   = 0;
+    barriers[1].dstAccessMask                   = VK_ACCESS_TRANSFER_WRITE_BIT;
+    barriers[1].oldLayout                       = VK_IMAGE_LAYOUT_UNDEFINED;
+    barriers[1].newLayout                       = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    barriers[1].image                           = m_xrDepthImage;
+    barriers[1].subresourceRange.aspectMask     = VK_IMAGE_ASPECT_DEPTH_BIT;
+    barriers[1].subresourceRange.baseMipLevel   = 0;
+    barriers[1].subresourceRange.levelCount     = 1;
+    barriers[1].subresourceRange.baseArrayLayer = 0;
+    barriers[1].subresourceRange.layerCount     = 1;
+
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
+                         nullptr, 2, barriers);
+  }
+
+  // Transition source images to transfer src layout
+  {
+    VkImageMemoryBarrier barriers[2] = {};
+
+    barriers[0].sType                           = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barriers[0].srcAccessMask                   = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    barriers[0].dstAccessMask                   = VK_ACCESS_TRANSFER_READ_BIT;
+    barriers[0].oldLayout                       = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    barriers[0].newLayout                       = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    barriers[0].image                           = srcColorImage;
+    barriers[0].subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+    barriers[0].subresourceRange.baseMipLevel   = 0;
+    barriers[0].subresourceRange.levelCount     = 1;
+    barriers[0].subresourceRange.baseArrayLayer = 0;
+    barriers[0].subresourceRange.layerCount     = 1;
+
+    barriers[1].sType                           = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barriers[1].srcAccessMask                   = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    barriers[1].dstAccessMask                   = VK_ACCESS_TRANSFER_READ_BIT;
+    barriers[1].oldLayout                       = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    barriers[1].newLayout                       = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    barriers[1].image                           = srcDepthImage;
+    barriers[1].subresourceRange.aspectMask     = VK_IMAGE_ASPECT_DEPTH_BIT;
+    barriers[1].subresourceRange.baseMipLevel   = 0;
+    barriers[1].subresourceRange.levelCount     = 1;
+    barriers[1].subresourceRange.baseArrayLayer = 0;
+    barriers[1].subresourceRange.layerCount     = 1;
+
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 2, barriers);
+  }
+
+  // Copy color image
+  {
+    VkImageCopy region            = {};
+    region.srcSubresource.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.srcSubresource.mipLevel       = 0;
+    region.srcSubresource.baseArrayLayer = 0;
+    region.srcSubresource.layerCount     = 1;
+    region.srcOffset                     = {0, 0, 0};
+    region.dstSubresource.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.dstSubresource.mipLevel       = 0;
+    region.dstSubresource.baseArrayLayer = 0;
+    region.dstSubresource.layerCount     = 1;
+    region.dstOffset                     = {0, 0, 0};
+    region.extent                        = {extent.width, extent.height, 1};
+
+    vkCmdCopyImage(cmd, srcColorImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, m_xrColorImage,
+                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+  }
+
+  // Copy depth image
+  {
+    VkImageCopy region            = {};
+    region.srcSubresource.aspectMask     = VK_IMAGE_ASPECT_DEPTH_BIT;
+    region.srcSubresource.mipLevel       = 0;
+    region.srcSubresource.baseArrayLayer = 0;
+    region.srcSubresource.layerCount     = 1;
+    region.srcOffset                     = {0, 0, 0};
+    region.dstSubresource.aspectMask     = VK_IMAGE_ASPECT_DEPTH_BIT;
+    region.dstSubresource.mipLevel       = 0;
+    region.dstSubresource.baseArrayLayer = 0;
+    region.dstSubresource.layerCount     = 1;
+    region.dstOffset                     = {0, 0, 0};
+    region.extent                        = {extent.width, extent.height, 1};
+
+    vkCmdCopyImage(cmd, srcDepthImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, m_xrDepthImage,
+                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+  }
+
+  // Transition XR images to attachment optimal for the compositor
+  {
+    VkImageMemoryBarrier barriers[2] = {};
+
+    barriers[0].sType                           = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barriers[0].srcAccessMask                   = VK_ACCESS_TRANSFER_WRITE_BIT;
+    barriers[0].dstAccessMask                   = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT;
+    barriers[0].oldLayout                       = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    barriers[0].newLayout                       = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    barriers[0].image                           = m_xrColorImage;
+    barriers[0].subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+    barriers[0].subresourceRange.baseMipLevel   = 0;
+    barriers[0].subresourceRange.levelCount     = 1;
+    barriers[0].subresourceRange.baseArrayLayer = 0;
+    barriers[0].subresourceRange.layerCount     = 1;
+
+    barriers[1].sType                           = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barriers[1].srcAccessMask                   = VK_ACCESS_TRANSFER_WRITE_BIT;
+    barriers[1].dstAccessMask                   = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+    barriers[1].oldLayout                       = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    barriers[1].newLayout                       = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    barriers[1].image                           = m_xrDepthImage;
+    barriers[1].subresourceRange.aspectMask     = VK_IMAGE_ASPECT_DEPTH_BIT;
+    barriers[1].subresourceRange.baseMipLevel   = 0;
+    barriers[1].subresourceRange.levelCount     = 1;
+    barriers[1].subresourceRange.baseArrayLayer = 0;
+    barriers[1].subresourceRange.layerCount     = 1;
+
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, 0,
+                         0, nullptr, 0, nullptr, 2, barriers);
+  }
+
+  // Transition source images back to attachment optimal
+  {
+    VkImageMemoryBarrier barriers[2] = {};
+
+    barriers[0].sType                           = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barriers[0].srcAccessMask                   = VK_ACCESS_TRANSFER_READ_BIT;
+    barriers[0].dstAccessMask                   = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    barriers[0].oldLayout                       = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    barriers[0].newLayout                       = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    barriers[0].image                           = srcColorImage;
+    barriers[0].subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+    barriers[0].subresourceRange.baseMipLevel   = 0;
+    barriers[0].subresourceRange.levelCount     = 1;
+    barriers[0].subresourceRange.baseArrayLayer = 0;
+    barriers[0].subresourceRange.layerCount     = 1;
+
+    barriers[1].sType                           = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barriers[1].srcAccessMask                   = VK_ACCESS_TRANSFER_READ_BIT;
+    barriers[1].dstAccessMask                   = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    barriers[1].oldLayout                       = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    barriers[1].newLayout                       = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    barriers[1].image                           = srcDepthImage;
+    barriers[1].subresourceRange.aspectMask     = VK_IMAGE_ASPECT_DEPTH_BIT;
+    barriers[1].subresourceRange.baseMipLevel   = 0;
+    barriers[1].subresourceRange.levelCount     = 1;
+    barriers[1].subresourceRange.baseArrayLayer = 0;
+    barriers[1].subresourceRange.layerCount     = 1;
+
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, 0,
+                         0, nullptr, 0, nullptr, 2, barriers);
+  }
+}
+#endif  // WITH_OPENXR
 
 }  // namespace vk_gaussian_splatting
 

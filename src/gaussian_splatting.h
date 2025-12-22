@@ -95,6 +95,10 @@
 #include "light_set_vk.h"
 #include "camera_set.h"
 
+#ifdef WITH_OPENXR
+#include "gs_openxr.hpp"
+#endif
+
 namespace vk_gaussian_splatting {
 
 class GaussianSplatting
@@ -150,6 +154,17 @@ protected:
 
   // free scene (splat set) from RAM
   void deinitScene();
+
+#ifdef WITH_OPENXR
+protected:
+  // Initialize OpenXR runtime and session
+  void initializeOpenXR();
+  // Shutdown OpenXR
+  void shutdownOpenXR();
+private:
+  // Copy rendered image to XR swapchain
+  void copyToXrSwapchain(VkCommandBuffer cmd);
+#endif
 
 private:
   // init the raster pipelines
@@ -270,6 +285,15 @@ protected:
   float m_stereoSeparation    = 0.063f;  // 63mm default IPD (in meters)
   float m_stereoConvergence   = 1.0f;    // Convergence distance in meters (where stereo images overlap)
   bool  m_stereoOffAxisProj   = true;    // Use off-axis (asymmetric) frustum projection
+
+  // OpenXR HMD support
+#ifdef WITH_OPENXR
+  std::unique_ptr<GsOpenXr> m_xr;
+  bool  m_useXrHmd        = false;  // Enable XR HMD rendering
+  bool  m_xrInitialized   = false;  // Whether XR was successfully initialized
+  VkImage m_xrColorImage  = VK_NULL_HANDLE;  // Current XR color swapchain image
+  VkImage m_xrDepthImage  = VK_NULL_HANDLE;  // Current XR depth swapchain image
+#endif
 
   nvapp::Application*         m_app{nullptr};
   nvutils::ProfilerManager*   m_profilerManager;

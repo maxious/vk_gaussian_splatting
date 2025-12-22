@@ -13,6 +13,30 @@ find_package(NvproCore2 REQUIRED)
 # providing "-loadDefaultScene 0" to the sample command line
 option(DISABLE_DEFAULT_SCENE "If set to true the default scene is not downloaded by CMake, and the sample does not try to open it when starting up with no scene as parameter" OFF)
 
+#####################################################################################
+# OpenXR support for HMD rendering
+#
+option(ENABLE_OPENXR "Enable OpenXR HMD support" ON)
+
+if(ENABLE_OPENXR)
+  find_package(OpenXR QUIET)
+  if(OpenXR_FOUND)
+    message(STATUS "OpenXR found, enabling HMD support")
+  else()
+    message(STATUS "OpenXR not found via find_package, trying to fetch from GitHub...")
+    include(FetchContent)
+    FetchContent_Declare(
+      OpenXR-SDK
+      GIT_REPOSITORY https://github.com/KhronosGroup/OpenXR-SDK.git
+      GIT_TAG        release-1.1.54
+    )
+    set(BUILD_ALL_EXTENSIONS ON CACHE BOOL "" FORCE)
+    set(BUILD_LOADER ON CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(OpenXR-SDK)
+    set(OpenXR_FOUND TRUE)
+  endif()
+endif()
+
 # Download the default scene
 if (NOT DISABLE_DEFAULT_SCENE)
   add_definitions(-DWITH_DEFAULT_SCENE_FEATURE)
@@ -66,6 +90,8 @@ set_property(TARGET spz PROPERTY FOLDER "ThirdParty")
 # Source files for this project
 #
 file(GLOB SOURCE_FILES src/*.*)
+# Remove "unity build" partial source files that are #included by gaussian_splatting.cpp
+list(FILTER SOURCE_FILES EXCLUDE REGEX "gaussian_splatting_(render|shaders|pipelines|rtx|postprocess)\\.cpp$")
 file(GLOB SHADER_FILES shaders/*.slang shaders/*.h)
 file(GLOB EXTERN_FILES 3rdparty/miniply/*.*)
 
@@ -115,6 +141,17 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
   vk_radix_sort
   spz::spz
 )
+
+# OpenXR linkage
+if(ENABLE_OPENXR AND OpenXR_FOUND)
+  target_compile_definitions(${PROJECT_NAME} PRIVATE WITH_OPENXR XR_USE_PLATFORM_WIN32 XR_USE_GRAPHICS_API_VULKAN)
+  if(TARGET OpenXR::openxr_loader)
+    target_link_libraries(${PROJECT_NAME} PRIVATE OpenXR::openxr_loader)
+  else()
+    target_link_libraries(${PROJECT_NAME} PRIVATE openxr_loader)
+    target_include_directories(${PROJECT_NAME} PRIVATE ${openxr-sdk_SOURCE_DIR}/include)
+  endif()
+endif()
 
 add_project_definitions(${PROJECT_NAME})
 

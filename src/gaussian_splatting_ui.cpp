@@ -1042,7 +1042,43 @@ void GaussianSplattingUI::guiDrawRendererProperties()
   PE::end();
 
   PE::begin("## SBS Stereo");
+#ifdef WITH_OPENXR
+  bool xrWasEnabled = m_useXrHmd;
+  if(PE::Checkbox("OpenXR HMD", &m_useXrHmd, "Enable OpenXR head-mounted display rendering"))
+  {
+    if(m_useXrHmd && !m_xrInitialized)
+    {
+      // Try to initialize OpenXR
+      initializeOpenXR();
+    }
+    else if(!m_useXrHmd && m_xrInitialized)
+    {
+      // Shutdown OpenXR
+      shutdownOpenXR();
+      m_renderSBS = false;
+    }
+  }
+  if(m_xrInitialized && m_xr)
+  {
+    VkExtent2D perEye = m_xr->getPerEyeExtent();
+    PE::Text("XR Status", "Connected");
+    PE::Text("Per-eye resolution", "%dx%d", perEye.width, perEye.height);
+  }
+  else if(m_useXrHmd)
+  {
+    PE::Text("XR Status", "Failed to connect");
+  }
+  else
+  {
+    PE::Text("XR Status", "Disabled");
+  }
+  ImGui::Separator();
+  ImGui::BeginDisabled(m_xrInitialized);  // Disable SBS controls when XR is active
+#else
+  ImGui::BeginDisabled(false);
+#endif
   PE::Checkbox("Enable SBS Stereo", &m_renderSBS, "Render side-by-side stereo for VR headsets");
+  ImGui::EndDisabled();
   ImGui::BeginDisabled(!m_renderSBS);
   float ipdMM = m_stereoSeparation * 1000.0f;
   if(PE::SliderFloat("IPD (mm)", &ipdMM, 50.0f, 80.0f, "%.1f", 0,

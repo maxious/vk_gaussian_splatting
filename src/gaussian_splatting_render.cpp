@@ -54,6 +54,42 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
 {
   NVVK_DBG_SCOPE(cmd);
 
+#ifdef WITH_OPENXR
+  // Handle OpenXR frame lifecycle
+  bool xrFrameActive = false;
+  if(m_xrInitialized && m_xr && m_xr->isValid())
+  {
+    if(!m_xr->beginFrame())
+    {
+      // XR says don't render this frame (headset not visible, etc.)
+      // Still process update requests and return
+      processUpdateRequests();
+      return;
+    }
+    xrFrameActive = true;
+
+    // Get XR extent and resize if needed
+    VkExtent2D xrExtent = m_xr->getFullExtent();
+    if(m_viewSize.x != xrExtent.width || m_viewSize.y != xrExtent.height)
+    {
+      // Need to resize our GBuffers to match XR resolution
+      // This will be handled by the application's resize mechanism
+      m_viewSize = glm::vec2(xrExtent.width, xrExtent.height);
+    }
+
+    // Acquire XR swapchain images
+    if(!m_xr->acquireSwapchainImages(m_xrColorImage, m_xrDepthImage))
+    {
+      m_xr->endFrame();
+      return;
+    }
+
+    // Locate views with current clip planes
+    glm::vec2 clipPlanes = cameraManip->getClipPlanes();
+    m_xr->locateViews(clipPlanes.x, clipPlanes.y);
+  }
+#endif
+
   // update buffers, rebuild shaders and pipelines if needed
   processUpdateRequests();
 
@@ -86,6 +122,35 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
     cameraManip->getLookat(m_eye, m_center, m_up);
     glm::mat4 viewMatrix = cameraManip->getViewMatrix();
     glm::mat4 projMatrix = cameraManip->getPerspectiveMatrix();
+
+#ifdef WITH_OPENXR
+    // RTX path with OpenXR
+    if(xrFrameActive && m_xr)
+    {
+      VkExtent2D perEye = m_xr->getPerEyeExtent();
+      const uint32_t halfWidth = perEye.width;
+      const uint32_t height = perEye.height;
+
+      // Left eye
+      GsOpenXr::EyeData leftEyeData = m_xr->getEyeData(0);
+      updateAndUploadFrameInfoUBO(cmd, splatCount, leftEyeData.view, leftEyeData.proj, leftEyeData.eyePos, glm::vec2(halfWidth, height));
+      raytrace(cmd, false, glm::ivec2(0, 0), glm::ivec2(halfWidth, height));
+
+      // Right eye
+      GsOpenXr::EyeData rightEyeData = m_xr->getEyeData(1);
+      updateAndUploadFrameInfoUBO(cmd, splatCount, rightEyeData.view, rightEyeData.proj, rightEyeData.eyePos, glm::vec2(halfWidth, height));
+      raytrace(cmd, false, glm::ivec2(halfWidth, 0), glm::ivec2(halfWidth, height));
+
+      readBackIndirectParametersIfNeeded(cmd);
+      updateRenderingMemoryStatistics(cmd, splatCount);
+
+      // Copy to XR swapchain and finish frame
+      copyToXrSwapchain(cmd);
+      m_xr->releaseSwapchainImages();
+      m_xr->endFrame();
+      return;
+    }
+#endif
 
     if(m_renderSBS)
     {
@@ -169,6 +234,41 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
   glm::mat4 viewMatrix = cameraManip->getViewMatrix();
   glm::mat4 projMatrix = cameraManip->getPerspectiveMatrix();
 
+#ifdef WITH_OPENXR
+  // Use OpenXR view/projection when XR is active
+  if(xrFrameActive && m_xr)
+  {
+    VkExtent2D perEye = m_xr->getPerEyeExtent();
+    const float halfWidth = float(perEye.width);
+    const uint32_t halfWidthInt = perEye.width;
+    const uint32_t heightInt = perEye.height;
+
+    for(uint32_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx)
+    {
+      GsOpenXr::EyeData eyeData = m_xr->getEyeData(eyeIdx);
+
+      StereoView xrView;
+      xrView.eye = eyeData.eyePos;
+      xrView.view = eyeData.view;
+      xrView.proj = eyeData.proj;
+      xrView.stereoShift = glm::vec2(0.0f, 0.0f);  // Off-axis is in the XR projection matrix
+
+      float xOffset = float(eyeIdx * perEye.width);
+      xrView.viewport = {xOffset, 0.0f, halfWidth, float(perEye.height), 0.0f, 1.0f};
+      xrView.scissor = {{static_cast<int32_t>(eyeIdx * perEye.width), 0}, {halfWidthInt, heightInt}};
+
+      views.push_back(xrView);
+    }
+
+    // Update center eye for sorting (average of both eyes)
+    GsOpenXr::EyeData leftEye = m_xr->getEyeData(0);
+    GsOpenXr::EyeData rightEye = m_xr->getEyeData(1);
+    m_eye = (leftEye.eyePos + rightEye.eyePos) * 0.5f;
+    viewMatrix = leftEye.view;  // Use left eye view for sorting
+    projMatrix = leftEye.proj;
+  }
+  else
+#endif
   if(m_renderSBS)
   {
     const float     fovRad         = cameraManip->getRadFov();
@@ -419,6 +519,19 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
   readBackIndirectParametersIfNeeded(cmd);
 
   updateRenderingMemoryStatistics(cmd, splatCount);
+
+#ifdef WITH_OPENXR
+  // Finalize XR frame
+  if(xrFrameActive && m_xr)
+  {
+    // Copy our rendered GBuffer to the XR swapchain
+    copyToXrSwapchain(cmd);
+
+    // Release swapchain images and end the frame
+    m_xr->releaseSwapchainImages();
+    m_xr->endFrame();
+  }
+#endif
 }
 
 void GaussianSplatting::processUpdateRequests(void)
