@@ -493,6 +493,8 @@ void GaussianSplatting::copyToXrSwapchain(VkCommandBuffer cmd)
 
 // Include the split implementation files
 #include "gaussian_splatting_render.cpp"
+#include "gaussian_splatting_frame_ubo.cpp"
+#include "gaussian_splatting_sorting.cpp"
 #include "gaussian_splatting_shaders.cpp"
 #include "gaussian_splatting_pipelines.cpp"
 #include "gaussian_splatting_rtx.cpp"
