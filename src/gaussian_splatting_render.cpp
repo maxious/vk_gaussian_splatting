@@ -181,18 +181,25 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
     const uint32_t halfWidthInt = static_cast<uint32_t>(halfWidth);
     const uint32_t heightInt    = static_cast<uint32_t>(m_viewSize.y);
 
+    // For 3DGUT pipelines, use symmetric projection since they compute their own projection
+    // and only use the projection matrix for depth (Z) calculation
+    const bool useOffAxis = m_stereoOffAxisProj && (prmSelectedPipeline != PIPELINE_MESH_3DGUT) && (prmSelectedPipeline != PIPELINE_HYBRID_3DGUT);
+
+    // Pre-compute symmetric projection for fallback
+    glm::mat4 symmetricProj = glm::perspective(fovRad, halfAspect, clipPlanes.x, clipPlanes.y);
+    symmetricProj[1][1] *= -1;
+
     // Left eye
     StereoView left;
     left.eye  = m_eye - (rightDir * halfSeparation);
     left.view = glm::lookAt(left.eye, m_center, m_up);
-    if(m_stereoOffAxisProj)
+    if(useOffAxis)
     {
       left.proj = makeOffAxisStereoProjection(fovRad, halfAspect, clipPlanes.x, clipPlanes.y, -halfSeparation, m_stereoConvergence);
     }
     else
     {
-      left.proj = glm::perspective(fovRad, halfAspect, clipPlanes.x, clipPlanes.y);
-      left.proj[1][1] *= -1;
+      left.proj = symmetricProj;
     }
     left.viewport = {0.0f, 0.0f, halfWidth, float(m_viewSize.y), 0.0f, 1.0f};
     left.scissor  = {{0, 0}, {halfWidthInt, heightInt}};
@@ -202,14 +209,13 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
     StereoView right;
     right.eye  = m_eye + (rightDir * halfSeparation);
     right.view = glm::lookAt(right.eye, m_center, m_up);
-    if(m_stereoOffAxisProj)
+    if(useOffAxis)
     {
       right.proj = makeOffAxisStereoProjection(fovRad, halfAspect, clipPlanes.x, clipPlanes.y, halfSeparation, m_stereoConvergence);
     }
     else
     {
-      right.proj = glm::perspective(fovRad, halfAspect, clipPlanes.x, clipPlanes.y);
-      right.proj[1][1] *= -1;
+      right.proj = symmetricProj;
     }
     right.viewport = {halfWidth, 0.0f, halfWidth, float(m_viewSize.y), 0.0f, 1.0f};
     right.scissor  = {{static_cast<int32_t>(halfWidth), 0}, {halfWidthInt, heightInt}};
