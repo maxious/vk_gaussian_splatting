@@ -307,7 +307,9 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
   {
     const auto& view = views[viewIndex];
 
-    updateAndUploadFrameInfoUBO(cmd, splatCount, view.view, view.proj, view.eye, {view.viewport.width, view.viewport.height});
+    updateAndUploadFrameInfoUBO(cmd, splatCount, view.view, view.proj, view.eye,
+                                {view.viewport.width, view.viewport.height},
+                                {view.viewport.x, view.viewport.y});
 
     if(raytraceMeshDepth)
     {
@@ -518,6 +520,7 @@ void GaussianSplatting::updateAndUploadFrameInfoUBO(VkCommandBuffer cmd, const u
   prmFrame.orthographicMode        = 0;  // disabled (uses perspective) TODO: activate support for orthographic
   prmFrame.viewport                = glm::vec2(m_viewSize.x * devicePixelRatio, m_viewSize.y * devicePixelRatio);
   prmFrame.basisViewport           = glm::vec2(1.0f / m_viewSize.x, 1.0f / m_viewSize.y);
+  prmFrame.viewportOffset          = glm::vec2(0.0f, 0.0f);  // No offset for mono rendering
   prmFrame.inverseFocalAdjustment  = 1.0f / focalAdjustment;
 
   if(camera.model == CAMERA_FISHEYE && prmSelectedPipeline != PIPELINE_VERT && prmSelectedPipeline != PIPELINE_MESH
@@ -564,7 +567,8 @@ void GaussianSplatting::updateAndUploadFrameInfoUBO(VkCommandBuffer  cmd,
                                                     const glm::mat4& view,
                                                     const glm::mat4& proj,
                                                     const glm::vec3& eye,
-                                                    const glm::vec2& viewport)
+                                                    const glm::vec2& viewport,
+                                                    const glm::vec2& viewportOffset)
 {
   if(m_frameInfoBuffer.buffer == VK_NULL_HANDLE)
     return;
@@ -595,6 +599,7 @@ void GaussianSplatting::updateAndUploadFrameInfoUBO(VkCommandBuffer  cmd,
   prmFrame.orthographicMode        = 0;
   prmFrame.viewport                = viewport;
   prmFrame.basisViewport           = glm::vec2(1.0f / viewport.x, 1.0f / viewport.y);
+  prmFrame.viewportOffset          = viewportOffset;
   prmFrame.inverseFocalAdjustment  = 1.0f / focalAdjustment;
 
   if(camera.model == CAMERA_FISHEYE && prmSelectedPipeline != PIPELINE_VERT && prmSelectedPipeline != PIPELINE_MESH

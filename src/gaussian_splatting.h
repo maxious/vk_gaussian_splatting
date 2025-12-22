@@ -180,7 +180,8 @@ private:
   // Updates frame information uniform buffer and frame camera info
   void updateAndUploadFrameInfoUBO(VkCommandBuffer cmd, const uint32_t splatCount);
   void updateAndUploadFrameInfoUBO(VkCommandBuffer cmd, const uint32_t splatCount, const glm::mat4& view,
-                                   const glm::mat4& proj, const glm::vec3& eye, const glm::vec2& viewport);
+                                   const glm::mat4& proj, const glm::vec3& eye, const glm::vec2& viewport,
+                                   const glm::vec2& viewportOffset = glm::vec2(0.0f));
 
   void tryConsumeAndUploadCpuSortingResult(VkCommandBuffer cmd, const uint32_t splatCount);
 

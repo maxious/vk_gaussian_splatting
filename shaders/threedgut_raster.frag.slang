@@ -75,10 +75,14 @@ FragmentOutput main(FragmentInput input)
   float3 rayDirection;
 
   // generate the ray for this pixel
+  // For SBS stereo, input.position.xy is in screen coordinates (e.g., right eye starts at halfWidth)
+  // We need to subtract the viewport offset to get local viewport coordinates
+  float2 localPixel = input.position.xy - frameInfo.viewportOffset;
+  
 #if CAMERA_TYPE == CAMERA_PINHOLE
-  generatePinholeRay(input.position.xy, frameInfo.viewport, frameInfo.viewInverse, frameInfo.projInverse, rayOrigin, rayDirection);
+  generatePinholeRay(localPixel, frameInfo.viewport, frameInfo.viewInverse, frameInfo.projInverse, rayOrigin, rayDirection);
 #else
-  if(!generateFisheyeRay(input.position.xy, frameInfo.viewport, frameInfo.fovRad, float2(0.0), frameInfo.viewInverse,
+  if(!generateFisheyeRay(localPixel, frameInfo.viewport, frameInfo.fovRad, float2(0.0), frameInfo.viewInverse,
                          rayOrigin, rayDirection))
   {
     discard;
