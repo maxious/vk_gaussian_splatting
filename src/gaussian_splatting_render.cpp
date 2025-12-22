@@ -157,6 +157,7 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
     glm::mat4  view;
     glm::mat4  proj;
     glm::vec3  eye;
+    glm::vec2  stereoShift;  // Principal point shift for off-axis stereo (in pixels)
     VkViewport viewport;
     VkRect2D   scissor;
   };
@@ -181,25 +182,44 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
     const uint32_t halfWidthInt = static_cast<uint32_t>(halfWidth);
     const uint32_t heightInt    = static_cast<uint32_t>(m_viewSize.y);
 
-    // For 3DGUT pipelines, use symmetric projection since they compute their own projection
-    // and only use the projection matrix for depth (Z) calculation
-    const bool useOffAxis = m_stereoOffAxisProj && (prmSelectedPipeline != PIPELINE_MESH_3DGUT) && (prmSelectedPipeline != PIPELINE_HYBRID_3DGUT);
+    // Check if we should use off-axis projection
+    // For 3DGUT, we use a different approach: symmetric projection matrix but shifted principal point
+    const bool is3DGUT = (prmSelectedPipeline == PIPELINE_MESH_3DGUT) || (prmSelectedPipeline == PIPELINE_HYBRID_3DGUT);
+    const bool useOffAxisMatrix = m_stereoOffAxisProj && !is3DGUT;
 
-    // Pre-compute symmetric projection for fallback
+    // Pre-compute symmetric projection for 3DGUT modes or when off-axis is disabled
     glm::mat4 symmetricProj = glm::perspective(fovRad, halfAspect, clipPlanes.x, clipPlanes.y);
     symmetricProj[1][1] *= -1;
+
+    // For 3DGUT off-axis, we need to compute the principal point shift in pixels
+    // The formula is: shift = (eyeOffset * focalLength) / convergenceDistance
+    // focalLength in pixels = proj[0][0] * halfWidth / 2 (for half-viewport)
+    // But we compute it after the projection matrix is set, so we use a consistent approach
+    const float focalLengthPixels = (1.0f / tanf(fovRad * 0.5f)) * (halfWidth * 0.5f);
 
     // Left eye
     StereoView left;
     left.eye  = m_eye - (rightDir * halfSeparation);
     left.view = glm::lookAt(left.eye, m_center, m_up);
-    if(useOffAxis)
+    if(useOffAxisMatrix)
     {
       left.proj = makeOffAxisStereoProjection(fovRad, halfAspect, clipPlanes.x, clipPlanes.y, -halfSeparation, m_stereoConvergence);
+      left.stereoShift = glm::vec2(0.0f, 0.0f);  // Off-axis is in the projection matrix
     }
     else
     {
       left.proj = symmetricProj;
+      // For 3DGUT: compute principal point shift for off-axis stereo
+      // Shift = (eyeOffset * focalLength) / convergenceDistance
+      // Left eye has negative offset, so shift is negative (shifts left)
+      if(is3DGUT && m_stereoOffAxisProj)
+      {
+        left.stereoShift = glm::vec2((-halfSeparation * focalLengthPixels) / m_stereoConvergence, 0.0f);
+      }
+      else
+      {
+        left.stereoShift = glm::vec2(0.0f, 0.0f);
+      }
     }
     left.viewport = {0.0f, 0.0f, halfWidth, float(m_viewSize.y), 0.0f, 1.0f};
     left.scissor  = {{0, 0}, {halfWidthInt, heightInt}};
@@ -209,13 +229,24 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
     StereoView right;
     right.eye  = m_eye + (rightDir * halfSeparation);
     right.view = glm::lookAt(right.eye, m_center, m_up);
-    if(useOffAxis)
+    if(useOffAxisMatrix)
     {
       right.proj = makeOffAxisStereoProjection(fovRad, halfAspect, clipPlanes.x, clipPlanes.y, halfSeparation, m_stereoConvergence);
+      right.stereoShift = glm::vec2(0.0f, 0.0f);  // Off-axis is in the projection matrix
     }
     else
     {
       right.proj = symmetricProj;
+      // For 3DGUT: compute principal point shift for off-axis stereo
+      // Right eye has positive offset, so shift is positive (shifts right)
+      if(is3DGUT && m_stereoOffAxisProj)
+      {
+        right.stereoShift = glm::vec2((halfSeparation * focalLengthPixels) / m_stereoConvergence, 0.0f);
+      }
+      else
+      {
+        right.stereoShift = glm::vec2(0.0f, 0.0f);
+      }
     }
     right.viewport = {halfWidth, 0.0f, halfWidth, float(m_viewSize.y), 0.0f, 1.0f};
     right.scissor  = {{static_cast<int32_t>(halfWidth), 0}, {halfWidthInt, heightInt}};
@@ -224,11 +255,12 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
   else
   {
     StereoView mono;
-    mono.view     = viewMatrix;
-    mono.proj     = projMatrix;
-    mono.eye      = m_eye;
-    mono.viewport = {0.0f, 0.0f, float(m_viewSize.x), float(m_viewSize.y), 0.0f, 1.0f};
-    mono.scissor  = {{0, 0}, {static_cast<uint32_t>(m_viewSize.x), static_cast<uint32_t>(m_viewSize.y)}};
+    mono.view        = viewMatrix;
+    mono.proj        = projMatrix;
+    mono.eye         = m_eye;
+    mono.stereoShift = glm::vec2(0.0f, 0.0f);  // No stereo shift for mono
+    mono.viewport    = {0.0f, 0.0f, float(m_viewSize.x), float(m_viewSize.y), 0.0f, 1.0f};
+    mono.scissor     = {{0, 0}, {static_cast<uint32_t>(m_viewSize.x), static_cast<uint32_t>(m_viewSize.y)}};
     views.push_back(mono);
   }
 
@@ -309,7 +341,8 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
 
     updateAndUploadFrameInfoUBO(cmd, splatCount, view.view, view.proj, view.eye,
                                 {view.viewport.width, view.viewport.height},
-                                {view.viewport.x, view.viewport.y});
+                                {view.viewport.x, view.viewport.y},
+                                view.stereoShift);
 
     if(raytraceMeshDepth)
     {
@@ -521,6 +554,7 @@ void GaussianSplatting::updateAndUploadFrameInfoUBO(VkCommandBuffer cmd, const u
   prmFrame.viewport                = glm::vec2(m_viewSize.x * devicePixelRatio, m_viewSize.y * devicePixelRatio);
   prmFrame.basisViewport           = glm::vec2(1.0f / m_viewSize.x, 1.0f / m_viewSize.y);
   prmFrame.viewportOffset          = glm::vec2(0.0f, 0.0f);  // No offset for mono rendering
+  prmFrame.stereoShift             = glm::vec2(0.0f, 0.0f);  // No stereo shift for mono rendering
   prmFrame.inverseFocalAdjustment  = 1.0f / focalAdjustment;
 
   if(camera.model == CAMERA_FISHEYE && prmSelectedPipeline != PIPELINE_VERT && prmSelectedPipeline != PIPELINE_MESH
@@ -568,7 +602,8 @@ void GaussianSplatting::updateAndUploadFrameInfoUBO(VkCommandBuffer  cmd,
                                                     const glm::mat4& proj,
                                                     const glm::vec3& eye,
                                                     const glm::vec2& viewport,
-                                                    const glm::vec2& viewportOffset)
+                                                    const glm::vec2& viewportOffset,
+                                                    const glm::vec2& stereoShift)
 {
   if(m_frameInfoBuffer.buffer == VK_NULL_HANDLE)
     return;
@@ -600,6 +635,7 @@ void GaussianSplatting::updateAndUploadFrameInfoUBO(VkCommandBuffer  cmd,
   prmFrame.viewport                = viewport;
   prmFrame.basisViewport           = glm::vec2(1.0f / viewport.x, 1.0f / viewport.y);
   prmFrame.viewportOffset          = viewportOffset;
+  prmFrame.stereoShift             = stereoShift;
   prmFrame.inverseFocalAdjustment  = 1.0f / focalAdjustment;
 
   if(camera.model == CAMERA_FISHEYE && prmSelectedPipeline != PIPELINE_VERT && prmSelectedPipeline != PIPELINE_MESH

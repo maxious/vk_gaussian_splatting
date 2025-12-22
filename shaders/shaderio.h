@@ -152,6 +152,7 @@ struct FrameInfo
   float2   viewport;
   float2   basisViewport;
   float2   viewportOffset DEFAULT(float2(0.0f, 0.0f));  // Viewport offset for SBS stereo (x,y offset in pixels)
+  float2   stereoShift DEFAULT(float2(0.0f, 0.0f));    // Principal point shift for off-axis stereo projection (in pixels)
 
   float fovRad                 DEFAULT(0.009f);  // Field of view in radians for fisheye camera
   float inverseFocalAdjustment DEFAULT(1.0f);

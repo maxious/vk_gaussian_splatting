@@ -63,13 +63,14 @@ static const int EmptyModel         = 2;
 static const int Unsupported        = 3;
 
 
-CameraModelParameters initPerfectPinholeCamera(float2 nearFar, float2 viewport, float2 focalLength)
+CameraModelParameters initPerfectPinholeCamera(float2 nearFar, float2 viewport, float2 focalLength, float2 stereoShift = float2(0.0, 0.0))
 {
   CameraModelParameters cameraModel;
   cameraModel.shutterType                       = GlobalShutter;
   cameraModel.modelType                         = OpenCVPinholeModel;
   cameraModel.ocvPinholeParams.nearFar          = nearFar;
-  cameraModel.ocvPinholeParams.principalPoint   = viewport / 2.0;  // center of viewport
+  // Principal point at center of viewport, with optional stereo shift for off-axis projection
+  cameraModel.ocvPinholeParams.principalPoint   = viewport / 2.0 + stereoShift;
   cameraModel.ocvPinholeParams.focalLength      = focalLength;
   cameraModel.ocvPinholeParams.tangentialCoeffs = float2(0, 0);
   cameraModel.ocvPinholeParams.thinPrismCoeffs  = float4(0, 0, 0, 0);
@@ -118,9 +119,10 @@ float computeMaxAngle(float2 resolution, float2 principalPoint, float2 focalLeng
   return maxAngle;
 }
 
-CameraModelParameters initPerfectFisheyeCamera(float2 viewport, float2 focalLength)
+CameraModelParameters initPerfectFisheyeCamera(float2 viewport, float2 focalLength, float2 stereoShift = float2(0.0, 0.0))
 {
-  const float2 principalPoint = viewport / 2.0;  // center of viewport
+  // Principal point at center of viewport, with optional stereo shift for off-axis projection
+  const float2 principalPoint = viewport / 2.0 + stereoShift;
 
   CameraModelParameters cameraModel;
   cameraModel.shutterType                        = GlobalShutter;

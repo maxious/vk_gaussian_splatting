@@ -145,9 +145,9 @@ void main(
 #endif
 
 #if CAMERA_TYPE == CAMERA_PINHOLE
-    CameraModelParameters sensorModel = initPerfectPinholeCamera(frameInfo.nearFar, frameInfo.viewport, frameInfo.focal);
+    CameraModelParameters sensorModel = initPerfectPinholeCamera(frameInfo.nearFar, frameInfo.viewport, frameInfo.focal, frameInfo.stereoShift);
 #else
-    CameraModelParameters sensorModel = initPerfectFisheyeCamera(frameInfo.viewport, frameInfo.focal);
+    CameraModelParameters sensorModel = initPerfectFisheyeCamera(frameInfo.viewport, frameInfo.focal, frameInfo.stereoShift);
 #endif
 
     // camera pose in world space, used by projector to compute the ray.
