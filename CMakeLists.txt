@@ -14,6 +14,16 @@ find_package(NvproCore2 REQUIRED)
 option(DISABLE_DEFAULT_SCENE "If set to true the default scene is not downloaded by CMake, and the sample does not try to open it when starting up with no scene as parameter" OFF)
 
 #####################################################################################
+# DLSS-RR configuration
+#
+option(ENABLE_DLSS_RR "Enable DLSS Ray Reconstruction denoiser" ON)
+option(DLSS_USE_DEVELOP_LIBRARIES "Use non-distributable DLSS libraries with debug overlay (Ctrl-Alt-F12 to enable, Ctrl-Alt-F11 to switch views)" ON)
+
+if(ENABLE_DLSS_RR)
+  find_package(NGX REQUIRED)
+endif()
+
+#####################################################################################
 # OpenXR support for HMD rendering
 #
 option(ENABLE_OPENXR "Enable OpenXR HMD support" ON)
@@ -144,6 +154,12 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
   meshoptimizer
 )
 
+# DLSS-RR linkage
+if(ENABLE_DLSS_RR AND NGX_FOUND)
+  target_compile_definitions(${PROJECT_NAME} PRIVATE WITH_DLSS_RR)
+  target_link_libraries(${PROJECT_NAME} PRIVATE ngx)
+endif()
+
 # OpenXR linkage
 if(ENABLE_OPENXR AND OpenXR_FOUND)
   target_compile_definitions(${PROJECT_NAME} PRIVATE WITH_OPENXR XR_USE_PLATFORM_WIN32 XR_USE_GRAPHICS_API_VULKAN)
@@ -161,9 +177,15 @@ add_project_definitions(${PROJECT_NAME})
 # copies files
 #
 
+# Copy shaders and required files
+set(COPY_FILES ${Slang_GLSLANG})
+if(ENABLE_DLSS_RR AND NGX_FOUND)
+  list(APPEND COPY_FILES ${DLSS_DLLS})
+endif()
+
 copy_to_runtime_and_install(${PROJECT_NAME}
   DIRECTORIES "${NVSHADERS_DIR}/nvshaders"
-  FILES ${Slang_GLSLANG}
+  FILES ${COPY_FILES}
   LOCAL_DIRS "${CMAKE_CURRENT_LIST_DIR}/shaders"
   AUTO
 )

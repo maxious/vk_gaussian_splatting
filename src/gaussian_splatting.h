@@ -99,6 +99,10 @@
 #include "gs_openxr.hpp"
 #endif
 
+#ifdef WITH_DLSS_RR
+#include "gs_dlss_rr.hpp"
+#endif
+
 namespace vk_gaussian_splatting {
 
 class GaussianSplatting
@@ -318,9 +322,36 @@ protected:
   {
     COLOR_MAIN = 0,
     COLOR_AUX1 = 1,
+#ifdef WITH_DLSS_RR
+    // DLSS-RR G-buffer outputs (at render resolution)
+    COLOR_DLSS_DIFFUSE_ALBEDO  = 2,   // RGB diffuse albedo
+    COLOR_DLSS_SPECULAR_ALBEDO = 3,   // RGB specular albedo
+    COLOR_DLSS_NORMAL_ROUGH    = 4,   // RGB normal + A roughness
+    COLOR_DLSS_MOTION          = 5,   // RG motion vectors
+    COLOR_DLSS_LINEAR_DEPTH    = 6,   // R linear depth
+    COLOR_DLSS_SPEC_HIT_DIST   = 7,   // R specular hit distance
+    COLOR_DLSS_OUTPUT          = 8,   // DLSS-RR output (at output resolution)
+#endif
   };
-  // G-Buffers: 2 color buffers + 1 depth buffer
+  // G-Buffers: 2 color buffers + 1 depth buffer (+ DLSS-RR buffers when enabled)
   nvvk::GBuffer m_gBuffers;
+
+#ifdef WITH_DLSS_RR
+  // DLSS-RR denoiser
+  std::unique_ptr<NgxContext> m_ngxContext;
+  std::unique_ptr<GsDlssRR>   m_dlssRR;
+  bool                        m_dlssRREnabled     = false;  // User toggle
+  bool                        m_dlssRRInitialized = false;
+  uint32_t                    m_dlssRRFrameIndex  = 0;
+  bool                        m_dlssRRNeedsReset  = true;   // Reset temporal history
+  
+  // DLSS-RR quality preset
+  NVSDK_NGX_PerfQuality_Value m_dlssRRQuality = NVSDK_NGX_PerfQuality_Value_MaxQuality;
+  
+  void initializeDlssRR();
+  void shutdownDlssRR();
+  void updateDlssRRDescriptorSet();
+#endif
 
   // camera info for current frame, updated by onRender
   glm::vec3 m_eye{};

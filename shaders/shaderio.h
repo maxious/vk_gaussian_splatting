@@ -105,6 +105,13 @@
 #define RTX_BINDING_PAYLOAD_BUFFER 3  // the alternative to payload stack (less efficient)
 #define RTX_BINDING_AUX1 4            // Ray tracer auxiliary output image, when using hybrid mode + temporal sampling
 #define RTX_BINDING_OUTDEPTH 5        // depth buffer
+// DLSS-RR G-buffer outputs (when WITH_DLSS_RR is defined)
+#define RTX_BINDING_DLSS_DIFFUSE_ALBEDO 6   // RGB diffuse albedo
+#define RTX_BINDING_DLSS_SPECULAR_ALBEDO 7  // RGB specular albedo
+#define RTX_BINDING_DLSS_NORMAL_ROUGH 8     // RGB normal + A roughness
+#define RTX_BINDING_DLSS_MOTION 9           // RG motion vectors
+#define RTX_BINDING_DLSS_LINEAR_DEPTH 10    // R linear depth
+#define RTX_BINDING_DLSS_SPEC_HIT_DIST 11   // R specular hit distance
 
 // Temporal sampling mode
 #define TEMPORAL_SAMPLING_AUTO 0  // Detects automatically if TS is needed for best visual results (e.g. if DoF is on)
@@ -182,6 +189,12 @@ struct FrameInfo
 
   float focusDist DEFAULT(1.3f);    // focus distance to compute depth of field
   float aperture  DEFAULT(0.001f);  // aperture distance to compute depth of field, 0 does no DOF effect
+
+  // DLSS-RR temporal jitter (in pixels, range [-0.5, 0.5])
+  float2 dlssJitter DEFAULT(float2(0.0f, 0.0f));
+  // Previous frame matrices for motion vector calculation
+  float4x4 prevViewMatrix;
+  float4x4 prevProjectionMatrix;
 };
 
 // Push constant for raster
