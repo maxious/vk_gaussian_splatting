@@ -61,6 +61,14 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
   bool xrShouldRender = false;
   if(m_xrInitialized && m_xr && m_xr->isValid())
   {
+    // Skip XR rendering on the frame where we just resized GBuffers
+    // to allow descriptor sets to be properly updated
+    if(m_xrResizedThisFrame)
+    {
+      processUpdateRequests();
+      return;
+    }
+
     GsOpenXr::BeginFrameResult frameResult = m_xr->beginFrame();
     
     if(frameResult == GsOpenXr::BeginFrameResult::SkipFully)

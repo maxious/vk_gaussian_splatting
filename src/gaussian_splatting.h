@@ -301,6 +301,7 @@ protected:
   std::unique_ptr<GsOpenXr> m_xr;
   bool  m_useXrHmd        = false;  // Enable XR HMD rendering
   bool  m_xrInitialized   = false;  // Whether XR was successfully initialized
+  bool  m_xrResizedThisFrame = false;  // Skip rendering frame after XR GBuffer resize
   VkImage m_xrColorImage  = VK_NULL_HANDLE;  // Current XR color swapchain image
   VkImage m_xrDepthImage  = VK_NULL_HANDLE;  // Current XR depth swapchain image
 #endif

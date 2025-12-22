@@ -187,6 +187,9 @@ void GaussianSplatting::onPreRender()
   m_profilerTimeline->frameAdvance();
 
 #ifdef WITH_OPENXR
+  // Clear the resize flag from previous frame
+  m_xrResizedThisFrame = false;
+
   // Check if XR requires GBuffer resize (must happen before command buffer recording)
   if(m_xrInitialized && m_xr && m_xr->isValid())
   {
@@ -205,6 +208,9 @@ void GaussianSplatting::onPreRender()
       updateDescriptorSetPostProcessing();
       resetFrameCounter();
       m_app->submitAndWaitTempCmdBuffer(cmd);
+
+      // Skip rendering this frame to let descriptor sets stabilize
+      m_xrResizedThisFrame = true;
     }
   }
 #endif
