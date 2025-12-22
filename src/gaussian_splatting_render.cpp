@@ -200,6 +200,45 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
     {
       updateAndUploadFrameInfoUBO(cmd, splatCount, viewMatrix, projMatrix, m_eye, glm::vec2(m_viewSize.x, m_viewSize.y));
       raytrace(cmd);
+
+#ifdef WITH_DLSS_RR
+      // Apply DLSS-RR denoising if enabled
+      if(m_dlssRREnabled && m_dlssRRInitialized && m_dlssRR && m_dlssRR->isValid())
+      {
+        // Transition G-buffer images to general layout for DLSS-RR
+        nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getColorImage(COLOR_MAIN),
+                                          VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL});
+        nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getColorImage(COLOR_DLSS_OUTPUT),
+                                          VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL});
+
+        // Execute DLSS-RR denoising
+        glm::uvec2 renderSize = glm::uvec2(m_viewSize.x, m_viewSize.y);
+        NVSDK_NGX_Result result = m_dlssRR->denoise(cmd, renderSize, prmFrame.dlssJitter,
+                                                     viewMatrix, projMatrix, m_dlssRRNeedsReset);
+        if(NVSDK_NGX_SUCCEEDED(result))
+        {
+          // Copy denoised result back to main color buffer
+          VkImageCopy copyRegion = {};
+          copyRegion.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+          copyRegion.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+          copyRegion.extent = {static_cast<uint32_t>(m_viewSize.x), static_cast<uint32_t>(m_viewSize.y), 1};
+
+          nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getColorImage(COLOR_DLSS_OUTPUT),
+                                            VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL});
+          nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getColorImage(COLOR_MAIN),
+                                            VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL});
+
+          vkCmdCopyImage(cmd, m_gBuffers.getColorImage(COLOR_DLSS_OUTPUT), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                         m_gBuffers.getColorImage(COLOR_MAIN), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
+
+          nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getColorImage(COLOR_MAIN),
+                                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL});
+        }
+
+        m_dlssRRNeedsReset = false;
+        m_dlssRRFrameIndex++;
+      }
+#endif
     }
 
     readBackIndirectParametersIfNeeded(cmd);
@@ -771,6 +810,43 @@ void GaussianSplatting::updateAndUploadFrameInfoUBO(VkCommandBuffer  cmd,
 
   prmFrame.focusDist = camera.focusDist;
   prmFrame.aperture  = camera.aperture;
+
+#ifdef WITH_DLSS_RR
+  // Store previous frame matrices for motion vector calculation
+  static glm::mat4 s_prevViewMatrix = view;
+  static glm::mat4 s_prevProjMatrix = proj;
+  prmFrame.prevViewMatrix       = s_prevViewMatrix;
+  prmFrame.prevProjectionMatrix = s_prevProjMatrix;
+  s_prevViewMatrix              = view;
+  s_prevProjMatrix              = proj;
+
+  // Compute DLSS jitter for temporal anti-aliasing
+  if(m_dlssRREnabled && m_dlssRRInitialized)
+  {
+    // Halton sequence for temporal jitter
+    auto halton = [](int index, int base) -> float {
+      float result = 0.0f;
+      float f      = 1.0f / float(base);
+      int   i      = index;
+      while(i > 0)
+      {
+        result += f * float(i % base);
+        i = i / base;
+        f = f / float(base);
+      }
+      return result;
+    };
+
+    const int   jitterIndex = m_dlssRRFrameIndex % 8;
+    const float jitterX     = halton(jitterIndex + 1, 2) - 0.5f;
+    const float jitterY     = halton(jitterIndex + 1, 3) - 0.5f;
+    prmFrame.dlssJitter     = glm::vec2(jitterX, jitterY);
+  }
+  else
+  {
+    prmFrame.dlssJitter = glm::vec2(0.0f, 0.0f);
+  }
+#endif
 
   vkCmdUpdateBuffer(cmd, m_frameInfoBuffer.buffer, 0, sizeof(shaderio::FrameInfo), &prmFrame);
 

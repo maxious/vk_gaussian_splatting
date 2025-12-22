@@ -89,10 +89,25 @@ void GaussianSplatting::onAttach(nvapp::Application* app)
   // GBuffer
   m_depthFormat = nvvk::findDepthFormat(app->getPhysicalDevice());
 
-  // Two GBuffer color attachments, the second one is used only when temporal sampling with 3DGUT
+  // Color attachments:
+  // - COLOR_MAIN: main output
+  // - COLOR_AUX1: temporal sampling with 3DGUT
+  // - DLSS-RR buffers (when enabled): diffuse albedo, specular albedo, normal+roughness, 
+  //   motion vectors, linear depth, specular hit distance, DLSS output
+  std::vector<VkFormat> colorFormats = {m_colorFormat, m_colorFormat};
+#ifdef WITH_DLSS_RR
+  colorFormats.push_back(VK_FORMAT_R16G16B16A16_SFLOAT);  // COLOR_DLSS_DIFFUSE_ALBEDO
+  colorFormats.push_back(VK_FORMAT_R16G16B16A16_SFLOAT);  // COLOR_DLSS_SPECULAR_ALBEDO
+  colorFormats.push_back(VK_FORMAT_R16G16B16A16_SFLOAT);  // COLOR_DLSS_NORMAL_ROUGH
+  colorFormats.push_back(VK_FORMAT_R16G16_SFLOAT);        // COLOR_DLSS_MOTION
+  colorFormats.push_back(VK_FORMAT_R32_SFLOAT);           // COLOR_DLSS_LINEAR_DEPTH
+  colorFormats.push_back(VK_FORMAT_R16_SFLOAT);           // COLOR_DLSS_SPEC_HIT_DIST
+  colorFormats.push_back(m_colorFormat);                  // COLOR_DLSS_OUTPUT
+#endif
+
   m_gBuffers.init({
       .allocator      = &m_alloc,
-      .colorFormats   = {m_colorFormat, m_colorFormat},
+      .colorFormats   = colorFormats,
       .depthFormat    = m_depthFormat,
       .imageSampler   = m_sampler,
       .descriptorPool = m_app->getTextureDescriptorPool(),
@@ -482,3 +497,4 @@ void GaussianSplatting::copyToXrSwapchain(VkCommandBuffer cmd)
 #include "gaussian_splatting_pipelines.cpp"
 #include "gaussian_splatting_rtx.cpp"
 #include "gaussian_splatting_postprocess.cpp"
+#include "gaussian_splatting_dlss_rr.cpp"

@@ -52,7 +52,11 @@ void GaussianSplatting::updateSlangMacros()
        {"RTX_USE_INSTANCES", std::to_string((int)prmRtxData.useTlasInstances)},
        {"RTX_USE_AABBS", std::to_string((int)prmRtxData.useAABBs)},
        {"RTX_USE_MESHES", std::to_string((int)m_meshSetVk.instances.size())},
-       {"RTX_DOF_ENABLED", std::to_string((int)m_cameraSet.getCamera().dofEnabled)}};
+       {"RTX_DOF_ENABLED", std::to_string((int)m_cameraSet.getCamera().dofEnabled)},
+#ifdef WITH_DLSS_RR
+       {"WITH_DLSS_RR", std::to_string((int)m_dlssRREnabled)}
+#endif
+      };
 
   m_slangCompiler.clearMacros();
 

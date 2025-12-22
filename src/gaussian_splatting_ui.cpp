@@ -1095,6 +1095,87 @@ void GaussianSplattingUI::guiDrawRendererProperties()
   ImGui::EndDisabled();
   PE::end();
 
+#ifdef WITH_DLSS_RR
+  PE::begin("## DLSS-RR Denoising");
+  bool wasEnabled = m_dlssRREnabled;
+  if(PE::Checkbox("Enable DLSS-RR", &m_dlssRREnabled, 
+                  "Enable NVIDIA DLSS Ray Reconstruction denoiser for RTX mode.\n"
+                  "Requires RTX GPU with DLSS support."))
+  {
+    if(m_dlssRREnabled && !m_dlssRRInitialized)
+    {
+      initializeDlssRR();
+      if(m_dlssRRInitialized)
+      {
+        updateDlssRRDescriptorSet();
+        m_requestUpdateShaders = true;
+      }
+      else
+      {
+        m_dlssRREnabled = false;
+      }
+    }
+    else if(!m_dlssRREnabled && m_dlssRRInitialized)
+    {
+      shutdownDlssRR();
+      m_requestUpdateShaders = true;
+    }
+    m_dlssRRNeedsReset = true;
+  }
+  ImGui::BeginDisabled(!m_dlssRREnabled || !m_dlssRRInitialized);
+  static const char* qualityNames[] = {"Max Performance", "Balanced", "Max Quality", "Ultra Performance", "Ultra Quality", "DLAA"};
+  int qualityIndex = 0;
+  switch(m_dlssRRQuality)
+  {
+    case NVSDK_NGX_PerfQuality_Value_MaxPerf: qualityIndex = 0; break;
+    case NVSDK_NGX_PerfQuality_Value_Balanced: qualityIndex = 1; break;
+    case NVSDK_NGX_PerfQuality_Value_MaxQuality: qualityIndex = 2; break;
+    case NVSDK_NGX_PerfQuality_Value_UltraPerformance: qualityIndex = 3; break;
+    case NVSDK_NGX_PerfQuality_Value_UltraQuality: qualityIndex = 4; break;
+    case NVSDK_NGX_PerfQuality_Value_DLAA: qualityIndex = 5; break;
+    default: qualityIndex = 2; break;
+  }
+  if(PE::entry("Quality", [&]() { return ImGui::Combo("##DLSSQuality", &qualityIndex, qualityNames, 6); },
+               "DLSS-RR quality preset"))
+  {
+    switch(qualityIndex)
+    {
+      case 0: m_dlssRRQuality = NVSDK_NGX_PerfQuality_Value_MaxPerf; break;
+      case 1: m_dlssRRQuality = NVSDK_NGX_PerfQuality_Value_Balanced; break;
+      case 2: m_dlssRRQuality = NVSDK_NGX_PerfQuality_Value_MaxQuality; break;
+      case 3: m_dlssRRQuality = NVSDK_NGX_PerfQuality_Value_UltraPerformance; break;
+      case 4: m_dlssRRQuality = NVSDK_NGX_PerfQuality_Value_UltraQuality; break;
+      case 5: m_dlssRRQuality = NVSDK_NGX_PerfQuality_Value_DLAA; break;
+    }
+    // Reinitialize DLSS-RR with new quality
+    if(m_dlssRRInitialized)
+    {
+      shutdownDlssRR();
+      initializeDlssRR();
+      if(m_dlssRRInitialized)
+      {
+        updateDlssRRDescriptorSet();
+      }
+    }
+    m_dlssRRNeedsReset = true;
+  }
+  if(PE::entry("Reset History", [&]() { return ImGui::Button("Reset"); },
+               "Reset DLSS-RR temporal history"))
+  {
+    m_dlssRRNeedsReset = true;
+  }
+  if(m_dlssRRInitialized)
+  {
+    PE::Text("Status", "Active (Frame %d)", m_dlssRRFrameIndex);
+  }
+  else
+  {
+    PE::Text("Status", m_dlssRREnabled ? "Initialization failed" : "Disabled");
+  }
+  ImGui::EndDisabled();
+  PE::end();
+#endif
+
   ImGuiTabBarFlags tab_bar_flags = ImGuiTabBarFlags_None;
   if(ImGui::BeginTabBar("##SpecificsBar", tab_bar_flags))
   {

@@ -42,6 +42,15 @@ void GaussianSplatting::initRtDescriptorSet()
   m_rtDescriptorBindings.addBinding(RTX_BINDING_TLAS_MESH, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1,
                                     VK_SHADER_STAGE_RAYGEN_BIT_KHR);
 
+#ifdef WITH_DLSS_RR
+  m_rtDescriptorBindings.addBinding(RTX_BINDING_DLSS_DIFFUSE_ALBEDO, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_RAYGEN_BIT_KHR);
+  m_rtDescriptorBindings.addBinding(RTX_BINDING_DLSS_SPECULAR_ALBEDO, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_RAYGEN_BIT_KHR);
+  m_rtDescriptorBindings.addBinding(RTX_BINDING_DLSS_NORMAL_ROUGH, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_RAYGEN_BIT_KHR);
+  m_rtDescriptorBindings.addBinding(RTX_BINDING_DLSS_MOTION, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_RAYGEN_BIT_KHR);
+  m_rtDescriptorBindings.addBinding(RTX_BINDING_DLSS_LINEAR_DEPTH, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_RAYGEN_BIT_KHR);
+  m_rtDescriptorBindings.addBinding(RTX_BINDING_DLSS_SPEC_HIT_DIST, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_RAYGEN_BIT_KHR);
+#endif
+
   NVVK_CHECK(m_rtDescriptorBindings.createDescriptorSetLayout(m_device, 0, &m_rtDescriptorSetLayout));
   NVVK_DBG_NAME(m_rtDescriptorSetLayout);
 
@@ -90,6 +99,22 @@ void GaussianSplatting::initRtDescriptorSet()
                           m_meshSetVk.rtAccelerationStructures.tlas);
   }
 
+#ifdef WITH_DLSS_RR
+  // DLSS-RR G-buffer outputs
+  writeContainer.append(m_rtDescriptorBindings.getWriteSet(RTX_BINDING_DLSS_DIFFUSE_ALBEDO, m_rtDescriptorSet),
+                        m_gBuffers.getColorImageView(COLOR_DLSS_DIFFUSE_ALBEDO), VK_IMAGE_LAYOUT_GENERAL);
+  writeContainer.append(m_rtDescriptorBindings.getWriteSet(RTX_BINDING_DLSS_SPECULAR_ALBEDO, m_rtDescriptorSet),
+                        m_gBuffers.getColorImageView(COLOR_DLSS_SPECULAR_ALBEDO), VK_IMAGE_LAYOUT_GENERAL);
+  writeContainer.append(m_rtDescriptorBindings.getWriteSet(RTX_BINDING_DLSS_NORMAL_ROUGH, m_rtDescriptorSet),
+                        m_gBuffers.getColorImageView(COLOR_DLSS_NORMAL_ROUGH), VK_IMAGE_LAYOUT_GENERAL);
+  writeContainer.append(m_rtDescriptorBindings.getWriteSet(RTX_BINDING_DLSS_MOTION, m_rtDescriptorSet),
+                        m_gBuffers.getColorImageView(COLOR_DLSS_MOTION), VK_IMAGE_LAYOUT_GENERAL);
+  writeContainer.append(m_rtDescriptorBindings.getWriteSet(RTX_BINDING_DLSS_LINEAR_DEPTH, m_rtDescriptorSet),
+                        m_gBuffers.getColorImageView(COLOR_DLSS_LINEAR_DEPTH), VK_IMAGE_LAYOUT_GENERAL);
+  writeContainer.append(m_rtDescriptorBindings.getWriteSet(RTX_BINDING_DLSS_SPEC_HIT_DIST, m_rtDescriptorSet),
+                        m_gBuffers.getColorImageView(COLOR_DLSS_SPEC_HIT_DIST), VK_IMAGE_LAYOUT_GENERAL);
+#endif
+
   // actually write
   vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writeContainer.size()), writeContainer.data(), 0, nullptr);
 }
@@ -114,6 +139,23 @@ void GaussianSplatting::updateRtDescriptorSet()
                           m_gBuffers.getColorImageView(COLOR_AUX1), VK_IMAGE_LAYOUT_GENERAL);
     writeContainer.append(m_rtDescriptorBindings.getWriteSet(RTX_BINDING_OUTDEPTH, m_rtDescriptorSet),
                           m_gBuffers.getDepthImageView(), VK_IMAGE_LAYOUT_GENERAL);
+
+#ifdef WITH_DLSS_RR
+    // DLSS-RR G-buffer outputs
+    writeContainer.append(m_rtDescriptorBindings.getWriteSet(RTX_BINDING_DLSS_DIFFUSE_ALBEDO, m_rtDescriptorSet),
+                          m_gBuffers.getColorImageView(COLOR_DLSS_DIFFUSE_ALBEDO), VK_IMAGE_LAYOUT_GENERAL);
+    writeContainer.append(m_rtDescriptorBindings.getWriteSet(RTX_BINDING_DLSS_SPECULAR_ALBEDO, m_rtDescriptorSet),
+                          m_gBuffers.getColorImageView(COLOR_DLSS_SPECULAR_ALBEDO), VK_IMAGE_LAYOUT_GENERAL);
+    writeContainer.append(m_rtDescriptorBindings.getWriteSet(RTX_BINDING_DLSS_NORMAL_ROUGH, m_rtDescriptorSet),
+                          m_gBuffers.getColorImageView(COLOR_DLSS_NORMAL_ROUGH), VK_IMAGE_LAYOUT_GENERAL);
+    writeContainer.append(m_rtDescriptorBindings.getWriteSet(RTX_BINDING_DLSS_MOTION, m_rtDescriptorSet),
+                          m_gBuffers.getColorImageView(COLOR_DLSS_MOTION), VK_IMAGE_LAYOUT_GENERAL);
+    writeContainer.append(m_rtDescriptorBindings.getWriteSet(RTX_BINDING_DLSS_LINEAR_DEPTH, m_rtDescriptorSet),
+                          m_gBuffers.getColorImageView(COLOR_DLSS_LINEAR_DEPTH), VK_IMAGE_LAYOUT_GENERAL);
+    writeContainer.append(m_rtDescriptorBindings.getWriteSet(RTX_BINDING_DLSS_SPEC_HIT_DIST, m_rtDescriptorSet),
+                          m_gBuffers.getColorImageView(COLOR_DLSS_SPEC_HIT_DIST), VK_IMAGE_LAYOUT_GENERAL);
+#endif
+
     // let's update
     vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writeContainer.size()), writeContainer.data(), 0, nullptr);
   }
