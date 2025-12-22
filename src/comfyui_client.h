@@ -72,7 +72,7 @@ public:
     ComfyUIClient();
     ~ComfyUIClient();
 
-    bool connect(const std::string& host = "127.0.0.1", uint16_t port = 8188);
+    bool connect(const std::string& host = "192.168.1.200", uint16_t port = 8188);
     void disconnect();
 
     bool queueWorkflow(const std::filesystem::path& workflowPath,

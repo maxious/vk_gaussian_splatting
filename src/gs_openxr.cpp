@@ -69,6 +69,8 @@ GsOpenXr::~GsOpenXr()
 
 void GsOpenXr::shutdown()
 {
+  destroyActionSet();
+
   if(m_colorSwapchain.handle != XR_NULL_HANDLE)
   {
     xrDestroySwapchain(m_colorSwapchain.handle);
@@ -103,6 +105,7 @@ void GsOpenXr::shutdown()
 
   m_sessionRunning = false;
   m_shouldRender   = false;
+  m_hasControllers = false;
 }
 
 std::vector<const char*> GsOpenXr::getRequiredInstanceExtensions() const
@@ -145,6 +148,11 @@ bool GsOpenXr::initialize(VkInstance       vkInstance,
 
   if(!createReferenceSpace())
     return false;
+
+  if(!createActionSet())
+  {
+    LOGW("Failed to create OpenXR action set for controllers - locomotion disabled\n");
+  }
 
   LOGI("OpenXR initialized successfully. Per-eye resolution: %dx%d\n", m_perEyeExtent.width, m_perEyeExtent.height);
   return true;
@@ -813,6 +821,465 @@ void GsOpenXr::endFrame()
   {
     LOGE("xrEndFrame failed (result=%d)\n", (int)result);
   }
+}
+
+bool GsOpenXr::createActionSet()
+{
+  // Create action set
+  XrActionSetCreateInfo actionSetInfo{XR_TYPE_ACTION_SET_CREATE_INFO};
+  strcpy_s(actionSetInfo.actionSetName, "gameplay");
+  strcpy_s(actionSetInfo.localizedActionSetName, "Gameplay");
+  actionSetInfo.priority = 0;
+
+  XrResult result = xrCreateActionSet(m_instance, &actionSetInfo, &m_actionSet);
+  if(XR_FAILED(result))
+  {
+    LOGE("Failed to create action set (result=%d)\n", (int)result);
+    return false;
+  }
+
+  // Create subaction paths for left and right hands
+  xrStringToPath(m_instance, "/user/hand/left", &m_leftHandPath);
+  xrStringToPath(m_instance, "/user/hand/right", &m_rightHandPath);
+  XrPath handPaths[] = {m_leftHandPath, m_rightHandPath};
+
+  // Create thumbstick action (Vector2)
+  {
+    XrActionCreateInfo actionInfo{XR_TYPE_ACTION_CREATE_INFO};
+    actionInfo.actionType = XR_ACTION_TYPE_VECTOR2F_INPUT;
+    strcpy_s(actionInfo.actionName, "thumbstick");
+    strcpy_s(actionInfo.localizedActionName, "Thumbstick");
+    actionInfo.countSubactionPaths = 2;
+    actionInfo.subactionPaths = handPaths;
+    XR_CHECK(xrCreateAction(m_actionSet, &actionInfo, &m_thumbstickAction), "Failed to create thumbstick action");
+  }
+
+  // Create trigger action (Float)
+  {
+    XrActionCreateInfo actionInfo{XR_TYPE_ACTION_CREATE_INFO};
+    actionInfo.actionType = XR_ACTION_TYPE_FLOAT_INPUT;
+    strcpy_s(actionInfo.actionName, "trigger");
+    strcpy_s(actionInfo.localizedActionName, "Trigger");
+    actionInfo.countSubactionPaths = 2;
+    actionInfo.subactionPaths = handPaths;
+    XR_CHECK(xrCreateAction(m_actionSet, &actionInfo, &m_triggerAction), "Failed to create trigger action");
+  }
+
+  // Create grip action (Float)
+  {
+    XrActionCreateInfo actionInfo{XR_TYPE_ACTION_CREATE_INFO};
+    actionInfo.actionType = XR_ACTION_TYPE_FLOAT_INPUT;
+    strcpy_s(actionInfo.actionName, "grip");
+    strcpy_s(actionInfo.localizedActionName, "Grip");
+    actionInfo.countSubactionPaths = 2;
+    actionInfo.subactionPaths = handPaths;
+    XR_CHECK(xrCreateAction(m_actionSet, &actionInfo, &m_gripAction), "Failed to create grip action");
+  }
+
+  // Create thumbstick click action (Boolean)
+  {
+    XrActionCreateInfo actionInfo{XR_TYPE_ACTION_CREATE_INFO};
+    actionInfo.actionType = XR_ACTION_TYPE_BOOLEAN_INPUT;
+    strcpy_s(actionInfo.actionName, "thumbstick_click");
+    strcpy_s(actionInfo.localizedActionName, "Thumbstick Click");
+    actionInfo.countSubactionPaths = 2;
+    actionInfo.subactionPaths = handPaths;
+    XR_CHECK(xrCreateAction(m_actionSet, &actionInfo, &m_thumbstickClickAction), "Failed to create thumbstick click action");
+  }
+
+  // Create primary button action (A/X)
+  {
+    XrActionCreateInfo actionInfo{XR_TYPE_ACTION_CREATE_INFO};
+    actionInfo.actionType = XR_ACTION_TYPE_BOOLEAN_INPUT;
+    strcpy_s(actionInfo.actionName, "primary_button");
+    strcpy_s(actionInfo.localizedActionName, "Primary Button");
+    actionInfo.countSubactionPaths = 2;
+    actionInfo.subactionPaths = handPaths;
+    XR_CHECK(xrCreateAction(m_actionSet, &actionInfo, &m_primaryButtonAction), "Failed to create primary button action");
+  }
+
+  // Create secondary button action (B/Y)
+  {
+    XrActionCreateInfo actionInfo{XR_TYPE_ACTION_CREATE_INFO};
+    actionInfo.actionType = XR_ACTION_TYPE_BOOLEAN_INPUT;
+    strcpy_s(actionInfo.actionName, "secondary_button");
+    strcpy_s(actionInfo.localizedActionName, "Secondary Button");
+    actionInfo.countSubactionPaths = 2;
+    actionInfo.subactionPaths = handPaths;
+    XR_CHECK(xrCreateAction(m_actionSet, &actionInfo, &m_secondaryButtonAction), "Failed to create secondary button action");
+  }
+
+  // Create menu button action
+  {
+    XrActionCreateInfo actionInfo{XR_TYPE_ACTION_CREATE_INFO};
+    actionInfo.actionType = XR_ACTION_TYPE_BOOLEAN_INPUT;
+    strcpy_s(actionInfo.actionName, "menu_button");
+    strcpy_s(actionInfo.localizedActionName, "Menu Button");
+    actionInfo.countSubactionPaths = 2;
+    actionInfo.subactionPaths = handPaths;
+    XR_CHECK(xrCreateAction(m_actionSet, &actionInfo, &m_menuButtonAction), "Failed to create menu button action");
+  }
+
+  // Create pose action for controller tracking
+  {
+    XrActionCreateInfo actionInfo{XR_TYPE_ACTION_CREATE_INFO};
+    actionInfo.actionType = XR_ACTION_TYPE_POSE_INPUT;
+    strcpy_s(actionInfo.actionName, "hand_pose");
+    strcpy_s(actionInfo.localizedActionName, "Hand Pose");
+    actionInfo.countSubactionPaths = 2;
+    actionInfo.subactionPaths = handPaths;
+    XR_CHECK(xrCreateAction(m_actionSet, &actionInfo, &m_poseAction), "Failed to create pose action");
+  }
+
+  // Helper lambda for adding bindings
+  auto addBinding = [this](std::vector<XrActionSuggestedBinding>& bindings, XrAction action, const char* path) {
+    XrPath bindingPath;
+    xrStringToPath(m_instance, path, &bindingPath);
+    bindings.push_back({action, bindingPath});
+  };
+
+  // Suggest bindings for KHR Simple Controller (fallback for all controllers)
+  {
+    XrPath simpleProfile;
+    xrStringToPath(m_instance, "/interaction_profiles/khr/simple_controller", &simpleProfile);
+
+    std::vector<XrActionSuggestedBinding> bindings;
+    addBinding(bindings, m_poseAction, "/user/hand/left/input/aim/pose");
+    addBinding(bindings, m_poseAction, "/user/hand/right/input/aim/pose");
+    addBinding(bindings, m_triggerAction, "/user/hand/left/input/select/click");
+    addBinding(bindings, m_triggerAction, "/user/hand/right/input/select/click");
+
+    XrInteractionProfileSuggestedBinding suggestedBindings{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
+    suggestedBindings.interactionProfile = simpleProfile;
+    suggestedBindings.countSuggestedBindings = static_cast<uint32_t>(bindings.size());
+    suggestedBindings.suggestedBindings = bindings.data();
+
+    result = xrSuggestInteractionProfileBindings(m_instance, &suggestedBindings);
+    if(XR_FAILED(result))
+    {
+      LOGW("Failed to suggest KHR Simple Controller bindings (result=%d)\n", (int)result);
+    }
+    else
+    {
+      LOGI("Suggested KHR Simple Controller bindings\n");
+    }
+  }
+
+  // Suggest bindings for Oculus Touch controllers
+  {
+    XrPath oculusTouchProfile;
+    xrStringToPath(m_instance, "/interaction_profiles/oculus/touch_controller", &oculusTouchProfile);
+
+    std::vector<XrActionSuggestedBinding> bindings;
+
+    // Left controller bindings
+    addBinding(bindings, m_thumbstickAction, "/user/hand/left/input/thumbstick");
+    addBinding(bindings, m_triggerAction, "/user/hand/left/input/trigger/value");
+    addBinding(bindings, m_gripAction, "/user/hand/left/input/squeeze/value");
+    addBinding(bindings, m_thumbstickClickAction, "/user/hand/left/input/thumbstick/click");
+    addBinding(bindings, m_primaryButtonAction, "/user/hand/left/input/x/click");
+    addBinding(bindings, m_secondaryButtonAction, "/user/hand/left/input/y/click");
+    addBinding(bindings, m_menuButtonAction, "/user/hand/left/input/menu/click");
+    addBinding(bindings, m_poseAction, "/user/hand/left/input/aim/pose");
+
+    // Right controller bindings
+    addBinding(bindings, m_thumbstickAction, "/user/hand/right/input/thumbstick");
+    addBinding(bindings, m_triggerAction, "/user/hand/right/input/trigger/value");
+    addBinding(bindings, m_gripAction, "/user/hand/right/input/squeeze/value");
+    addBinding(bindings, m_thumbstickClickAction, "/user/hand/right/input/thumbstick/click");
+    addBinding(bindings, m_primaryButtonAction, "/user/hand/right/input/a/click");
+    addBinding(bindings, m_secondaryButtonAction, "/user/hand/right/input/b/click");
+    addBinding(bindings, m_poseAction, "/user/hand/right/input/aim/pose");
+
+    XrInteractionProfileSuggestedBinding suggestedBindings{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
+    suggestedBindings.interactionProfile = oculusTouchProfile;
+    suggestedBindings.countSuggestedBindings = static_cast<uint32_t>(bindings.size());
+    suggestedBindings.suggestedBindings = bindings.data();
+
+    result = xrSuggestInteractionProfileBindings(m_instance, &suggestedBindings);
+    if(XR_FAILED(result))
+    {
+      LOGW("Failed to suggest Oculus Touch bindings (result=%d)\n", (int)result);
+    }
+    else
+    {
+      LOGI("Suggested Oculus Touch bindings\n");
+    }
+  }
+
+  // Suggest bindings for Valve Index controllers
+  {
+    XrPath indexProfile;
+    xrStringToPath(m_instance, "/interaction_profiles/valve/index_controller", &indexProfile);
+
+    std::vector<XrActionSuggestedBinding> bindings;
+
+    // Left controller bindings
+    addBinding(bindings, m_thumbstickAction, "/user/hand/left/input/thumbstick");
+    addBinding(bindings, m_triggerAction, "/user/hand/left/input/trigger/value");
+    addBinding(bindings, m_gripAction, "/user/hand/left/input/squeeze/value");
+    addBinding(bindings, m_thumbstickClickAction, "/user/hand/left/input/thumbstick/click");
+    addBinding(bindings, m_primaryButtonAction, "/user/hand/left/input/a/click");
+    addBinding(bindings, m_secondaryButtonAction, "/user/hand/left/input/b/click");
+    addBinding(bindings, m_poseAction, "/user/hand/left/input/aim/pose");
+
+    // Right controller bindings
+    addBinding(bindings, m_thumbstickAction, "/user/hand/right/input/thumbstick");
+    addBinding(bindings, m_triggerAction, "/user/hand/right/input/trigger/value");
+    addBinding(bindings, m_gripAction, "/user/hand/right/input/squeeze/value");
+    addBinding(bindings, m_thumbstickClickAction, "/user/hand/right/input/thumbstick/click");
+    addBinding(bindings, m_primaryButtonAction, "/user/hand/right/input/a/click");
+    addBinding(bindings, m_secondaryButtonAction, "/user/hand/right/input/b/click");
+    addBinding(bindings, m_poseAction, "/user/hand/right/input/aim/pose");
+
+    XrInteractionProfileSuggestedBinding suggestedBindings{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
+    suggestedBindings.interactionProfile = indexProfile;
+    suggestedBindings.countSuggestedBindings = static_cast<uint32_t>(bindings.size());
+    suggestedBindings.suggestedBindings = bindings.data();
+
+    result = xrSuggestInteractionProfileBindings(m_instance, &suggestedBindings);
+    if(XR_FAILED(result))
+    {
+      LOGW("Failed to suggest Valve Index bindings (result=%d)\n", (int)result);
+    }
+    else
+    {
+      LOGI("Suggested Valve Index bindings\n");
+    }
+  }
+
+  // Attach action set to session
+  XrSessionActionSetsAttachInfo attachInfo{XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO};
+  attachInfo.countActionSets = 1;
+  attachInfo.actionSets = &m_actionSet;
+
+  result = xrAttachSessionActionSets(m_session, &attachInfo);
+  if(XR_FAILED(result))
+  {
+    LOGE("Failed to attach action sets (result=%d)\n", (int)result);
+    return false;
+  }
+  LOGI("Action sets attached to session\n");
+
+  // Create action spaces for controller poses (AFTER attaching action sets)
+  XrActionSpaceCreateInfo spaceInfo{XR_TYPE_ACTION_SPACE_CREATE_INFO};
+  spaceInfo.action = m_poseAction;
+  spaceInfo.poseInActionSpace.orientation.w = 1.0f;
+  spaceInfo.poseInActionSpace.orientation.x = 0.0f;
+  spaceInfo.poseInActionSpace.orientation.y = 0.0f;
+  spaceInfo.poseInActionSpace.orientation.z = 0.0f;
+  spaceInfo.poseInActionSpace.position.x = 0.0f;
+  spaceInfo.poseInActionSpace.position.y = 0.0f;
+  spaceInfo.poseInActionSpace.position.z = 0.0f;
+
+  spaceInfo.subactionPath = m_leftHandPath;
+  result = xrCreateActionSpace(m_session, &spaceInfo, &m_leftHandSpace);
+  if(XR_FAILED(result))
+  {
+    LOGW("Failed to create left hand space (result=%d)\n", (int)result);
+  }
+  else
+  {
+    LOGI("Created left hand action space\n");
+  }
+
+  spaceInfo.subactionPath = m_rightHandPath;
+  result = xrCreateActionSpace(m_session, &spaceInfo, &m_rightHandSpace);
+  if(XR_FAILED(result))
+  {
+    LOGW("Failed to create right hand space (result=%d)\n", (int)result);
+  }
+  else
+  {
+    LOGI("Created right hand action space\n");
+  }
+
+  m_hasControllers = true;
+  LOGI("OpenXR controller input initialized successfully\n");
+  return true;
+}
+
+void GsOpenXr::destroyActionSet()
+{
+  if(m_leftHandSpace != XR_NULL_HANDLE)
+  {
+    xrDestroySpace(m_leftHandSpace);
+    m_leftHandSpace = XR_NULL_HANDLE;
+  }
+
+  if(m_rightHandSpace != XR_NULL_HANDLE)
+  {
+    xrDestroySpace(m_rightHandSpace);
+    m_rightHandSpace = XR_NULL_HANDLE;
+  }
+
+  // Actions are destroyed when the action set is destroyed
+  if(m_actionSet != XR_NULL_HANDLE)
+  {
+    xrDestroyActionSet(m_actionSet);
+    m_actionSet = XR_NULL_HANDLE;
+  }
+
+  m_thumbstickAction = XR_NULL_HANDLE;
+  m_triggerAction = XR_NULL_HANDLE;
+  m_gripAction = XR_NULL_HANDLE;
+  m_thumbstickClickAction = XR_NULL_HANDLE;
+  m_primaryButtonAction = XR_NULL_HANDLE;
+  m_secondaryButtonAction = XR_NULL_HANDLE;
+  m_menuButtonAction = XR_NULL_HANDLE;
+  m_poseAction = XR_NULL_HANDLE;
+}
+
+void GsOpenXr::pollControllerInput()
+{
+  if(!m_hasControllers || !m_sessionRunning)
+    return;
+
+  syncControllerActions();
+  updateControllerPoses();
+
+  // Update locomotion input from thumbsticks
+  m_locomotionInput.move = m_leftController.thumbstick;
+  m_locomotionInput.turn = m_rightController.thumbstick;
+  m_locomotionInput.sprintPressed = m_leftController.thumbstickClick;
+
+  // Snap turn detection (trigger once when crossing threshold)
+  if(m_rightController.thumbstick.x < -SNAP_TURN_THRESHOLD && !m_snapTurnLeftTriggered)
+  {
+    m_locomotionInput.snapTurnLeft = true;
+    m_snapTurnLeftTriggered = true;
+  }
+  else if(m_rightController.thumbstick.x >= -SNAP_TURN_THRESHOLD)
+  {
+    m_locomotionInput.snapTurnLeft = false;
+    m_snapTurnLeftTriggered = false;
+  }
+  else
+  {
+    m_locomotionInput.snapTurnLeft = false;
+  }
+
+  if(m_rightController.thumbstick.x > SNAP_TURN_THRESHOLD && !m_snapTurnRightTriggered)
+  {
+    m_locomotionInput.snapTurnRight = true;
+    m_snapTurnRightTriggered = true;
+  }
+  else if(m_rightController.thumbstick.x <= SNAP_TURN_THRESHOLD)
+  {
+    m_locomotionInput.snapTurnRight = false;
+    m_snapTurnRightTriggered = false;
+  }
+  else
+  {
+    m_locomotionInput.snapTurnRight = false;
+  }
+}
+
+void GsOpenXr::syncControllerActions()
+{
+  XrActiveActionSet activeActionSet{};
+  activeActionSet.actionSet = m_actionSet;
+  activeActionSet.subactionPath = XR_NULL_PATH;
+
+  XrActionsSyncInfo syncInfo{XR_TYPE_ACTIONS_SYNC_INFO};
+  syncInfo.countActiveActionSets = 1;
+  syncInfo.activeActionSets = &activeActionSet;
+
+  XrResult result = xrSyncActions(m_session, &syncInfo);
+  if(XR_FAILED(result))
+  {
+    return;
+  }
+
+  // Helper to get float value
+  auto getFloat = [&](XrAction action, XrPath subactionPath) -> float {
+    XrActionStateGetInfo getInfo{XR_TYPE_ACTION_STATE_GET_INFO};
+    getInfo.action = action;
+    getInfo.subactionPath = subactionPath;
+
+    XrActionStateFloat state{XR_TYPE_ACTION_STATE_FLOAT};
+    if(XR_SUCCEEDED(xrGetActionStateFloat(m_session, &getInfo, &state)) && state.isActive)
+    {
+      return state.currentState;
+    }
+    return 0.0f;
+  };
+
+  // Helper to get boolean value
+  auto getBool = [&](XrAction action, XrPath subactionPath) -> bool {
+    XrActionStateGetInfo getInfo{XR_TYPE_ACTION_STATE_GET_INFO};
+    getInfo.action = action;
+    getInfo.subactionPath = subactionPath;
+
+    XrActionStateBoolean state{XR_TYPE_ACTION_STATE_BOOLEAN};
+    if(XR_SUCCEEDED(xrGetActionStateBoolean(m_session, &getInfo, &state)) && state.isActive)
+    {
+      return state.currentState == XR_TRUE;
+    }
+    return false;
+  };
+
+  // Helper to get vector2 value
+  auto getVector2 = [&](XrAction action, XrPath subactionPath) -> glm::vec2 {
+    XrActionStateGetInfo getInfo{XR_TYPE_ACTION_STATE_GET_INFO};
+    getInfo.action = action;
+    getInfo.subactionPath = subactionPath;
+
+    XrActionStateVector2f state{XR_TYPE_ACTION_STATE_VECTOR2F};
+    if(XR_SUCCEEDED(xrGetActionStateVector2f(m_session, &getInfo, &state)) && state.isActive)
+    {
+      return glm::vec2(state.currentState.x, state.currentState.y);
+    }
+    return glm::vec2(0.0f);
+  };
+
+  // Update left controller
+  m_leftController.thumbstick = getVector2(m_thumbstickAction, m_leftHandPath);
+  m_leftController.trigger = getFloat(m_triggerAction, m_leftHandPath);
+  m_leftController.grip = getFloat(m_gripAction, m_leftHandPath);
+  m_leftController.thumbstickClick = getBool(m_thumbstickClickAction, m_leftHandPath);
+  m_leftController.primaryButton = getBool(m_primaryButtonAction, m_leftHandPath);
+  m_leftController.secondaryButton = getBool(m_secondaryButtonAction, m_leftHandPath);
+  m_leftController.menuButton = getBool(m_menuButtonAction, m_leftHandPath);
+
+  // Update right controller
+  m_rightController.thumbstick = getVector2(m_thumbstickAction, m_rightHandPath);
+  m_rightController.trigger = getFloat(m_triggerAction, m_rightHandPath);
+  m_rightController.grip = getFloat(m_gripAction, m_rightHandPath);
+  m_rightController.thumbstickClick = getBool(m_thumbstickClickAction, m_rightHandPath);
+  m_rightController.primaryButton = getBool(m_primaryButtonAction, m_rightHandPath);
+  m_rightController.secondaryButton = getBool(m_secondaryButtonAction, m_rightHandPath);
+
+}
+
+void GsOpenXr::updateControllerPoses()
+{
+  auto locateSpace = [&](XrSpace space, ControllerInput& controller) {
+    if(space == XR_NULL_HANDLE)
+    {
+      controller.poseValid = false;
+      return;
+    }
+
+    XrSpaceLocation location{XR_TYPE_SPACE_LOCATION};
+    XrResult result = xrLocateSpace(space, m_referenceSpace, m_predictedDisplayTime, &location);
+
+    if(XR_SUCCEEDED(result) && (location.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) &&
+       (location.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT))
+    {
+      controller.position = glm::vec3(location.pose.position.x, location.pose.position.y, location.pose.position.z);
+      controller.orientation = glm::quat(location.pose.orientation.w, location.pose.orientation.x,
+                                         location.pose.orientation.y, location.pose.orientation.z);
+      controller.poseValid = true;
+    }
+    else
+    {
+      controller.poseValid = false;
+    }
+  };
+
+  locateSpace(m_leftHandSpace, m_leftController);
+  locateSpace(m_rightHandSpace, m_rightController);
 }
 
 }  // namespace vk_gaussian_splatting

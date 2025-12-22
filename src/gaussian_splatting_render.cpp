@@ -101,6 +101,17 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
     // Locate views with current clip planes
     glm::vec2 clipPlanes = cameraManip->getClipPlanes();
     m_xr->locateViews(clipPlanes.x, clipPlanes.y);
+
+    // Update locomotion from controller input (must be after beginFrame for valid time)
+    auto now = std::chrono::steady_clock::now();
+    if(!m_xrFirstFrame)
+    {
+      float deltaTime = std::chrono::duration<float>(now - m_xrLastFrameTime).count();
+      deltaTime = std::min(deltaTime, 0.1f);  // Clamp to avoid large jumps
+      updateXrLocomotion(deltaTime);
+    }
+    m_xrLastFrameTime = now;
+    m_xrFirstFrame = false;
   }
 #endif
 
@@ -346,9 +357,10 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
 
     // For 3DGUT off-axis, we need to compute the principal point shift in pixels
     // The formula is: shift = (eyeOffset * focalLength) / convergenceDistance
-    // focalLength in pixels = proj[0][0] * halfWidth / 2 (for half-viewport)
-    // But we compute it after the projection matrix is set, so we use a consistent approach
-    const float focalLengthPixels = (1.0f / tanf(fovRad * 0.5f)) * (halfWidth * 0.5f);
+    // For vertical FOV and per-eye viewport height, focal length in pixels is:
+    // f_pixels = (height / 2) / tan(fovY / 2)
+    const float height            = float(m_viewSize.y);
+    const float focalLengthPixels = (height * 0.5f) / tanf(fovRad * 0.5f);
 
     // Left eye
     StereoView left;

@@ -188,6 +188,7 @@ int main(int argc, char** argv)
     // bottom panel container
     ImGuiID memoryID = ImGui::DockBuilderSplitNode(viewportID, ImGuiDir_Down, 0.45F, nullptr, &viewportID);
     ImGui::DockBuilderDockWindow("Memory Statistics", memoryID);
+    ImGui::DockBuilderDockWindow("ComfyUI 3D Generator", memoryID);
     ImGuiID profilerID = ImGui::DockBuilderSplitNode(memoryID, ImGuiDir_Right, 0.33F, nullptr, &memoryID);
     ImGui::DockBuilderDockWindow("Profiler", profilerID);
     ImGuiID renderingID = ImGui::DockBuilderSplitNode(profilerID, ImGuiDir_Down, 0.30F, nullptr, &profilerID);

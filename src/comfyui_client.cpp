@@ -163,16 +163,72 @@ void ComfyUIClient::onOpen(websocketpp::connection_hdl hdl)
 
 void ComfyUIClient::onClose(websocketpp::connection_hdl hdl)
 {
+    std::string reason;
+    try
+    {
+        auto con = m_client.get_con_from_hdl(hdl);
+        auto code = con->get_remote_close_code();
+        auto closeReason = con->get_remote_close_reason();
+        reason = "Code " + std::to_string(code);
+        if (!closeReason.empty())
+        {
+            reason += ": " + closeReason;
+        }
+    }
+    catch (...) { reason = "Unknown reason"; }
+
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_lastError = "Connection closed - " + reason;
     m_state.store(State::Disconnected);
-    std::cout << "ComfyUI: WebSocket closed" << std::endl;
+    std::cout << "ComfyUI: WebSocket closed (" << reason << ")" << std::endl;
 }
 
 void ComfyUIClient::onFail(websocketpp::connection_hdl hdl)
 {
+    std::string errorDetail;
+    try
+    {
+        auto con = m_client.get_con_from_hdl(hdl);
+        auto ec = con->get_ec();
+        auto httpStatus = con->get_response_code();
+        auto uri = con->get_uri()->str();
+
+        if (ec)
+        {
+            errorDetail = ec.message();
+            if (ec == websocketpp::error::make_error_code(websocketpp::error::value::invalid_uri))
+                errorDetail += " (invalid URI format)";
+            else if (ec.value() == 111)  // Connection refused
+                errorDetail = "Connection refused - is ComfyUI running at " + uri + "?";
+            else if (ec.value() == 110)  // Connection timed out
+                errorDetail = "Connection timed out - check if " + uri + " is reachable";
+            else if (ec.value() == 113)  // No route to host
+                errorDetail = "No route to host - check network connection";
+        }
+        else if (httpStatus != 0)
+        {
+            errorDetail = "HTTP error " + std::to_string(httpStatus);
+            if (httpStatus == 404)
+                errorDetail += " - ComfyUI websocket endpoint not found";
+            else if (httpStatus == 403)
+                errorDetail += " - Access forbidden";
+            else if (httpStatus == 503)
+                errorDetail += " - ComfyUI service unavailable";
+        }
+        else
+        {
+            errorDetail = "Unknown connection failure to " + uri;
+        }
+    }
+    catch (...)
+    {
+        errorDetail = "Connection failed (unable to get details)";
+    }
+
     std::lock_guard<std::mutex> lock(m_mutex);
-    m_lastError = "WebSocket connection failed";
+    m_lastError = errorDetail;
     m_state.store(State::Error);
-    std::cout << "ComfyUI: WebSocket connection failed" << std::endl;
+    std::cout << "ComfyUI: " << errorDetail << std::endl;
 }
 
 void ComfyUIClient::onMessage(websocketpp::connection_hdl hdl, WsClient::message_ptr msg)

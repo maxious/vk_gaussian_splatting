@@ -40,6 +40,7 @@
 #include <glm/mat4x4.hpp>
 #include <glm/vec3.hpp>
 #include <glm/vec2.hpp>
+#include <glm/gtc/quaternion.hpp>
 #include <array>
 #include <vector>
 #include <optional>
@@ -119,6 +120,41 @@ public:
   // Get the predicted display time for the current frame (useful for motion prediction)
   XrTime getPredictedDisplayTime() const { return m_predictedDisplayTime; }
 
+  // Controller input data
+  struct ControllerInput
+  {
+    glm::vec2 thumbstick{0.0f, 0.0f};  // X: left/right, Y: forward/back
+    float     trigger{0.0f};           // 0.0 to 1.0
+    float     grip{0.0f};              // 0.0 to 1.0
+    bool      thumbstickClick{false};
+    bool      primaryButton{false};    // A/X button
+    bool      secondaryButton{false};  // B/Y button
+    bool      menuButton{false};
+    glm::vec3 position{0.0f};
+    glm::quat orientation{1.0f, 0.0f, 0.0f, 0.0f};
+    bool      poseValid{false};
+  };
+
+  struct LocomotionInput
+  {
+    glm::vec2 move{0.0f, 0.0f};        // Left thumbstick: forward/back, strafe
+    glm::vec2 turn{0.0f, 0.0f};        // Right thumbstick: turn (X only typically)
+    bool      sprintPressed{false};    // Left thumbstick click
+    bool      snapTurnLeft{false};     // Snap turn triggers
+    bool      snapTurnRight{false};
+  };
+
+  // Poll controller input - call after beginFrame()
+  void pollControllerInput();
+  
+  // Get controller data
+  const ControllerInput& getLeftController() const { return m_leftController; }
+  const ControllerInput& getRightController() const { return m_rightController; }
+  const LocomotionInput& getLocomotionInput() const { return m_locomotionInput; }
+  
+  // Check if controllers are available
+  bool hasControllers() const { return m_hasControllers; }
+
 private:
   // OpenXR handles
   XrInstance     m_instance      = XR_NULL_HANDLE;
@@ -185,6 +221,44 @@ private:
   static glm::mat4 createViewMatrix(const XrPosef& pose);
   static glm::mat4 createProjectionMatrix(const XrFovf& fov, float nearZ, float farZ);
   void loadXrFunctions();
+
+  // Controller input system
+  bool createActionSet();
+  void destroyActionSet();
+  void syncControllerActions();
+  void updateControllerPoses();
+
+  // Action set and actions
+  XrActionSet m_actionSet = XR_NULL_HANDLE;
+
+  // Controller actions
+  XrAction m_thumbstickAction     = XR_NULL_HANDLE;
+  XrAction m_triggerAction        = XR_NULL_HANDLE;
+  XrAction m_gripAction           = XR_NULL_HANDLE;
+  XrAction m_thumbstickClickAction = XR_NULL_HANDLE;
+  XrAction m_primaryButtonAction  = XR_NULL_HANDLE;
+  XrAction m_secondaryButtonAction = XR_NULL_HANDLE;
+  XrAction m_menuButtonAction     = XR_NULL_HANDLE;
+  XrAction m_poseAction           = XR_NULL_HANDLE;
+
+  // Action spaces for controller poses
+  XrSpace m_leftHandSpace  = XR_NULL_HANDLE;
+  XrSpace m_rightHandSpace = XR_NULL_HANDLE;
+
+  // Subaction paths
+  XrPath m_leftHandPath  = XR_NULL_PATH;
+  XrPath m_rightHandPath = XR_NULL_PATH;
+
+  // Controller state
+  ControllerInput m_leftController;
+  ControllerInput m_rightController;
+  LocomotionInput m_locomotionInput;
+  bool            m_hasControllers = false;
+
+  // Snap turn state
+  bool m_snapTurnLeftTriggered  = false;
+  bool m_snapTurnRightTriggered = false;
+  static constexpr float SNAP_TURN_THRESHOLD = 0.7f;
 };
 
 }  // namespace vk_gaussian_splatting

@@ -212,6 +212,7 @@ void GaussianSplatting::onPreRender()
       // Skip rendering this frame to let descriptor sets stabilize
       m_xrResizedThisFrame = true;
     }
+
   }
 #endif
 }
@@ -352,6 +353,80 @@ void GaussianSplatting::shutdownOpenXR()
     m_xr.reset();
   }
   m_xrInitialized = false;
+  m_xrFirstFrame = true;
+}
+
+void GaussianSplatting::updateXrLocomotion(float deltaTime)
+{
+  if(!m_xrInitialized || !m_xr || !m_xr->hasControllers())
+    return;
+
+  m_xr->pollControllerInput();
+  const auto& locomotion = m_xr->getLocomotionInput();
+
+  // Get HMD forward direction from the view matrix (use left eye as reference)
+  GsOpenXr::EyeData eyeData = m_xr->getEyeData(0);
+  glm::mat4 viewInverse = glm::inverse(eyeData.view);
+  glm::vec3 forward = -glm::vec3(viewInverse[2]);  // -Z is forward in view space
+  glm::vec3 right = glm::vec3(viewInverse[0]);     // +X is right
+
+  // Flatten forward/right to XZ plane for locomotion (ignore vertical component)
+  forward.y = 0.0f;
+  if(glm::length(forward) > 0.001f)
+    forward = glm::normalize(forward);
+  else
+    forward = glm::vec3(0.0f, 0.0f, -1.0f);
+  
+  right.y = 0.0f;
+  if(glm::length(right) > 0.001f)
+    right = glm::normalize(right);
+  else
+    right = glm::vec3(1.0f, 0.0f, 0.0f);
+
+  // Calculate movement speed
+  float speed = m_xrMoveSpeed;
+  if(locomotion.sprintPressed)
+  {
+    speed *= m_xrSprintMultiplier;
+  }
+
+  // Calculate movement - move scene opposite to desired player movement
+  glm::vec3 movement(0.0f);
+  movement -= forward * locomotion.move.y * speed * deltaTime;  // Forward/back (inverted for scene)
+  movement -= right * locomotion.move.x * speed * deltaTime;    // Strafe (inverted for scene)
+
+  // Apply movement to splat set translation
+  if(glm::length(movement) > 0.0001f)
+  {
+    m_splatSetVk.translation += movement;
+    computeTransform(m_splatSetVk.scale, m_splatSetVk.rotation, m_splatSetVk.translation,
+                     m_splatSetVk.transform, m_splatSetVk.transformInverse);
+  }
+
+  // Handle right stick - rotation (X) and vertical movement (Y)
+  bool transformChanged = false;
+
+  // Right stick X: rotate scene around Y axis
+  float turnAmount = locomotion.turn.x * glm::radians(m_xrSmoothTurnSpeed) * deltaTime;
+  if(std::abs(turnAmount) > 0.0001f)
+  {
+    m_splatSetVk.rotation.y += turnAmount;
+    transformChanged = true;
+  }
+
+  // Right stick Y: move scene up/down
+  float verticalMove = locomotion.turn.y * speed * deltaTime;
+  if(std::abs(verticalMove) > 0.0001f)
+  {
+    m_splatSetVk.translation.y -= verticalMove;
+    transformChanged = true;
+  }
+
+  if(transformChanged)
+  {
+    computeTransform(m_splatSetVk.scale, m_splatSetVk.rotation, m_splatSetVk.translation,
+                     m_splatSetVk.transform, m_splatSetVk.transformInverse);
+  }
 }
 
 void GaussianSplatting::copyToXrSwapchain(VkCommandBuffer cmd)

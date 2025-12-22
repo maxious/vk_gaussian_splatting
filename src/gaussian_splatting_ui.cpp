@@ -1094,6 +1094,25 @@ void GaussianSplattingUI::guiDrawRendererProperties()
     VkExtent2D perEye = m_xr->getPerEyeExtent();
     PE::Text("XR Status", "Connected");
     PE::Text("Per-eye resolution", "%dx%d", perEye.width, perEye.height);
+    PE::Text("Controllers", m_xr->hasControllers() ? "Active" : "Not detected");
+    
+    // Locomotion settings
+    if(m_xr->hasControllers())
+    {
+      ImGui::Separator();
+      PE::Text("## Locomotion", "");
+      PE::SliderFloat("Move Speed", &m_xrMoveSpeed, 0.5f, 10.0f, "%.1f m/s", 0, "Movement speed in meters per second");
+      PE::SliderFloat("Sprint Multiplier", &m_xrSprintMultiplier, 1.0f, 5.0f, "%.1fx", 0, "Speed multiplier when thumbstick is clicked");
+      PE::Checkbox("Smooth Turn", &m_xrUseSmoothTurn, "Use smooth turning instead of snap turning");
+      if(m_xrUseSmoothTurn)
+      {
+        PE::SliderFloat("Turn Speed", &m_xrSmoothTurnSpeed, 30.0f, 180.0f, "%.0f deg/s", 0, "Smooth turn speed in degrees per second");
+      }
+      else
+      {
+        PE::SliderFloat("Snap Angle", &m_xrSnapTurnAngle, 15.0f, 90.0f, "%.0f deg", 0, "Snap turn angle in degrees");
+      }
+    }
   }
   else if(m_useXrHmd)
   {
