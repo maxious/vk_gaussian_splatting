@@ -20,6 +20,13 @@
 #ifndef _GAUSSIAN_SPLATTING_UI_H_
 #define _GAUSSIAN_SPLATTING_UI_H_
 
+// Include winsock2 first to avoid winsock.h conflicts
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <windows.h>
+#endif
+
 #include <iostream>
 #include <string>
 #include <array>

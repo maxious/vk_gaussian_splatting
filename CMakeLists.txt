@@ -115,7 +115,7 @@ if(ENABLE_COMFYUI)
   FetchContent_Declare(
     websocketpp
     GIT_REPOSITORY https://github.com/zaphoyd/websocketpp.git
-    GIT_TAG        0.8.2
+    GIT_TAG        4dfe1be74e684acca19ac1cf96cce0df9eac2a2d
   )
   FetchContent_MakeAvailable(websocketpp)
   
