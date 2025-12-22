@@ -95,6 +95,10 @@
 #include "camera_set.h"
 #include "gaussian_splatting.h"
 
+#ifdef WITH_COMFYUI
+#include "comfyui_client.h"
+#endif
+
 // Json
 #include <tinygltf/json.hpp>
 using nlohmann::json;
@@ -219,6 +223,21 @@ private:
 
   // Debuging
   void dumpSplat(uint32_t splatIdx);
+
+#ifdef WITH_COMFYUI
+  // ComfyUI integration
+  void guiDrawComfyUIWindow();
+  void onComfyUIWorkflowComplete(const ComfyUIClient::WorkflowResult& result);
+
+  std::unique_ptr<ComfyUIClient> m_comfyClient;
+  bool                           m_showComfyUIWindow = true;
+  char                           m_comfyPrompt[4096] = "a cute cat sitting on a table, photorealistic, 8k";
+  char                           m_comfyNegativePrompt[2048] = "ugly, low quality, blurry";
+  char                           m_comfyHost[256] = "127.0.0.1";
+  int                            m_comfyPort = 8188;
+  std::filesystem::path          m_comfyWorkflowPath = "S:\\ComfyUI\\user\\default\\workflows\\z_image_turbo_3d.json";
+  std::string                    m_comfyStatusMessage;
+#endif
 };
 
 }  // namespace vk_gaussian_splatting

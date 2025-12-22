@@ -145,10 +145,24 @@ void GaussianSplattingUI::onAttach(nvapp::Application* app)
   m_ui.enumAdd(GUI_RAY_HIT_PER_PASS, 16, "16");
   m_ui.enumAdd(GUI_RAY_HIT_PER_PASS, 8, "8");
   m_ui.enumAdd(GUI_RAY_HIT_PER_PASS, 4, "4");
+
+#ifdef WITH_COMFYUI
+  m_comfyClient = std::make_unique<ComfyUIClient>();
+  m_comfyClient->setCompletionCallback([this](const ComfyUIClient::WorkflowResult& result) {
+    onComfyUIWorkflowComplete(result);
+  });
+#endif
 }
 
 void GaussianSplattingUI::onDetach()
 {
+#ifdef WITH_COMFYUI
+  if (m_comfyClient)
+  {
+    m_comfyClient->disconnect();
+    m_comfyClient.reset();
+  }
+#endif
   GaussianSplatting::onDetach();
 }
 
@@ -159,6 +173,12 @@ void GaussianSplattingUI::onResize(VkCommandBuffer cmd, const VkExtent2D& size)
 
 void GaussianSplattingUI::onPreRender()
 {
+#ifdef WITH_COMFYUI
+  if (m_comfyClient)
+  {
+    m_comfyClient->update();
+  }
+#endif
   GaussianSplatting::onPreRender();
 }
 
@@ -241,6 +261,10 @@ void GaussianSplattingUI::onUIMenu()
   {
     ImGui::MenuItem(ICON_MS_BOTTOM_PANEL_OPEN " V-Sync", "Ctrl+Shift+V", &v_sync);
     ImGui::MenuItem(ICON_MS_SPACE_DASHBOARD " ShowUI", "", &m_showUI);
+#ifdef WITH_COMFYUI
+    ImGui::Separator();
+    ImGui::MenuItem(ICON_MS_AUTO_AWESOME " ComfyUI Generator", "", &m_showComfyUIWindow);
+#endif
     ImGui::EndMenu();
   }
 #ifndef NDEBUG
@@ -547,6 +571,13 @@ void GaussianSplattingUI::onUIRender()
   guiDrawMemoryStatisticsWindow();
 
   guiDrawFooterBar();
+
+#ifdef WITH_COMFYUI
+  if (m_showComfyUIWindow)
+  {
+    guiDrawComfyUIWindow();
+  }
+#endif
 }
 
 void GaussianSplattingUI::guiDrawAssetsWindow()
@@ -2688,5 +2719,190 @@ void GaussianSplattingUI::dumpSplat(uint32_t splatIdx)
   //
   std::cout << "Splat " << splatIdx << " was dumped to c:\\Temp\\debug_splat.ply" << std::endl;
 }
+
+#ifdef WITH_COMFYUI
+void GaussianSplattingUI::guiDrawComfyUIWindow()
+{
+  ImGui::SetNextWindowSize(ImVec2(500, 450), ImGuiCond_FirstUseEver);
+  if (!ImGui::Begin("ComfyUI 3D Generator", &m_showComfyUIWindow))
+  {
+    ImGui::End();
+    return;
+  }
+
+  auto state = m_comfyClient ? m_comfyClient->getState() : ComfyUIClient::State::Disconnected;
+
+  ImGui::SeparatorText("Connection");
+
+  ImGui::SetNextItemWidth(200);
+  ImGui::InputText("Host", m_comfyHost, sizeof(m_comfyHost));
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(80);
+  ImGui::InputInt("Port", &m_comfyPort);
+
+  bool isConnected = (state == ComfyUIClient::State::Connected || state == ComfyUIClient::State::Running);
+
+  if (!isConnected)
+  {
+    if (ImGui::Button(ICON_MS_LINK " Connect"))
+    {
+      if (m_comfyClient)
+      {
+        m_comfyClient->connect(m_comfyHost, static_cast<uint16_t>(m_comfyPort));
+      }
+    }
+  }
+  else
+  {
+    if (ImGui::Button(ICON_MS_LINK_OFF " Disconnect"))
+    {
+      if (m_comfyClient)
+      {
+        m_comfyClient->disconnect();
+      }
+    }
+  }
+
+  ImGui::SameLine();
+  switch (state)
+  {
+    case ComfyUIClient::State::Disconnected:
+      ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Disconnected");
+      break;
+    case ComfyUIClient::State::Connecting:
+      ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Connecting...");
+      break;
+    case ComfyUIClient::State::Connected:
+      ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Connected");
+      break;
+    case ComfyUIClient::State::Running:
+      ImGui::TextColored(ImVec4(0.0f, 0.8f, 1.0f, 1.0f), "Running...");
+      break;
+    case ComfyUIClient::State::Completed:
+      ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.5f, 1.0f), "Completed");
+      break;
+    case ComfyUIClient::State::Error:
+      ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Error");
+      break;
+  }
+
+  ImGui::SeparatorText("Workflow");
+
+  std::string workflowStr = m_comfyWorkflowPath.string();
+  char workflowBuf[512];
+  strncpy(workflowBuf, workflowStr.c_str(), sizeof(workflowBuf) - 1);
+  workflowBuf[sizeof(workflowBuf) - 1] = '\0';
+  
+  ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 80);
+  if (ImGui::InputText("##workflow", workflowBuf, sizeof(workflowBuf)))
+  {
+    m_comfyWorkflowPath = workflowBuf;
+  }
+  ImGui::SameLine();
+  if (ImGui::Button(ICON_MS_FOLDER_OPEN " Browse"))
+  {
+    auto path = nvgui::windowOpenFileDialog(m_app->getWindowHandle(), "Select Workflow", "JSON Files|*.json");
+    if (!path.empty())
+    {
+      m_comfyWorkflowPath = path;
+    }
+  }
+
+  ImGui::SeparatorText("Prompt");
+
+  ImGui::Text("Positive Prompt:");
+  ImGui::InputTextMultiline("##positive", m_comfyPrompt, sizeof(m_comfyPrompt), 
+                            ImVec2(ImGui::GetContentRegionAvail().x, 80));
+
+  ImGui::Text("Negative Prompt:");
+  ImGui::InputTextMultiline("##negative", m_comfyNegativePrompt, sizeof(m_comfyNegativePrompt),
+                            ImVec2(ImGui::GetContentRegionAvail().x, 50));
+
+  ImGui::SeparatorText("Generate");
+
+  bool canGenerate = isConnected && state != ComfyUIClient::State::Running;
+  
+  if (!canGenerate)
+  {
+    ImGui::BeginDisabled();
+  }
+
+  if (ImGui::Button(ICON_MS_AUTO_AWESOME " Generate 3D Model", ImVec2(ImGui::GetContentRegionAvail().x, 40)))
+  {
+    if (m_comfyClient && std::filesystem::exists(m_comfyWorkflowPath))
+    {
+      m_comfyStatusMessage = "Queueing workflow...";
+      if (m_comfyClient->queueWorkflow(m_comfyWorkflowPath, m_comfyPrompt, m_comfyNegativePrompt))
+      {
+        m_comfyStatusMessage = "Workflow queued successfully";
+      }
+      else
+      {
+        m_comfyStatusMessage = "Failed: " + m_comfyClient->getLastError();
+      }
+    }
+    else if (!std::filesystem::exists(m_comfyWorkflowPath))
+    {
+      m_comfyStatusMessage = "Error: Workflow file not found";
+    }
+  }
+
+  if (!canGenerate)
+  {
+    ImGui::EndDisabled();
+  }
+
+  if (state == ComfyUIClient::State::Running && m_comfyClient)
+  {
+    int current = m_comfyClient->getProgressCurrent();
+    int total = m_comfyClient->getProgressTotal();
+    if (total > 0)
+    {
+      float progress = static_cast<float>(current) / static_cast<float>(total);
+      ImGui::ProgressBar(progress, ImVec2(ImGui::GetContentRegionAvail().x, 0), 
+                         (std::to_string(current) + "/" + std::to_string(total)).c_str());
+    }
+    else
+    {
+      ImGui::ProgressBar(-1.0f * static_cast<float>(ImGui::GetTime()), 
+                         ImVec2(ImGui::GetContentRegionAvail().x, 0), "Processing...");
+    }
+  }
+
+  if (!m_comfyStatusMessage.empty())
+  {
+    ImGui::TextWrapped("%s", m_comfyStatusMessage.c_str());
+  }
+
+  if (state == ComfyUIClient::State::Error && m_comfyClient)
+  {
+    ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "%s", m_comfyClient->getLastError().c_str());
+  }
+
+  ImGui::End();
+}
+
+void GaussianSplattingUI::onComfyUIWorkflowComplete(const ComfyUIClient::WorkflowResult& result)
+{
+  if (result.success && !result.plyPath.empty())
+  {
+    m_comfyStatusMessage = "Success! Loading: " + result.plyPath;
+    std::cout << "ComfyUI workflow completed. PLY path: " << result.plyPath << std::endl;
+
+    if (std::filesystem::exists(result.plyPath))
+    {
+      prmScene.sceneToLoadFilename = result.plyPath;
+    }
+    else
+    {
+      m_comfyStatusMessage = "Warning: PLY file not found at " + result.plyPath;
+    }
+  }
+  else
+  {
+    m_comfyStatusMessage = "Failed: " + result.errorMessage;
+  }
+}
+#endif  // WITH_COMFYUI
 
 }  // namespace vk_gaussian_splatting

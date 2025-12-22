@@ -97,6 +97,43 @@ endif()
 # additions of 3rdparty
 
 #####
+# WebSocket++ for ComfyUI integration
+option(ENABLE_COMFYUI "Enable ComfyUI WebSocket integration" ON)
+
+if(ENABLE_COMFYUI)
+  include(FetchContent)
+  
+  # Standalone ASIO (no Boost dependency)
+  FetchContent_Declare(
+    asio
+    GIT_REPOSITORY https://github.com/chriskohlhoff/asio.git
+    GIT_TAG        asio-1-30-2
+  )
+  FetchContent_MakeAvailable(asio)
+  
+  # WebSocket++ (header-only)
+  FetchContent_Declare(
+    websocketpp
+    GIT_REPOSITORY https://github.com/zaphoyd/websocketpp.git
+    GIT_TAG        0.8.2
+  )
+  FetchContent_MakeAvailable(websocketpp)
+  
+  # Create interface library for websocketpp
+  add_library(websocketpp INTERFACE)
+  target_include_directories(websocketpp INTERFACE 
+    ${websocketpp_SOURCE_DIR}
+    ${asio_SOURCE_DIR}/asio/include
+  )
+  target_compile_definitions(websocketpp INTERFACE 
+    ASIO_STANDALONE
+    _WEBSOCKETPP_CPP11_STL_
+  )
+  
+  message(STATUS "WebSocket++ enabled for ComfyUI integration")
+endif()
+
+#####
 # Include Vulkan Radix Sort
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/vrdx)
 
@@ -168,6 +205,12 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
   spz::spz
   meshoptimizer
 )
+
+# WebSocket++ linkage for ComfyUI
+if(ENABLE_COMFYUI)
+  target_compile_definitions(${PROJECT_NAME} PRIVATE WITH_COMFYUI)
+  target_link_libraries(${PROJECT_NAME} PRIVATE websocketpp)
+endif()
 
 # DLSS-RR linkage
 if(ENABLE_DLSS_RR AND NGX_FOUND)
