@@ -409,10 +409,10 @@ void main()
   
   // Diffuse albedo: use the accumulated radiance as approximation (normalized)
   float3 albedoApprox = fragRadiance / max(1.0, max(fragRadiance.x, max(fragRadiance.y, fragRadiance.z)));
-  dlssDiffuseAlbedo[outputPixel] = float4(albedoApprox, 1.0);
+  dlssDiffuseAlbedo[outputPixel] = float4(albedoApprox, 0.0);  // Alpha = metallic (0 for dielectric splats)
   
   // Specular albedo: Gaussian splats are typically diffuse, so minimal specular
-  dlssSpecularAlbedo[outputPixel] = float4(0.04, 0.04, 0.04, 1.0);  // Fresnel F0 for dielectric
+  dlssSpecularAlbedo[outputPixel] = float4(0.04, 0.04, 0.04, 0.0);  // Fresnel F0 for dielectric
   
   // Normal + roughness: use view direction as normal approximation (facing camera)
   // and high roughness since splats are diffuse

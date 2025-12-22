@@ -1,11 +1,26 @@
 cmake_minimum_required(VERSION 3.6...3.31)
 
+# Export compile commands for clangd/IDE support
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+# Enable ccache if available
+find_program(CCACHE_PROGRAM ccache)
+if(CCACHE_PROGRAM)
+  set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+  set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+  message(STATUS "Using ccache: ${CCACHE_PROGRAM}")
+endif()
+
 # get_filename_component(PROJECT_NAME ${CMAKE_CURRENT_SOURCE_DIR} NAME)
 set(PROJECT_NAME "vk_gaussian_splatting")
 Project(${PROJECT_NAME} LANGUAGES C CXX)
 
 # Add the cmake folder to the module path
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+
+# Override Slang version before NvproCore2 loads it
+set(Slang_VERSION "2025.24.2" CACHE STRING "Slang version" FORCE)
+
 find_package(NvproCore2 REQUIRED)
 
 # set with -DDISABLE_DEFAULT_SCENE=ON on command line or use cmake-gui to set the parameter
@@ -17,7 +32,7 @@ option(DISABLE_DEFAULT_SCENE "If set to true the default scene is not downloaded
 # DLSS-RR configuration
 #
 option(ENABLE_DLSS_RR "Enable DLSS Ray Reconstruction denoiser" ON)
-option(DLSS_USE_DEVELOP_LIBRARIES "Use non-distributable DLSS libraries with debug overlay (Ctrl-Alt-F12 to enable, Ctrl-Alt-F11 to switch views)" ON)
+option(DLSS_USE_DEVELOP_LIBRARIES "Use non-distributable DLSS libraries with debug overlay (Ctrl-Alt-F12 to enable, Ctrl-Alt-F11 to switch views)" OFF)
 
 if(ENABLE_DLSS_RR)
   find_package(NGX REQUIRED)
@@ -101,7 +116,7 @@ set_property(TARGET spz PROPERTY FOLDER "ThirdParty")
 #
 file(GLOB SOURCE_FILES src/*.*)
 # Remove "unity build" partial source files that are #included by gaussian_splatting.cpp
-list(FILTER SOURCE_FILES EXCLUDE REGEX "gaussian_splatting_(render|shaders|pipelines|rtx|postprocess)\\.cpp$")
+list(FILTER SOURCE_FILES EXCLUDE REGEX "gaussian_splatting_(render|shaders|pipelines|rtx|postprocess|dlss_rr|frame_ubo|sorting)\\.cpp$")
 file(GLOB SHADER_FILES shaders/*.slang shaders/*.h)
 file(GLOB EXTERN_FILES 3rdparty/miniply/*.*)
 

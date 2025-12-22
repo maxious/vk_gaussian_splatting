@@ -1166,7 +1166,7 @@ void GaussianSplattingUI::guiDrawRendererProperties()
   }
   if(m_dlssRRInitialized)
   {
-    PE::Text("Status", "Active (Frame %d)", m_dlssRRFrameIndex);
+    PE::Text("Status", "Active");
   }
   else
   {

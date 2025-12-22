@@ -124,6 +124,12 @@ int main(int argc, char** argv)
   };
   vkSetup.deviceExtensions.emplace_back(VK_NV_RAY_TRACING_INVOCATION_REORDER_EXTENSION_NAME, &serFeatures, false);
 
+#ifdef WITH_DLSS_RR
+  // Required for DLSS-RR CUDA-Vulkan interop
+  vkSetup.deviceExtensions.emplace_back(VK_NVX_BINARY_IMPORT_EXTENSION_NAME, nullptr, false);
+  vkSetup.deviceExtensions.emplace_back(VK_NVX_IMAGE_VIEW_HANDLE_EXTENSION_NAME, nullptr, false);
+#endif
+
   if(!appInfo.headless)
   {
     nvvk::addSurfaceExtensions(vkSetup.instanceExtensions);

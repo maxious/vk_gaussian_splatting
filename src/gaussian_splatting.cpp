@@ -191,6 +191,10 @@ void GaussianSplatting::deinitAll()
 {
   vkDeviceWaitIdle(m_device);
 
+#ifdef WITH_DLSS_RR
+  shutdownDlssRR();
+#endif
+
   m_canCollectReadback = false;
   deinitScene();
   m_splatSetVk.resetTransform();

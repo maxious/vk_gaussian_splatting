@@ -216,7 +216,7 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
         glm::uvec2 renderSize = glm::uvec2(m_viewSize.x, m_viewSize.y);
         NVSDK_NGX_Result result = m_dlssRR->denoise(cmd, renderSize, prmFrame.dlssJitter,
                                                      viewMatrix, projMatrix, m_dlssRRNeedsReset);
-        if(NVSDK_NGX_SUCCEEDED(result))
+        if(NVSDK_NGX_SUCCEED(result))
         {
           // Copy denoised result back to main color buffer
           VkImageCopy copyRegion = {};
