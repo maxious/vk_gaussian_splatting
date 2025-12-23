@@ -259,12 +259,7 @@ private:
   void initPipelinePostProcessing();
   void postProcess(VkCommandBuffer cmd);
 
-  // HDR10 encoding
 
-  void initDescriptorSetHdrEncode();
-  void updateDescriptorSetHdrEncode();
-  void initPipelineHdrEncode();
-  void hdrEncode(VkCommandBuffer cmd);
 
 protected:
   // name of the loaded scene if load is successfull
@@ -433,7 +428,7 @@ protected:
     VkShaderModule rtxRintShader{};    // Interrsection
     // Post processings
     VkShaderModule postComputeShader{};
-    VkShaderModule hdrEncodeComputeShader{};
+
     // Utility storage to process shaders in loop
     std::vector<VkShaderModule*> modules{};
     // true if all the shaders are succesfully build
@@ -526,16 +521,6 @@ protected:
   VkDescriptorSet          m_descriptorSetPostProcess       = VK_NULL_HANDLE;
   VkDescriptorPool         m_descriptorPoolPostProcess      = VK_NULL_HANDLE;
 
-  ///////////////////////////////
-  // HDR10 encoding
-
-  VkPipeline       m_computePipelineHdrEncode = VK_NULL_HANDLE;
-  VkPipelineLayout m_pipelineLayoutHdrEncode  = VK_NULL_HANDLE;
-
-  nvvk::DescriptorBindings m_descriptorBindingsHdrEncode{};
-  VkDescriptorSetLayout    m_descriptorSetLayoutHdrEncode = VK_NULL_HANDLE;
-  VkDescriptorSet          m_descriptorSetHdrEncode       = VK_NULL_HANDLE;
-  VkDescriptorPool         m_descriptorPoolHdrEncode      = VK_NULL_HANDLE;
 };
 
 }  // namespace vk_gaussian_splatting

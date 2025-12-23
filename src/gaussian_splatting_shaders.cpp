@@ -125,7 +125,6 @@ bool GaussianSplatting::initShaders(void)
   success &= compileSlangShader("threedgrt_raytrace.rint.slang", m_shaders.rtxRintShader);
   // Post processings
   success &= compileSlangShader("post.comp.slang", m_shaders.postComputeShader);
-  success &= compileSlangShader("hdr_encode.comp.slang", m_shaders.hdrEncodeComputeShader);
 
   if(!success)
     return (m_shaders.valid = false);

@@ -3117,7 +3117,8 @@ void GaussianSplattingUI::guiDrawVideoExportWindow()
       }
     }
 
-    static const char* codecs[]     = {"H.264 High Quality", "H.264 Lossless", "H.265/HEVC", "ProRes"};
+    static const char* codecs[]     = {"NVENC HEVC HQ", "NVENC H.264 HQ", "NVENC HEVC Lossless", "NVENC H.264 Lossless",
+                                       "H.264 Lossless (CPU)", "H.265 Lossless (CPU)", "ProRes 4444"};
     int                codecIdx     = static_cast<int>(m_videoSettings.codec);
     if(PE::entry(
            "Codec", [&]() { return ImGui::Combo("##Codec", &codecIdx, codecs, IM_ARRAYSIZE(codecs)); }, "Video encoding codec"))
@@ -3126,9 +3127,17 @@ void GaussianSplattingUI::guiDrawVideoExportWindow()
     }
 
     bool ffmpegAvailable = VideoRenderer::isFFmpegAvailable();
+    bool nvencAvailable  = VideoRenderer::supportsNVENC();
     if(ffmpegAvailable)
     {
-      ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), ICON_MS_CHECK_CIRCLE " FFmpeg available");
+      if(nvencAvailable)
+      {
+        ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), ICON_MS_CHECK_CIRCLE " FFmpeg + NVENC available");
+      }
+      else
+      {
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), ICON_MS_CHECK_CIRCLE " FFmpeg available (no NVENC)");
+      }
     }
     else
     {

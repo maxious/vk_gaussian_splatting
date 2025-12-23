@@ -122,9 +122,7 @@
 #define POST_BINDING_MAIN_IMAGE 1  // the image that is presented
 #define POST_BINDING_AUX1_IMAGE 2  // optional aux image to be accumulated (for example)
 
-// bindings for HDR10 encode compute shader
-#define HDR_BINDING_INPUT_IMAGE 1   // linear HDR input (BT.709)
-#define HDR_BINDING_OUTPUT_IMAGE 2  // PQ-encoded HDR10 output (BT.2020)
+
 
 // location for vertex attributes
 // (only for vertex shader mode)

@@ -39,10 +39,13 @@ enum class VideoOutputFormat
 
 enum class VideoCodec
 {
-  CODEC_H264_HIGH,     // H.264 high quality (CRF 18)
-  CODEC_H264_LOSSLESS, // H.264 lossless (CRF 0)
-  CODEC_H265_HIGH,     // H.265/HEVC high quality
-  CODEC_PRORES,        // Apple ProRes (if available)
+  CODEC_NVENC_HEVC_HQ,        // NVIDIA NVENC HEVC high quality (GPU, default)
+  CODEC_NVENC_H264_HQ,        // NVIDIA NVENC H.264 high quality (GPU)
+  CODEC_NVENC_HEVC_LOSSLESS,  // NVIDIA NVENC HEVC lossless (GPU)
+  CODEC_NVENC_H264_LOSSLESS,  // NVIDIA NVENC H.264 lossless (GPU)
+  CODEC_H264,                 // H.264 lossless (CPU)
+  CODEC_H265,                 // H.265/HEVC lossless (CPU)
+  CODEC_PRORES,               // Apple ProRes 4444
 };
 
 struct VideoRenderSettings
@@ -60,7 +63,7 @@ struct VideoRenderSettings
   bool  stereoOffAxis  = true;
 
   VideoOutputFormat outputFormat = VideoOutputFormat::FORMAT_PNG;
-  VideoCodec        codec        = VideoCodec::CODEC_H264_HIGH;
+  VideoCodec        codec        = VideoCodec::CODEC_NVENC_HEVC_HQ;
 
   std::filesystem::path outputDir;
   std::string           outputName = "video";
@@ -105,6 +108,8 @@ public:
   static int getFFmpegMajorVersion();
 
   static bool supportsHDR10Encoding();
+
+  static bool supportsNVENC();
 
   void startRender(const VideoRenderSettings&                        settings,
                    const Camera&                                      startCamera,

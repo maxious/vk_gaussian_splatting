@@ -124,6 +124,47 @@ bool VideoRenderer::supportsHDR10Encoding()
   return getFFmpegMajorVersion() >= 6;
 }
 
+bool VideoRenderer::supportsNVENC()
+{
+  static int cached = -1;
+  if(cached >= 0)
+    return cached == 1;
+
+#ifdef _WIN32
+  FILE* pipe = _popen("ffmpeg -encoders 2>nul", "r");
+#else
+  FILE* pipe = popen("ffmpeg -encoders 2>/dev/null", "r");
+#endif
+
+  if(!pipe)
+  {
+    cached = 0;
+    return false;
+  }
+
+  char buffer[512];
+  bool found = false;
+
+  while(fgets(buffer, sizeof(buffer), pipe) != nullptr)
+  {
+    std::string line = buffer;
+    if(line.find("hevc_nvenc") != std::string::npos)
+    {
+      found = true;
+      break;
+    }
+  }
+
+#ifdef _WIN32
+  _pclose(pipe);
+#else
+  pclose(pipe);
+#endif
+
+  cached = found ? 1 : 0;
+  return found;
+}
+
 void VideoRenderer::startRender(const VideoRenderSettings&                        settings,
                                 const Camera&                                      startCamera,
                                 const std::vector<Camera>&                         keyframes,
@@ -314,41 +355,71 @@ std::string VideoRenderer::buildFFmpegCommand(const VideoRenderSettings& setting
   ss << "-framerate " << settings.frameRate << " ";
   ss << "-i \"" << inputPattern << "\" ";
 
-  // Pad to even dimensions (required by H.264/H.265)
-  ss << "-vf \"pad=ceil(iw/2)*2:ceil(ih/2)*2\" ";
-
   if(canEncodeHDR)
   {
-    // HDR10 encoding requires H.265 with 10-bit color and BT.2020 color space
-    ss << "-c:v libx265 -crf 18 -preset slow ";
+    // HDR10 encoding: use zscale to convert linear BT.709 to BT.2020 with PQ transfer
+    // tin=linear, pin=bt709 = input is linear BT.709 (from .hdr files)
+    // t=smpte2084, p=bt2020, m=bt2020nc = output is HDR10 (BT.2020 + PQ)
+    // Also pad to even dimensions (required by H.265)
+    ss << "-vf \"zscale=tin=linear:pin=bt709:t=smpte2084:p=bt2020:m=bt2020nc,pad=ceil(iw/2)*2:ceil(ih/2)*2\" ";
+
+    // Use NVENC HEVC for HDR if an NVENC codec is selected, otherwise fall back to libx265
+    // Note: HDR requires HEVC, so NVENC H.264 selections also use HEVC for HDR
+    bool useNvenc = (settings.codec == VideoCodec::CODEC_NVENC_HEVC_HQ || settings.codec == VideoCodec::CODEC_NVENC_H264_HQ
+                     || settings.codec == VideoCodec::CODEC_NVENC_HEVC_LOSSLESS
+                     || settings.codec == VideoCodec::CODEC_NVENC_H264_LOSSLESS);
+    bool useLossless = (settings.codec == VideoCodec::CODEC_NVENC_HEVC_LOSSLESS
+                        || settings.codec == VideoCodec::CODEC_NVENC_H264_LOSSLESS);
+
+    if(useNvenc)
+    {
+      if(useLossless)
+      {
+        ss << "-c:v hevc_nvenc -preset p7 -tune lossless -rc constqp -qp 0 ";
+      }
+      else
+      {
+        ss << "-c:v hevc_nvenc -preset p7 -tune hq -rc vbr -cq 18 -b:v 0 -spatial-aq 1 -aq-strength 8 ";
+      }
+    }
+    else
+    {
+      ss << "-c:v libx265 -preset slow -x265-params \"lossless=1:hdr-opt=1:repeat-headers=1:max-cll=1000,400\" ";
+    }
     ss << "-pix_fmt yuv420p10le ";
-    ss << "-x265-params \"";
-    ss << "colorprim=bt2020:";
-    ss << "transfer=smpte2084:";
-    ss << "colormatrix=bt2020nc:";
-    ss << "hdr-opt=1:";
-    ss << "repeat-headers=1:";
-    ss << "max-cll=1000,400\" ";
     ss << "-color_primaries bt2020 ";
     ss << "-color_trc smpte2084 ";
     ss << "-colorspace bt2020nc ";
   }
   else
   {
+    // Pad to even dimensions (required by H.264/H.265)
+    ss << "-vf \"pad=ceil(iw/2)*2:ceil(ih/2)*2\" ";
     switch(settings.codec)
     {
-      case VideoCodec::CODEC_H264_LOSSLESS:
+      case VideoCodec::CODEC_NVENC_HEVC_HQ:
+        ss << "-c:v hevc_nvenc -preset p7 -tune hq -rc vbr -cq 18 -b:v 0 -spatial-aq 1 -aq-strength 8 ";
+        break;
+      case VideoCodec::CODEC_NVENC_H264_HQ:
+        ss << "-c:v h264_nvenc -preset p7 -tune hq -rc vbr -cq 18 -b:v 0 -spatial-aq 1 -aq-strength 8 ";
+        break;
+      case VideoCodec::CODEC_NVENC_HEVC_LOSSLESS:
+        ss << "-c:v hevc_nvenc -preset p7 -tune lossless -rc constqp -qp 0 ";
+        break;
+      case VideoCodec::CODEC_NVENC_H264_LOSSLESS:
+        ss << "-c:v h264_nvenc -preset p7 -tune lossless -rc constqp -qp 0 ";
+        break;
+      case VideoCodec::CODEC_H264:
         ss << "-c:v libx264 -crf 0 -preset veryslow ";
         break;
-      case VideoCodec::CODEC_H265_HIGH:
-        ss << "-c:v libx265 -crf 18 -preset slow ";
+      case VideoCodec::CODEC_H265:
+        ss << "-c:v libx265 -preset slow -x265-params lossless=1 ";
         break;
       case VideoCodec::CODEC_PRORES:
-        ss << "-c:v prores_ks -profile:v 3 ";
+        ss << "-c:v prores_ks -profile:v 4 ";  // ProRes 4444 for highest quality
         break;
-      case VideoCodec::CODEC_H264_HIGH:
       default:
-        ss << "-c:v libx264 -crf 18 -preset slow ";
+        ss << "-c:v hevc_nvenc -preset p7 -tune hq -rc vbr -cq 18 -b:v 0 -spatial-aq 1 -aq-strength 8 ";
         break;
     }
     ss << "-pix_fmt yuv420p ";
