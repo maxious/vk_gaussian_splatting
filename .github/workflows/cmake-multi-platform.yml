@@ -126,7 +126,7 @@ jobs:
         Copy-Item "${{ github.workspace }}/shaders" $filesDir -Recurse -Force
         
         # Copy nvshaders from nvpro_core2 (required at runtime)
-        Copy-Item "${{ github.workspace }}/nvpro_core2/nvshaders_host/nvshaders" $artifactDir -Recurse -Force
+        Copy-Item "${{ github.workspace }}/nvpro_core2/nvshaders" $artifactDir -Recurse -Force
         
         # Copy demo scene if it was downloaded
         $downloadDir = "${{ github.workspace }}/_downloaded_resources"
