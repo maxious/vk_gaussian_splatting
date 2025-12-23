@@ -64,7 +64,7 @@ jobs:
         install_runtime: true
         cache: true
 
-    # Linux-specific dependencies (from README.md)
+    # Linux-specific dependencies (from README.md + OpenGL for OpenXR)
     - name: Install Linux dependencies
       if: runner.os == 'Linux'
       run: |
@@ -78,7 +78,16 @@ jobs:
           libxinerama-dev \
           libxrandr-dev \
           libxxf86vm-dev \
-          libtbb-dev
+          libtbb-dev \
+          libgl1-mesa-dev \
+          libglu1-mesa-dev
+
+    # Cache CMake _deps folder (Slang, DLSS, OpenXR downloads)
+    - name: Cache CMake dependencies
+      uses: actions/cache@v4
+      with:
+        path: ${{ github.workspace }}/build/_deps
+        key: cmake-deps-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', 'nvpro_core2/cmake/FindSlang.cmake', 'nvpro_core2/cmake/FindNGX.cmake') }}
 
     - name: Configure CMake
       # Configure CMake in a 'build' subdirectory. `CMAKE_BUILD_TYPE` is only required if you are using a single-configuration generator such as make.
