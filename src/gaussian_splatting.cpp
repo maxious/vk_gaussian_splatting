@@ -181,6 +181,7 @@ void GaussianSplatting::onResize(VkCommandBuffer cmd, const VkExtent2D& viewport
   NVVK_CHECK(m_gBuffers.update(cmd, viewportSize));
   updateRtDescriptorSet();
   updateDescriptorSetPostProcessing();
+  updateDescriptorSetHdrEncode();
   resetFrameCounter();
 }
 
@@ -208,6 +209,7 @@ void GaussianSplatting::onPreRender()
       NVVK_CHECK(m_gBuffers.update(cmd, xrExtent));
       updateRtDescriptorSet();
       updateDescriptorSetPostProcessing();
+      updateDescriptorSetHdrEncode();
       resetFrameCounter();
       m_app->submitAndWaitTempCmdBuffer(cmd);
 
@@ -282,6 +284,10 @@ bool GaussianSplatting::initAll()
   // Post processing
   initDescriptorSetPostProcessing();
   initPipelinePostProcessing();
+
+  // HDR10 encoding
+  initDescriptorSetHdrEncode();
+  initPipelineHdrEncode();
 
   return true;
 }
@@ -623,4 +629,5 @@ void GaussianSplatting::copyToXrSwapchain(VkCommandBuffer cmd)
 #include "gaussian_splatting_pipelines.cpp"
 #include "gaussian_splatting_rtx.cpp"
 #include "gaussian_splatting_postprocess.cpp"
+#include "gaussian_splatting_hdr_encode.cpp"
 #include "gaussian_splatting_dlss_rr.cpp"

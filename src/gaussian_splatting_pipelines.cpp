@@ -335,6 +335,13 @@ void GaussianSplatting::deinitPipelines()
   TEST_DESTROY_AND_RESET(m_descriptorPoolPostProcess, vkDestroyDescriptorPool(m_device, m_descriptorPoolPostProcess, nullptr));
   TEST_DESTROY_AND_RESET(m_descriptorSetLayoutPostProcess,
                          vkDestroyDescriptorSetLayout(m_device, m_descriptorSetLayoutPostProcess, nullptr));
+
+  // HDR encode
+  TEST_DESTROY_AND_RESET(m_computePipelineHdrEncode, vkDestroyPipeline(m_device, m_computePipelineHdrEncode, nullptr));
+  TEST_DESTROY_AND_RESET(m_pipelineLayoutHdrEncode, vkDestroyPipelineLayout(m_device, m_pipelineLayoutHdrEncode, nullptr));
+  TEST_DESTROY_AND_RESET(m_descriptorPoolHdrEncode, vkDestroyDescriptorPool(m_device, m_descriptorPoolHdrEncode, nullptr));
+  TEST_DESTROY_AND_RESET(m_descriptorSetLayoutHdrEncode,
+                         vkDestroyDescriptorSetLayout(m_device, m_descriptorSetLayoutHdrEncode, nullptr));
 }
 
 void GaussianSplatting::initRendererBuffers()

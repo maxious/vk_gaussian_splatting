@@ -122,6 +122,10 @@
 #define POST_BINDING_MAIN_IMAGE 1  // the image that is presented
 #define POST_BINDING_AUX1_IMAGE 2  // optional aux image to be accumulated (for example)
 
+// bindings for HDR10 encode compute shader
+#define HDR_BINDING_INPUT_IMAGE 1   // linear HDR input (BT.709)
+#define HDR_BINDING_OUTPUT_IMAGE 2  // PQ-encoded HDR10 output (BT.2020)
+
 // location for vertex attributes
 // (only for vertex shader mode)
 #define ATTRIBUTE_LOC_POSITION 0
@@ -195,6 +199,12 @@ struct FrameInfo
   // Previous frame matrices for motion vector calculation
   float4x4 prevViewMatrix;
   float4x4 prevProjectionMatrix;
+
+  // HDR10 encoding parameters
+  float hdrPaperWhiteNits DEFAULT(200.0f);  // SDR white level in nits (typical: 80-400)
+  float hdrMaxNits DEFAULT(1000.0f);        // Display peak luminance in nits
+  float hdrExposure DEFAULT(1.0f);          // Exposure multiplier
+  int32_t hdrEnabled DEFAULT(0);            // 0 = disabled, 1 = enabled
 };
 
 // Push constant for raster
