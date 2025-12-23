@@ -61,10 +61,8 @@ jobs:
       uses: jakoch/install-vulkan-sdk-action@v1
       with:
         vulkan_version: 1.4.309.0
-        optional_components: com.lunarg.vulkan.glslang
         install_runtime: true
         cache: true
-        stripdown: true
 
     # Linux-specific dependencies
     - name: Install Linux dependencies
