@@ -80,7 +80,16 @@ jobs:
           libxxf86vm-dev \
           libtbb-dev \
           libgl1-mesa-dev \
-          libglu1-mesa-dev
+          libglu1-mesa-dev \
+          ccache
+
+    # Setup ccache for faster rebuilds (CMakeLists.txt auto-detects ccache)
+    - name: Setup ccache
+      uses: hendrikmuhs/ccache-action@v1
+      with:
+        key: ${{ matrix.os }}-${{ matrix.c_compiler }}-${{ matrix.build_type }}
+        max-size: 500M
+        variant: ${{ runner.os == 'Windows' && 'sccache' || 'ccache' }}
 
     # Cache CMake _deps folder (Slang, DLSS, OpenXR downloads)
     - name: Cache CMake dependencies
