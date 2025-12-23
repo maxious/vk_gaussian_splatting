@@ -122,7 +122,23 @@ jobs:
       # See https://cmake.org/cmake/help/latest/manual/ctest.1.html for more detail
       run: ctest --build-config ${{ matrix.build_type }}
 
-    # Prepare artifacts for upload (Windows only for now - primary target)
+    # List build outputs for debugging
+    - name: List build outputs
+      shell: bash
+      run: |
+        echo "=== Build directory contents ==="
+        ls -la ${{ steps.strings.outputs.build-output-dir }}
+        echo ""
+        echo "=== Release/bin subdirectory (if exists) ==="
+        ls -la ${{ steps.strings.outputs.build-output-dir }}/${{ matrix.build_type }} 2>/dev/null || ls -la ${{ steps.strings.outputs.build-output-dir }}/bin 2>/dev/null || echo "No Release or bin dir"
+        echo ""
+        echo "=== Executable files ==="
+        find ${{ steps.strings.outputs.build-output-dir }} -type f \( -name "*.exe" -o -name "vk_gaussian_splatting" -o -name "*.so" -o -name "*.dll" \) 2>/dev/null | head -50
+        echo ""
+        echo "=== Shader directories ==="
+        find ${{ steps.strings.outputs.build-output-dir }} -type d -name "shaders" -o -name "nvshaders" 2>/dev/null | head -20
+
+    # Prepare artifacts for upload
     - name: Prepare Windows artifacts
       if: runner.os == 'Windows'
       shell: pwsh
