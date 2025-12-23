@@ -121,3 +121,71 @@ jobs:
       # Execute tests defined by the CMake configuration. Note that --build-config is needed because the default Windows generator is a multi-config generator (Visual Studio generator).
       # See https://cmake.org/cmake/help/latest/manual/ctest.1.html for more detail
       run: ctest --build-config ${{ matrix.build_type }}
+
+    # Prepare artifacts for upload (Windows only for now - primary target)
+    - name: Prepare Windows artifacts
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $artifactDir = "${{ github.workspace }}/artifact"
+        New-Item -ItemType Directory -Force -Path $artifactDir
+        # Copy executable and required DLLs
+        Copy-Item "${{ steps.strings.outputs.build-output-dir }}/${{ matrix.build_type }}/*.exe" $artifactDir -Force
+        Copy-Item "${{ steps.strings.outputs.build-output-dir }}/${{ matrix.build_type }}/*.dll" $artifactDir -Force -ErrorAction SilentlyContinue
+        # Copy shaders
+        if (Test-Path "${{ steps.strings.outputs.build-output-dir }}/${{ matrix.build_type }}/shaders") {
+          Copy-Item "${{ steps.strings.outputs.build-output-dir }}/${{ matrix.build_type }}/shaders" $artifactDir -Recurse -Force
+        }
+        # Copy nvshaders
+        if (Test-Path "${{ steps.strings.outputs.build-output-dir }}/${{ matrix.build_type }}/nvshaders") {
+          Copy-Item "${{ steps.strings.outputs.build-output-dir }}/${{ matrix.build_type }}/nvshaders" $artifactDir -Recurse -Force
+        }
+
+    - name: Upload build artifacts
+      if: runner.os == 'Windows'
+      uses: actions/upload-artifact@v4
+      with:
+        name: vk_gaussian_splatting-${{ matrix.os }}-${{ matrix.build_type }}
+        path: ${{ github.workspace }}/artifact
+        retention-days: 14
+
+  # Create a pre-release with all artifacts
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/vr-sbs'
+    permissions:
+      contents: write
+    
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts
+
+    - name: Create zip archives
+      run: |
+        cd artifacts
+        for dir in */; do
+          zip -r "${dir%/}.zip" "$dir"
+        done
+
+    - name: Update pre-release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: dev-build
+        name: Development Build
+        body: |
+          🚧 **Automated development build from vr-sbs branch**
+          
+          Commit: ${{ github.sha }}
+          
+          ⚠️ This is an unstable pre-release build. Use at your own risk.
+          
+          Requires:
+          - NVIDIA GPU with Vulkan 1.4 support
+          - Latest NVIDIA drivers for DLSS-RR
+          - OpenXR runtime for VR features
+        prerelease: true
+        files: artifacts/*.zip
+        generate_release_notes: false
