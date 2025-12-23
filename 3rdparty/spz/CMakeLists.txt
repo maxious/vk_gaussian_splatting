@@ -5,8 +5,10 @@ project(spz
   LANGUAGES C CXX
   VERSION 1.1.0)
 
-# zlib is required to build the project
+# zlib is provided by parent project (nvpro_core2)
 #find_package(ZLIB REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 set(spz_sources
   "${CMAKE_CURRENT_SOURCE_DIR}/src/cc/load-spz.cc"
@@ -21,9 +23,10 @@ set(spz_headers
 )
 
 # create the library and configure it
-add_library(spz STATIC ${spz_sources} ${spz_headers} )
+add_library(spz STATIC ${spz_sources} ${spz_headers})
 add_library(spz::spz ALIAS spz)
 
+# Link to zlib from parent project
 target_link_libraries(spz PRIVATE zlib)
 
 target_include_directories(spz

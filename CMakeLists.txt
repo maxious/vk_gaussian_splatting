@@ -173,10 +173,10 @@ if(ENABLE_COMFYUI)
 endif()
 
 #####
-# Include Vulkan Radix Sort
+# Include Vulkan Radix Sort (header-only library)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/vrdx)
 
-set_property(TARGET vk_radix_sort PROPERTY FOLDER "ThirdParty/vrdx")
+# vk_radix_sort is now an INTERFACE library, only set folder for shader targets
 set_property(TARGET spine_slang PROPERTY FOLDER "ThirdParty/vrdx")
 set_property(TARGET downsweep_slang PROPERTY FOLDER "ThirdParty/vrdx")
 set_property(TARGET downsweep_key_value_slang PROPERTY FOLDER "ThirdParty/vrdx")
@@ -200,7 +200,7 @@ include_directories(
   ${CMAKE_CURRENT_SOURCE_DIR}/src 
   ${CMAKE_CURRENT_SOURCE_DIR}/shaders 
   ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/miniply
-  ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/vrdx
+  ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/vrdx/include
   ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/spz/src/cc
   ${CMAKE_CURRENT_SOURCE_DIR}/nvpro_core2/third_party/meshoptimizer/src)
 

@@ -49,7 +49,8 @@
 #include <thread>
 #include <condition_variable>
 #include <mutex>
-// GPU radix sort
+// GPU radix sort (header-only library, uses volk)
+#define VRDX_USE_VOLK
 #include <vk_radix_sort.h>
 //
 #include <nvvk/context.hpp>
