@@ -73,13 +73,12 @@ jobs:
       # Configure CMake in a 'build' subdirectory. `CMAKE_BUILD_TYPE` is only required if you are using a single-configuration generator such as make.
       # See https://cmake.org/cmake/help/latest/variable/CMAKE_BUILD_TYPE.html?highlight=cmake_build_type
       # OpenXR SDK is fetched via FetchContent in CMakeLists.txt if not found
-      # Disable features that require NVIDIA-specific dependencies for CI
+      # Enable default scene for release builds, disable mesh assets to save build time
       run: >
         cmake -B ${{ steps.strings.outputs.build-output-dir }}
         -DCMAKE_CXX_COMPILER=${{ matrix.cpp_compiler }}
         -DCMAKE_C_COMPILER=${{ matrix.c_compiler }}
         -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
-        -DDISABLE_DEFAULT_SCENE=ON
         -DDISABLE_MESH_ASSETS_DOWNLOAD=ON
         -S ${{ github.workspace }}
 
@@ -101,7 +100,9 @@ jobs:
       shell: pwsh
       run: |
         $artifactDir = "${{ github.workspace }}/artifact"
+        $filesDir = "$artifactDir/vk_gaussian_splatting_files"
         New-Item -ItemType Directory -Force -Path $artifactDir
+        New-Item -ItemType Directory -Force -Path $filesDir
         
         # Try multi-config path first (_bin/Release/Release/), then single-config (_bin/Release/)
         $multiConfigDir = "${{ github.workspace }}/_bin/${{ matrix.build_type }}/${{ matrix.build_type }}"
@@ -115,16 +116,21 @@ jobs:
         
         Write-Host "Using bin directory: $binDir"
         
-        # Copy executable and required DLLs
+        # Copy executable and required DLLs from bin directory
         Copy-Item "$binDir/*.exe" $artifactDir -Force
         Copy-Item "$binDir/*.dll" $artifactDir -Force -ErrorAction SilentlyContinue
-        # Copy shaders
-        if (Test-Path "$binDir/shaders") {
-          Copy-Item "$binDir/shaders" $artifactDir -Recurse -Force
-        }
-        # Copy nvshaders
-        if (Test-Path "$binDir/nvshaders") {
-          Copy-Item "$binDir/nvshaders" $artifactDir -Recurse -Force
+        Copy-Item "$binDir/*.pdb" $artifactDir -Force -ErrorAction SilentlyContinue
+        
+        # Copy shaders from source directory (required at runtime)
+        Copy-Item "${{ github.workspace }}/shaders" $filesDir -Recurse -Force
+        
+        # Copy nvshaders from nvpro_core2 (required at runtime)
+        Copy-Item "${{ github.workspace }}/nvpro_core2/nvshaders_host/nvshaders" $artifactDir -Recurse -Force
+        
+        # Copy demo scene if it was downloaded
+        $downloadDir = "${{ github.workspace }}/_downloaded_resources"
+        if (Test-Path "$downloadDir/flowers_1") {
+          Copy-Item "$downloadDir/flowers_1" $filesDir -Recurse -Force
         }
 
     - name: Upload build artifacts
