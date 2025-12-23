@@ -53,6 +53,10 @@ jobs:
         install_runtime: true
         cache: true
 
+    # Setup MSVC environment for Ninja builds (otherwise it picks up MinGW)
+    - name: Setup MSVC
+      uses: ilammy/msvc-dev-cmd@v1
+
     # Setup sccache for faster rebuilds (better MSVC support than ccache)
     # CMakeLists.txt auto-detects sccache and configures CMAKE_CXX_COMPILER_LAUNCHER
     - name: Setup sccache
