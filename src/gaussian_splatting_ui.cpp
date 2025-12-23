@@ -32,6 +32,8 @@
 #include <filesystem>
 #include <algorithm>  // for std::clamp
 
+#include <GLFW/glfw3.h>
+
 #include "gaussian_splatting_ui.h"
 
 namespace vk_gaussian_splatting {
@@ -261,6 +263,8 @@ void GaussianSplattingUI::onUIMenu()
   {
     ImGui::MenuItem(ICON_MS_BOTTOM_PANEL_OPEN " V-Sync", "Ctrl+Shift+V", &v_sync);
     ImGui::MenuItem(ICON_MS_SPACE_DASHBOARD " ShowUI", "", &m_showUI);
+    ImGui::Separator();
+    ImGui::MenuItem(ICON_MS_VIDEOCAM " Video Export...", "", &m_showVideoExportWindow);
 #ifdef WITH_COMFYUI
     ImGui::Separator();
     ImGui::MenuItem(ICON_MS_AUTO_AWESOME " ComfyUI Generator", "", &m_showComfyUIWindow);
@@ -373,6 +377,21 @@ void GaussianSplattingUI::onFileDrop(const std::filesystem::path& filename)
 
 void GaussianSplattingUI::onUIRender()
 {
+  // Handle pending frame save from video rendering (save G-buffer after render completes)
+  if(m_pendingFrameSave)
+  {
+    VkImage    srcImage = m_gBuffers.getColorImage(COLOR_MAIN);
+    VkExtent2D size     = {static_cast<uint32_t>(m_viewSize.x), static_cast<uint32_t>(m_viewSize.y)};
+    m_app->saveImageToFile(srcImage, size, m_pendingFramePath);
+    m_pendingFrameSave = false;
+  }
+
+  // Video rendering progress
+  if(m_videoRenderActive)
+  {
+    updateVideoRender();
+  }
+
   /////////////
   // Rendering Viewport display the GBuffer
   {
@@ -571,6 +590,11 @@ void GaussianSplattingUI::onUIRender()
   guiDrawMemoryStatisticsWindow();
 
   guiDrawFooterBar();
+
+  if(m_showVideoExportWindow)
+  {
+    guiDrawVideoExportWindow();
+  }
 
 #ifdef WITH_COMFYUI
   if (m_showComfyUIWindow)
@@ -2923,5 +2947,332 @@ void GaussianSplattingUI::onComfyUIWorkflowComplete(const ComfyUIClient::Workflo
   }
 }
 #endif  // WITH_COMFYUI
+
+void GaussianSplattingUI::guiDrawVideoExportWindow()
+{
+  namespace PE = nvgui::PropertyEditor;
+
+  ImGui::SetNextWindowSize(ImVec2(450, 600), ImGuiCond_FirstUseEver);
+  if(!ImGui::Begin("Video Export", &m_showVideoExportWindow))
+  {
+    ImGui::End();
+    return;
+  }
+
+  bool isRendering = m_videoRenderer.isRendering();
+
+  ImGui::BeginDisabled(isRendering);
+
+  if(ImGui::CollapsingHeader("Trajectory", ImGuiTreeNodeFlags_DefaultOpen))
+  {
+    PE::begin("##Trajectory");
+
+    static const char* trajectoryTypes[] = {"Orbit", "Swipe", "Rotate + Zoom", "Shake"};
+    int                trajectoryIdx     = static_cast<int>(m_videoSettings.trajectory.type);
+    if(trajectoryIdx > 3) trajectoryIdx = 0;  // Clamp if invalid
+    if(PE::entry(
+           "Type", [&]() { return ImGui::Combo("##TrajType", &trajectoryIdx, trajectoryTypes, IM_ARRAYSIZE(trajectoryTypes)); },
+           "Camera movement pattern"))
+    {
+      m_videoSettings.trajectory.type = static_cast<TrajectoryType>(trajectoryIdx);
+    }
+
+    PE::SliderFloat("Orbit Radius", &m_videoSettings.trajectory.orbitRadius, 0.01f, 5.0f, "%.2f m", 0,
+                    "Lateral camera movement range");
+
+    if(m_videoSettings.trajectory.type == TrajectoryType::ROTATE_FORWARD)
+    {
+      PE::SliderFloat("Zoom Range", &m_videoSettings.trajectory.zoomRange, 0.0f, 2.0f, "%.2f m", 0,
+                      "Forward/backward movement range");
+    }
+
+    PE::SliderInt("Orbits/Cycles", &m_videoSettings.trajectory.numOrbits, 1, 10, "%d", 0, "Number of complete cycles");
+
+    PE::Checkbox("Look at Center", &m_videoSettings.trajectory.lookAtCenter, "Keep camera pointed at scene center");
+
+    if(m_videoSettings.trajectory.type == TrajectoryType::SWIPE)
+    {
+      PE::Checkbox("Ping-Pong", &m_videoSettings.trajectory.pingPong, "Return to start position smoothly");
+    }
+
+    PE::end();
+  }
+
+  if(ImGui::CollapsingHeader("Video Settings", ImGuiTreeNodeFlags_DefaultOpen))
+  {
+    PE::begin("##VideoSettings");
+
+    static const char* frameRates[] = {"24 fps", "30 fps", "60 fps", "120 fps"};
+    static int         frameRateValues[] = {24, 30, 60, 120};
+    int                frameRateIdx = 1;
+    for(int i = 0; i < 4; ++i)
+    {
+      if(frameRateValues[i] == m_videoSettings.frameRate)
+        frameRateIdx = i;
+    }
+    if(PE::entry(
+           "Frame Rate", [&]() { return ImGui::Combo("##FPS", &frameRateIdx, frameRates, IM_ARRAYSIZE(frameRates)); },
+           "Output video frame rate"))
+    {
+      m_videoSettings.frameRate = frameRateValues[frameRateIdx];
+    }
+
+    PE::SliderFloat("Duration", &m_videoSettings.durationSec, 1.0f, 120.0f, "%.1f sec", 0, "Total video length");
+
+    int totalFrames = m_videoSettings.getTotalFrames();
+    PE::Text("Total Frames", "%d", totalFrames);
+
+    PE::end();
+  }
+
+  if(ImGui::CollapsingHeader("Resolution", ImGuiTreeNodeFlags_DefaultOpen))
+  {
+    PE::begin("##Resolution");
+
+    static const char* resolutions[]      = {"Current Window", "1280x720 (720p)", "1920x1080 (1080p)", "2560x1440 (1440p)",
+                                             "3840x2160 (4K)", "Custom"};
+    static int         resWidths[]        = {0, 1280, 1920, 2560, 3840, -1};
+    static int         resHeights[]       = {0, 720, 1080, 1440, 2160, -1};
+    static int         resolutionIdx      = 2;
+
+    if(PE::entry(
+           "Preset", [&]() { return ImGui::Combo("##ResPreset", &resolutionIdx, resolutions, IM_ARRAYSIZE(resolutions)); }, ""))
+    {
+      if(resolutionIdx == 0)
+      {
+        m_videoSettings.width  = m_viewSize.x;
+        m_videoSettings.height = m_viewSize.y;
+      }
+      else if(resolutionIdx < 5)
+      {
+        m_videoSettings.width  = resWidths[resolutionIdx];
+        m_videoSettings.height = resHeights[resolutionIdx];
+      }
+    }
+
+    if(resolutionIdx == 5)
+    {
+      PE::InputInt("Width", &m_videoSettings.width);
+      PE::InputInt("Height", &m_videoSettings.height);
+    }
+    else
+    {
+      PE::Text("Size", "%d x %d", m_videoSettings.width, m_videoSettings.height);
+    }
+
+    PE::end();
+  }
+
+  if(ImGui::CollapsingHeader("Stereo VR (SBS)", ImGuiTreeNodeFlags_DefaultOpen))
+  {
+    PE::begin("##StereoVR");
+
+    PE::Checkbox("Enable SBS Stereo", &m_videoSettings.enableSBS, "Render side-by-side stereo for VR");
+
+    ImGui::BeginDisabled(!m_videoSettings.enableSBS);
+
+    float ipdMM = m_videoSettings.stereoIPD * 1000.0f;
+    if(PE::SliderFloat("IPD", &ipdMM, 50.0f, 75.0f, "%.1f mm", 0, "Inter-pupillary distance"))
+    {
+      m_videoSettings.stereoIPD = ipdMM / 1000.0f;
+    }
+
+    PE::SliderFloat("Convergence", &m_videoSettings.stereoConvergence, 0.1f, 10.0f, "%.2f m", 0,
+                    "Distance where stereo images overlap perfectly");
+
+    PE::Checkbox("Off-Axis Projection", &m_videoSettings.stereoOffAxis, "Use asymmetric frustum for proper stereo");
+
+    ImGui::EndDisabled();
+
+    PE::end();
+  }
+
+  if(ImGui::CollapsingHeader("Output", ImGuiTreeNodeFlags_DefaultOpen))
+  {
+    PE::begin("##Output");
+
+    static char outputDir[512] = "";
+    if(outputDir[0] == '\0')
+    {
+      auto defaultPath = std::filesystem::current_path() / "video_output";
+#ifdef _WIN32
+      strncpy_s(outputDir, sizeof(outputDir), defaultPath.string().c_str(), _TRUNCATE);
+#else
+      snprintf(outputDir, sizeof(outputDir), "%s", defaultPath.string().c_str());
+#endif
+      m_videoSettings.outputDir = defaultPath;
+    }
+
+    if(PE::entry(
+           "Directory",
+           [&]()
+           {
+             bool changed = ImGui::InputText("##OutDir", outputDir, sizeof(outputDir));
+             return changed;
+           },
+           "Enter output directory path"))
+    {
+      m_videoSettings.outputDir = outputDir;
+    }
+
+    static char outputName[256] = "video";
+    if(PE::InputText("Filename", outputName, sizeof(outputName)))
+    {
+      m_videoSettings.outputName = outputName;
+    }
+
+    static const char* codecs[]     = {"H.264 High Quality", "H.264 Lossless", "H.265/HEVC", "ProRes"};
+    int                codecIdx     = static_cast<int>(m_videoSettings.codec);
+    if(PE::entry(
+           "Codec", [&]() { return ImGui::Combo("##Codec", &codecIdx, codecs, IM_ARRAYSIZE(codecs)); }, "Video encoding codec"))
+    {
+      m_videoSettings.codec = static_cast<VideoCodec>(codecIdx);
+    }
+
+    bool ffmpegAvailable = VideoRenderer::isFFmpegAvailable();
+    if(ffmpegAvailable)
+    {
+      ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), ICON_MS_CHECK_CIRCLE " FFmpeg available");
+    }
+    else
+    {
+      ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), ICON_MS_WARNING " FFmpeg not found - frames only");
+    }
+
+    PE::Checkbox("Encode Video", &m_videoSettings.encodeVideo, "Automatically encode frames to video");
+    PE::Checkbox("Delete Frames After", &m_videoSettings.deleteFramesAfterEncode, "Remove PNG files after encoding");
+
+    PE::end();
+  }
+
+  ImGui::EndDisabled();
+
+  ImGui::Separator();
+
+  if(isRendering)
+  {
+    auto progress = m_videoRenderer.getProgress();
+
+    ImGui::ProgressBar(progress.progressPct / 100.0f, ImVec2(-1, 0),
+                       (std::to_string(progress.currentFrame) + "/" + std::to_string(progress.totalFrames)).c_str());
+
+    ImGui::TextWrapped("%s", progress.statusMessage.c_str());
+
+    if(!progress.errorMessage.empty())
+    {
+      ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "%s", progress.errorMessage.c_str());
+    }
+
+    if(ImGui::Button("Cancel", ImVec2(-1, 0)))
+    {
+      m_videoRenderer.cancelRender();
+      m_videoRenderActive = false;
+    }
+  }
+  else
+  {
+    auto progress = m_videoRenderer.getProgress();
+    if(progress.state == VideoRenderState::STATE_COMPLETED)
+    {
+      ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), ICON_MS_CHECK_CIRCLE " %s", progress.statusMessage.c_str());
+    }
+    else if(progress.state == VideoRenderState::STATE_ERROR)
+    {
+      ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), ICON_MS_ERROR " %s", progress.errorMessage.c_str());
+    }
+
+    bool sceneLoaded = !m_loadedSceneFilename.empty();
+    ImGui::BeginDisabled(!sceneLoaded);
+
+    if(ImGui::Button(ICON_MS_MOVIE " Start Render", ImVec2(-1, 30)))
+    {
+      startVideoRender();
+    }
+
+    ImGui::EndDisabled();
+
+    if(!sceneLoaded)
+    {
+      ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "Load a scene first");
+    }
+  }
+
+  ImGui::End();
+}
+
+void GaussianSplattingUI::startVideoRender()
+{
+  Camera startCam = m_cameraSet.getCamera();
+
+  m_videoSettings.trajectory.numFrames = m_videoSettings.getTotalFrames();
+
+  // Disable vsync for faster rendering
+  m_savedVsync = m_app->isVsync();
+  m_app->setVsync(false);
+
+  if(m_videoSettings.enableSBS)
+  {
+    m_renderSBS           = true;
+    m_stereoSeparation    = m_videoSettings.stereoIPD;
+    m_stereoConvergence   = m_videoSettings.stereoConvergence;
+    m_stereoOffAxisProj   = m_videoSettings.stereoOffAxis;
+  }
+
+  m_videoRenderer.startRender(
+      m_videoSettings, startCam, {},
+      [this](const Camera& cam, int frameIndex)
+      {
+        m_cameraSet.setCamera(cam, true);
+
+        if(m_videoSettings.enableSBS)
+        {
+          m_renderSBS = true;
+        }
+      },
+      [this](const std::filesystem::path& framePath)
+      {
+        // Queue frame save - will be processed next frame after render completes
+        m_pendingFramePath = framePath;
+        m_pendingFrameSave = true;
+      });
+
+  m_videoRenderActive = true;
+}
+
+void GaussianSplattingUI::updateVideoRender()
+{
+  if(!m_videoRenderActive)
+    return;
+
+  // Wait for pending frame save before advancing
+  if(m_pendingFrameSave)
+    return;
+
+  auto progress = m_videoRenderer.getProgress();
+
+  if(progress.state == VideoRenderState::STATE_COMPLETED || progress.state == VideoRenderState::STATE_ERROR ||
+     progress.state == VideoRenderState::STATE_CANCELLED)
+  {
+    m_videoRenderActive = false;
+
+    // Restore vsync
+    m_app->setVsync(m_savedVsync);
+
+    if(m_videoSettings.enableSBS)
+    {
+      m_renderSBS = false;
+    }
+    return;
+  }
+
+  if(progress.state == VideoRenderState::STATE_RENDERING)
+  {
+    m_videoRenderer.renderNextFrame();
+  }
+  else if(progress.state == VideoRenderState::STATE_WAITING_FRAMES)
+  {
+    m_videoRenderer.checkFramesComplete();
+  }
+}
 
 }  // namespace vk_gaussian_splatting

@@ -100,6 +100,8 @@
 #include "mesh_set_vk.h"
 #include "light_set_vk.h"
 #include "camera_set.h"
+#include "camera_trajectory.h"
+#include "video_renderer.h"
 #include "gaussian_splatting.h"
 
 #ifdef WITH_COMFYUI
@@ -145,6 +147,10 @@ private:
   void guiDrawLightTree();
   void guiDrawRadianceFieldsTree();
   void guiDrawObjectTree();
+
+  void guiDrawVideoExportWindow();
+  void startVideoRender();
+  void updateVideoRender();
 
   void guiDrawPropertiesWindow(void);
   void guiDrawRendererProperties();
@@ -230,6 +236,15 @@ private:
 
   // Debuging
   void dumpSplat(uint32_t splatIdx);
+
+  // Video Export
+  bool                  m_showVideoExportWindow = false;
+  VideoRenderer         m_videoRenderer;
+  VideoRenderSettings   m_videoSettings;
+  bool                  m_videoRenderActive   = false;
+  bool                  m_pendingFrameSave    = false;
+  std::filesystem::path m_pendingFramePath;
+  bool                  m_savedVsync          = true;
 
 #ifdef WITH_COMFYUI
   // ComfyUI integration
