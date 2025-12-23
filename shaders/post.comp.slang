@@ -34,11 +34,28 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
   if(pixel.x >= int(frameInfo.viewport.x) || pixel.y >= int(frameInfo.viewport.y))
     return;
 
-  // Do accumulation over time
-  const float  a          = 1.0F / float(frameInfo.frameSampleId + 1);
-  const float4 mainColor  = mainColorImage[pixel];
-  const float4 aux1Color  = aux1ColorImage[pixel];
-  float4       finalColor = lerp(mainColor, aux1Color, a);
+  float4 finalColor = mainColorImage[pixel];
+
+  // Do temporal accumulation if enabled (frameSampleId > 0 means we have previous samples)
+  if (frameInfo.frameSampleId > 0)
+  {
+    const float  a         = 1.0F / float(frameInfo.frameSampleId + 1);
+    const float4 aux1Color = aux1ColorImage[pixel];
+    finalColor = lerp(finalColor, aux1Color, a);
+  }
+
+  // Linear to sRGB conversion for ML-SHARP linearRGB Gaussians
+  // SHARP outputs linearRGB colors that need gamma correction for proper display
+  if (frameInfo.linearToSrgb != 0)
+  {
+    // Standard sRGB transfer function (IEC 61966-2-1)
+    float3 linear = finalColor.rgb;
+    float3 srgb;
+    srgb.r = linear.r <= 0.0031308 ? linear.r * 12.92 : 1.055 * pow(linear.r, 1.0 / 2.4) - 0.055;
+    srgb.g = linear.g <= 0.0031308 ? linear.g * 12.92 : 1.055 * pow(linear.g, 1.0 / 2.4) - 0.055;
+    srgb.b = linear.b <= 0.0031308 ? linear.b * 12.92 : 1.055 * pow(linear.b, 1.0 / 2.4) - 0.055;
+    finalColor.rgb = srgb;
+  }
 
   mainColorImage[pixel] = float4(finalColor.rgb, 1.0);
 }

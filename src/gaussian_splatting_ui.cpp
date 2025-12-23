@@ -76,6 +76,9 @@ void GaussianSplattingUI::onAttach(nvapp::Application* app)
 
   GaussianSplatting::onAttach(app);
 
+  // Detect FFmpeg capabilities once at startup
+  VideoRenderer::initCapabilities();
+
   // Init combo selectors used in UI
 
   m_ui.enumAdd(GUI_STORAGE, STORAGE_BUFFERS, "Buffers");
@@ -205,8 +208,8 @@ void GaussianSplattingUI::onUIMenu()
   {
     if(ImGui::MenuItem(ICON_MS_FILE_OPEN " Open file", ""))
     {
-      prmScene.sceneToLoadFilename = nvgui::windowOpenFileDialog(m_app->getWindowHandle(), "Load ply file",
-                                                                 "All Files|*.ply;*.spz|PLY Files|*.ply|SPZ files|*.spz");
+      prmScene.sceneToLoadFilename = nvgui::windowOpenFileDialog(m_app->getWindowHandle(), "Load splat file",
+                                                                 "All Files|*.ply;*.spz;*.sog|PLY Files|*.ply|SPZ files|*.spz|SOG files|*.sog");
     }
     if(ImGui::MenuItem(ICON_MS_RESTORE_PAGE " Re Open", "F5", false, m_loadedSceneFilename != ""))
     {
@@ -221,6 +224,16 @@ void GaussianSplattingUI::onUIMenu()
           prmScene.sceneToLoadFilename = file;
         }
       }
+      ImGui::EndMenu();
+    }
+    if(ImGui::BeginMenu(ICON_MS_PALETTE " Color Space"))
+    {
+      if(ImGui::MenuItem("None (standard 3DGS)", "", prmScene.colorSpaceConversion == 0))
+        prmScene.colorSpaceConversion = 0;
+      if(ImGui::MenuItem("sRGB to Linear (ML-SHARP)", "", prmScene.colorSpaceConversion == 1))
+        prmScene.colorSpaceConversion = 1;
+      ImGui::Separator();
+      ImGui::TextDisabled("Applied when loading PLY files");
       ImGui::EndMenu();
     }
     ImGui::Separator();
@@ -383,7 +396,7 @@ void GaussianSplattingUI::onUIRender()
   {
     VkImage    srcImage = m_gBuffers.getColorImage(COLOR_MAIN);
     VkExtent2D size     = {static_cast<uint32_t>(m_viewSize.x), static_cast<uint32_t>(m_viewSize.y)};
-    m_app->saveImageToFile(srcImage, size, m_pendingFramePath);
+    saveFrameAsync(srcImage, size, m_pendingFramePath);
     m_pendingFrameSave = false;
   }
 
@@ -437,7 +450,7 @@ void GaussianSplattingUI::onUIRender()
 #ifdef WITH_DEFAULT_SCENE_FEATURE
   // load a default scene if none was provided by command line
   if(prmScene.enableDefaultScene && m_loadedSceneFilename.empty() && prmScene.sceneToLoadFilename.empty()
-     && m_plyLoader.getStatus() == PlyLoaderAsync::State::E_READY)
+     && m_splatLoader.getStatus() == SplatLoaderAsync::State::STATE_READY)
   {
     const std::vector<std::filesystem::path> defaultSearchPaths = getResourcesDirs();
     prmScene.sceneToLoadFilename = nvutils::findFile("flowers_1/flowers_1.ply", defaultSearchPaths).string();
@@ -446,7 +459,7 @@ void GaussianSplattingUI::onUIRender()
 #endif
 
   // do we need to load a new scene ?
-  if(!prmScene.sceneToLoadFilename.empty() && m_plyLoader.getStatus() == PlyLoaderAsync::State::E_READY)
+  if(!prmScene.sceneToLoadFilename.empty() && m_splatLoader.getStatus() == SplatLoaderAsync::State::STATE_READY)
   {
 
     if(!m_loadedSceneFilename.empty() && prmScene.projectToLoadFilename.empty())
@@ -496,10 +509,10 @@ void GaussianSplattingUI::onUIRender()
       vkDeviceWaitIdle(m_device);
 
       LOGI("Start loading file %s\n", prmScene.sceneToLoadFilename.string().c_str());
-      if(!m_plyLoader.loadScene(prmScene.sceneToLoadFilename, m_splatSet))
+      if(!m_splatLoader.loadScene(prmScene.sceneToLoadFilename, m_splatSet))
       {
         // this should never occur since status is READY.
-        LOGE("Error: cannot start scene load while loader is not ready status=%d\n", static_cast<int>(m_plyLoader.getStatus()));
+        LOGE("Error: cannot start scene load while loader is not ready status=%d\n", static_cast<int>(m_splatLoader.getStatus()));
       }
       else
       {
@@ -523,21 +536,21 @@ void GaussianSplattingUI::onUIRender()
     // ensure scene is loaded before moving to next frame
     if(*m_pBenchmarkEnabled)
     {
-      while(m_plyLoader.getStatus() == PlyLoaderAsync::State::E_LOADING)
+      while(m_splatLoader.getStatus() == SplatLoaderAsync::State::STATE_LOADING)
       {
         using namespace std::chrono_literals;
         std::this_thread::sleep_for(100ms);
       }
     }
     // managment of async load
-    switch(m_plyLoader.getStatus())
+    switch(m_splatLoader.getStatus())
     {
-      case PlyLoaderAsync::State::E_LOADING: {
-        ImGui::Text("%s", m_plyLoader.getFilename().string().c_str());
-        ImGui::ProgressBar(m_plyLoader.getProgress(), ImVec2(ImGui::GetContentRegionAvail().x, 0.0f));
+      case SplatLoaderAsync::State::STATE_LOADING: {
+        ImGui::Text("%s", m_splatLoader.getFilename().string().c_str());
+        ImGui::ProgressBar(m_splatLoader.getProgress(), ImVec2(ImGui::GetContentRegionAvail().x, 0.0f));
       }
       break;
-      case PlyLoaderAsync::State::E_FAILURE: {
+      case SplatLoaderAsync::State::STATE_FAILURE: {
         ImGui::Text("Error: invalid ply file");
         if(ImGui::Button("Ok", ImVec2(120, 0)))
         {
@@ -546,12 +559,24 @@ void GaussianSplattingUI::onUIRender()
           // loaded but not properly since in error
           deinitScene();
           // set ready for next load
-          m_plyLoader.reset();
+          m_splatLoader.reset();
           ImGui::CloseCurrentPopup();
         }
       }
       break;
-      case PlyLoaderAsync::State::E_LOADED: {
+      case SplatLoaderAsync::State::STATE_LOADED: {
+        // Apply color space conversion if requested (for ML-SHARP files)
+        if(prmScene.colorSpaceConversion == 1)
+        {
+          LOGI("Converting color space: sRGB -> linearRGB (for ML-SHARP compatibility files)\n");
+          m_splatSet.convertColorSpace(true);  // sRGB to linear
+
+          // Auto-enable linear-to-sRGB post-processing for correct display
+          // Since we're now working with linear RGB data, we need gamma correction for output
+          prmFrame.linearToSrgb = 1;
+          LOGI("Auto-enabled Linear to sRGB output for ML-SHARP content\n");
+        }
+
         // TODO add error modal or better continue on error since it is false only if shaders does not compile
         // Then print shader compilation error directly as a viewport overlay
         // Will allow for fix and hot reload
@@ -565,7 +590,7 @@ void GaussianSplattingUI::onUIRender()
           guiAddToRecentFiles(m_loadedSceneFilename);
         }
         // set ready for next load
-        m_plyLoader.reset();
+        m_splatLoader.reset();
         ImGui::CloseCurrentPopup();
       }
       break;
@@ -1071,6 +1096,16 @@ void GaussianSplattingUI::guiDrawRendererProperties()
   PE::begin("## Common settings");
   if(PE::Checkbox("Wireframe", &prmRender.wireframe, "Show particle bounds in wireframe "))
     m_requestUpdateShaders = true;
+
+  bool linearToSrgb = prmFrame.linearToSrgb != 0;
+  if(PE::Checkbox("Linear to sRGB", &linearToSrgb,
+                  "Apply linear-to-sRGB gamma correction for ML-SHARP PLY files.\n"
+                  "Enable this when loading linearRGB Gaussians (e.g., from Apple ML-SHARP)\n"
+                  "to prevent dark/incorrect colors."))
+  {
+    prmFrame.linearToSrgb = linearToSrgb ? 1 : 0;
+    resetFrameCounter();
+  }
 
   int alphaThres = int(255.0 * prmFrame.alphaCullThreshold);
   if(PE::SliderInt("Alpha culling threshold", &alphaThres, 0, 255, "%d", 0, "Discard splats with low opacity (with low contribution)."))
@@ -2351,7 +2386,7 @@ bool GaussianSplattingUI::loadProjectIfNeeded()
   }
 
   // we skip until the splat set is being loaded
-  if(m_plyLoader.getStatus() != PlyLoaderAsync::State::E_READY)
+  if(m_splatLoader.getStatus() != SplatLoaderAsync::State::STATE_READY)
     return true;
 
   // we finalize
@@ -3097,7 +3132,7 @@ void GaussianSplattingUI::guiDrawVideoExportWindow()
       m_videoSettings.outputName = outputName;
     }
 
-    static const char* formats[]    = {"PNG (SDR)", "HDR (Radiance .hdr)"};
+    static const char* formats[]    = {"TGA", "HDR (Radiance .hdr)"};
     int                formatIdx    = static_cast<int>(m_videoSettings.outputFormat);
     if(PE::entry(
            "Frame Format", [&]() { return ImGui::Combo("##Format", &formatIdx, formats, IM_ARRAYSIZE(formats)); }, "Frame output format"))
@@ -3107,7 +3142,8 @@ void GaussianSplattingUI::guiDrawVideoExportWindow()
 
     if(m_videoSettings.outputFormat == VideoOutputFormat::FORMAT_HDR)
     {
-      if(!VideoRenderer::supportsHDR10Encoding())
+      const auto& caps = VideoRenderer::getCapabilities();
+      if(!caps.hdr10Available)
       {
         ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), ICON_MS_WARNING " FFmpeg 6+ required for HDR10 video");
       }
@@ -3126,11 +3162,10 @@ void GaussianSplattingUI::guiDrawVideoExportWindow()
       m_videoSettings.codec = static_cast<VideoCodec>(codecIdx);
     }
 
-    bool ffmpegAvailable = VideoRenderer::isFFmpegAvailable();
-    bool nvencAvailable  = VideoRenderer::supportsNVENC();
-    if(ffmpegAvailable)
+    const auto& caps = VideoRenderer::getCapabilities();
+    if(caps.available)
     {
-      if(nvencAvailable)
+      if(caps.nvencAvailable)
       {
         ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), ICON_MS_CHECK_CIRCLE " FFmpeg + NVENC available");
       }
@@ -3276,8 +3311,50 @@ void GaussianSplattingUI::updateVideoRender()
   }
   else if(progress.state == VideoRenderState::STATE_WAITING_FRAMES)
   {
-    m_videoRenderer.checkFramesComplete();
+    // Wait for async frame saver to finish before encoding
+    if(!m_asyncFrameSaver.hasPendingFrames())
+    {
+      m_videoRenderer.checkFramesComplete();
+    }
   }
+}
+
+void GaussianSplattingUI::saveFrameAsync(VkImage srcImage, VkExtent2D size, const std::filesystem::path& path)
+{
+  VkDevice         device         = m_app->getDevice();
+  VkPhysicalDevice physicalDevice = m_app->getPhysicalDevice();
+  VkImage          dstImage       = {};
+  VkDeviceMemory   dstImageMemory = {};
+
+  bool isHDR = (path.extension() == ".hdr");
+  VkFormat format = isHDR ? VK_FORMAT_R32G32B32A32_SFLOAT : VK_FORMAT_R8G8B8A8_UNORM;
+
+  VkCommandBuffer cmd = m_app->createTempCmdBuffer();
+  nvvk::imageToLinear(cmd, device, physicalDevice, srcImage, size, dstImage, dstImageMemory, format);
+  m_app->submitAndWaitTempCmdBuffer(cmd);
+
+  VkImageSubresource  subResource{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0};
+  VkSubresourceLayout subResourceLayout;
+  vkGetImageSubresourceLayout(device, dstImage, &subResource, &subResourceLayout);
+
+  const char* data = nullptr;
+  vkMapMemory(device, dstImageMemory, 0, VK_WHOLE_SIZE, 0, (void**)&data);
+  data += subResourceLayout.offset;
+
+  size_t bytesPerPixel = isHDR ? sizeof(float) * 4 : sizeof(uint8_t) * 4;
+  size_t rowSize       = size.width * bytesPerPixel;
+
+  std::vector<uint8_t> pixelData(size.width * size.height * bytesPerPixel);
+  for(uint32_t y = 0; y < size.height; y++)
+  {
+    memcpy(pixelData.data() + y * rowSize, data + y * subResourceLayout.rowPitch, rowSize);
+  }
+
+  vkUnmapMemory(device, dstImageMemory);
+  vkFreeMemory(device, dstImageMemory, nullptr);
+  vkDestroyImage(device, dstImage, nullptr);
+
+  m_asyncFrameSaver.queueFrame(pixelData.data(), size.width, size.height, isHDR, path);
 }
 
 }  // namespace vk_gaussian_splatting

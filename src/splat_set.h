@@ -22,6 +22,8 @@
 
 #include <vector>
 #include <cassert>
+#include <cmath>
+#include <algorithm>
 
 // 3rd party spz library, used here for coordinate system convertions
 #include "splat-types.h"
@@ -67,6 +69,49 @@ struct SplatSet
       sphericalHarmonicsDegree = 3;
     }
     return sphericalHarmonicsDegree;
+  }
+
+  // sRGB to linearRGB conversion (IEC 61966-2-1)
+  // Use this to convert SHARP PLY files exported with compatibility mode back to linear space
+  static inline float sRGBToLinear(float srgb)
+  {
+    if(srgb <= 0.04045f)
+      return srgb / 12.92f;
+    else
+      return std::pow((srgb + 0.055f) / 1.055f, 2.4f);
+  }
+
+  // linearRGB to sRGB conversion (IEC 61966-2-1)
+  static inline float linearToSRGB(float linear)
+  {
+    if(linear <= 0.0031308f)
+      return linear * 12.92f;
+    else
+      return 1.055f * std::pow(linear, 1.0f / 2.4f) - 0.055f;
+  }
+
+  // Convert color space of SH coefficients (f_dc and f_rest)
+  // toLinear=true: sRGB -> linearRGB (undo SHARP compatibility export)
+  // toLinear=false: linearRGB -> sRGB (for compatibility export)
+  void convertColorSpace(bool toLinear)
+  {
+    auto convertFunc = toLinear ? sRGBToLinear : linearToSRGB;
+
+    // Convert f_dc (base color, 3 components per splat)
+    for(size_t i = 0; i < f_dc.size(); ++i)
+    {
+      // f_dc stores SH coefficients, convert the underlying color value
+      // The color is computed as: 0.5 + SH_C0 * f_dc
+      // So we need to: (1) extract color, (2) convert, (3) store back as SH coeff
+      constexpr float SH_C0     = 0.28209479177387814f;
+      float           color     = 0.5f + SH_C0 * f_dc[i];
+      float           converted = convertFunc(std::clamp(color, 0.0f, 1.0f));
+      f_dc[i]                   = (converted - 0.5f) / SH_C0;
+    }
+
+    // Note: f_rest (higher-order SH) represents view-dependent color variations
+    // These should also be scaled, but the relationship is more complex.
+    // For now, we only convert f_dc which has the dominant effect.
   }
 
   // Convert between two coordinate systems

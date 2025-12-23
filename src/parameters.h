@@ -39,6 +39,11 @@ struct SceneParameters
   std::filesystem::path projectToLoadFilename;
   // triggers an obj file import at next frame when set to non empty string
   std::filesystem::path meshToImportFilename;
+
+  // Color space conversion mode for loaded PLY files
+  // 0 = None (assume sRGB, standard for most 3DGS)
+  // 1 = sRGB to Linear (for ML-SHARP compatibility-exported files, undo the sRGB conversion)
+  int colorSpaceConversion = 0;
 };
 
 // Parameters that controls the scene

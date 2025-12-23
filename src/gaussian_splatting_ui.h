@@ -95,7 +95,7 @@
 #include "utilities.h"
 #include "splat_set.h"
 #include "splat_set_vk.h"
-#include "ply_loader_async.h"
+#include "splat_loader_async.h"
 #include "splat_sorter_async.h"
 #include "mesh_set_vk.h"
 #include "light_set_vk.h"
@@ -103,6 +103,7 @@
 #include "camera_trajectory.h"
 #include "video_renderer.h"
 #include "gaussian_splatting.h"
+#include "async_frame_saver.h"
 
 #ifdef WITH_COMFYUI
 #include "comfyui_client.h"
@@ -245,6 +246,9 @@ private:
   bool                  m_pendingFrameSave    = false;
   std::filesystem::path m_pendingFramePath;
   bool                  m_savedVsync          = true;
+  AsyncFrameSaver       m_asyncFrameSaver;
+
+  void saveFrameAsync(VkImage srcImage, VkExtent2D size, const std::filesystem::path& path);
 
 #ifdef WITH_COMFYUI
   // ComfyUI integration

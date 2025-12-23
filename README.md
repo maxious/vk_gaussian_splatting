@@ -4,7 +4,11 @@
 
 ## 🚀 Fork Additions (maxious)
 
-This fork adds the following features to the original NVIDIA sample:
+This fork adds the following features to the original NVIDIA sample.
+
+**Recommended Reading**: If you're new to 3D Gaussian Splatting, these blog posts provide an excellent introduction:
+- [NeRF vs 3DGS](https://edwardahn.me/archive/2024/02/19/NeRFvs3DGS) - A comparison of Neural Radiance Fields and 3D Gaussian Splatting
+- [Revolutionizing Neural Reconstruction and Rendering with 3DGUT](https://developer.nvidia.com/blog/revolutionizing-neural-reconstruction-and-rendering-in-gsplat-with-3dgut/) - NVIDIA's deep dive into 3DGUT technology
 
 ### VR & Immersive Display Support
 - **OpenXR VR Support** - Full VR headset support via OpenXR with head tracking and controller input
@@ -22,6 +26,9 @@ This fork adds the following features to the original NVIDIA sample:
 
 ### Generative AI Integration
 - **ComfyUI Integration** - Generate 3D Gaussian Splats from text/image prompts via ComfyUI workflows
+
+### Additional Format Support
+- **SOG Format** - Import support for the [PlayCanvas SOG format](https://developer.playcanvas.com/user-manual/gaussian-splatting/formats/sog/), a highly compressed format (~15–20× smaller than PLY). Convert PLY files to SOG using the [SplatTransform](https://github.com/playcanvas/splat-transform) tool.
 
 ---
 
@@ -106,18 +113,30 @@ cmake --build build --config Release
 
 ```
 
-## Opening 3DGS PLY and SPZ Files
+## Opening 3DGS PLY, SPZ, and SOG Files
 
-By default the application opens a 3DGS model representing a bouquet of flowers unless you disabled it at CMake stage. The sample application supports PLY files in the format introduced by INRIA [[Kerbl2023](https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/)]. The sample also supports import of SPZ files as defined by [nianticlabs](https://github.com/nianticlabs/spz). PLY and SPZ files can be opened using any of the following methods:
+By default the application opens a 3DGS model representing a bouquet of flowers unless you disabled it at CMake stage. The sample application supports PLY files in the format introduced by INRIA [[Kerbl2023](https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/)]. The sample also supports import of SPZ files as defined by [nianticlabs](https://github.com/nianticlabs/spz) and SOG files as defined by [PlayCanvas](https://developer.playcanvas.com/user-manual/gaussian-splatting/formats/sog/). PLY, SPZ, and SOG files can be opened using any of the following methods:
 * **Command Line** – Provide the file path as last argument when launching the application.
-* **File Menu** – Use "File > Open" to browse and load a PLY or SPZ file.
-* **Drag and Drop** – Simply drag and drop the PLY or SPZ file into the viewport.
+* **File Menu** – Use "File > Open" to browse and load a file.
+* **Drag and Drop** – Simply drag and drop a file into the viewport.
 
 **Compatibility**
 * [Jawset Postshot](https://www.jawset.com/) and [3DGRUT](https://github.com/nv-tlabs/3dgrut) output ply files are compatible with the INRIA format and can be opened directly.
 * Other reconstruction software's ply outputs such as [NerfStudio](https://docs.nerf.studio/nerfology/methods/splat.html), [LichtFeld Studio](https://github.com/MrNeRF/LichtFeld-Studio) should also work.
-
 * SPZ file import can be tested using the sample [models](https://github.com/nianticlabs/spz/tree/main/samples) provided by nianticlabs.
+* SOG files can be created from PLY files using the [SplatTransform](https://github.com/playcanvas/splat-transform) tool. SOG is a highly compressed format (~15–20× smaller than PLY) using quantization and WebP encoding.
+
+**Apple ML-SHARP Support**
+
+[Apple ML-SHARP](https://github.com/apple/ml-sharp) is a reconstruction method that works in linear RGB color space internally. When exporting PLY files, SHARP applies a [linearRGB-to-sRGB conversion](https://github.com/apple/ml-sharp/blob/1eaa046834b81852261262b41b0919f5c1efdd2e/src/sharp/utils/gaussians.py#L359) for compatibility with other renderers that don't perform gamma correction.
+
+To properly display ML-SHARP content with this renderer:
+
+1. Go to **File → Color Space → sRGB to Linear (ML-SHARP)** before loading the PLY file
+2. Load the ML-SHARP PLY file - this undoes the compatibility conversion, restoring the original linear RGB data
+3. The **Linear to sRGB** post-processing option (in Common settings) will be automatically enabled to apply proper gamma correction for display
+
+This workflow ensures mathematically correct blending in linear space with proper gamma-corrected output. For VR/XR headsets, the gamma correction is handled automatically by the GPU during the blit to the sRGB swapchain.
 
 > **Important Note**: Visualization of 3D Gaussian models is most effective when using the same rendering algorithm and settings used during reconstruction. For example, models generated using Postshot 3DGS with anti-aliasing enabled will be best visualized using one of the available 3DGS pipelines (Mesh or Vertex) and by enabling "Mip Splatting Anti-Aliasing" in the rendering > rasterization parameters. Since no generic format with proper metadata exists, users must manually configure the rendering settings. Note that original 3DGS models from INRIA do not include anti-aliasing, which was introduced later [Yu2023].
 

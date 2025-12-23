@@ -33,8 +33,8 @@ namespace vk_gaussian_splatting {
 
 enum class VideoOutputFormat
 {
-  FORMAT_PNG,  // Lossless PNG sequence
-  FORMAT_HDR,  // Radiance HDR (high dynamic range)
+  FORMAT_TGA,  // Uncompressed TGA (fast encode, ~6MB/frame)
+  FORMAT_HDR,  // Radiance HDR (high dynamic range, float)
 };
 
 enum class VideoCodec
@@ -62,7 +62,7 @@ struct VideoRenderSettings
   float stereoConvergence = 1.0f;
   bool  stereoOffAxis  = true;
 
-  VideoOutputFormat outputFormat = VideoOutputFormat::FORMAT_PNG;
+  VideoOutputFormat outputFormat = VideoOutputFormat::FORMAT_TGA;
   VideoCodec        codec        = VideoCodec::CODEC_NVENC_HEVC_HQ;
 
   std::filesystem::path outputDir;
@@ -95,21 +95,23 @@ struct VideoRenderProgress
   std::string      errorMessage;
 };
 
+struct FFmpegCapabilities
+{
+  bool        available       = false;
+  bool        nvencAvailable  = false;
+  bool        hdr10Available  = false;
+  int         majorVersion    = 0;
+  std::string path;
+};
+
 class VideoRenderer
 {
 public:
   VideoRenderer() = default;
   ~VideoRenderer();
 
-  static bool isFFmpegAvailable();
-
-  static std::string getFFmpegPath();
-
-  static int getFFmpegMajorVersion();
-
-  static bool supportsHDR10Encoding();
-
-  static bool supportsNVENC();
+  static void initCapabilities();
+  static const FFmpegCapabilities& getCapabilities() { return s_capabilities; }
 
   void startRender(const VideoRenderSettings&                        settings,
                    const Camera&                                      startCamera,
@@ -154,6 +156,8 @@ private:
 
   std::atomic<int> m_framesSaved{0};
   int              m_waitCheckCounter{0};
+
+  static FFmpegCapabilities s_capabilities;
 };
 
 }  // namespace vk_gaussian_splatting

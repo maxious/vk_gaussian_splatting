@@ -122,7 +122,7 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
   // touch the splat set while loading
   // getStatus is thread safe.
   uint32_t splatCount = 0;
-  if(m_plyLoader.getStatus() == PlyLoaderAsync::State::E_READY)
+  if(m_splatLoader.getStatus() == SplatLoaderAsync::State::STATE_READY)
   {
     splatCount = (uint32_t)m_splatSet.size();
   }
@@ -165,6 +165,10 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
       GsOpenXr::EyeData rightEyeData = m_xr->getEyeData(1);
       updateAndUploadFrameInfoUBO(cmd, splatCount, rightEyeData.view, rightEyeData.proj, rightEyeData.eyePos, glm::vec2(halfWidth, height));
       raytrace(cmd, false, glm::ivec2(halfWidth, 0), glm::ivec2(halfWidth, height));
+
+      // Note: XR swapchain uses VK_FORMAT_R8G8B8A8_SRGB, so the GPU automatically
+      // applies linear->sRGB conversion during the blit to XR swapchain.
+      // No manual post-process needed for XR path.
 
       readBackIndirectParametersIfNeeded(cmd);
       updateRenderingMemoryStatistics(cmd, splatCount);
@@ -264,6 +268,13 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
         m_dlssRRFrameIndex++;
       }
 #endif
+    }
+
+    // Perform post processings if needed (for RTX pipeline)
+    // Run post-process for temporal accumulation or linear-to-sRGB conversion
+    if((prmRtx.temporalSampling && prmFrame.frameSampleId > 0) || prmFrame.linearToSrgb != 0)
+    {
+      postProcess(cmd);
     }
 
     readBackIndirectParametersIfNeeded(cmd);
@@ -576,7 +587,8 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
   }  // End View Loop
 
   // Perform post processings if needed
-  if(prmRtx.temporalSampling && prmFrame.frameSampleId > 0)
+  // Run post-process for temporal accumulation or linear-to-sRGB conversion
+  if((prmRtx.temporalSampling && prmFrame.frameSampleId > 0) || prmFrame.linearToSrgb != 0)
   {
     postProcess(cmd);
   }

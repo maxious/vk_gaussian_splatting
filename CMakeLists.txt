@@ -110,6 +110,32 @@ endif()
 # additions of 3rdparty
 
 #####
+# libwebp for SOG format support
+include(FetchContent)
+FetchContent_Declare(
+  libwebp
+  GIT_REPOSITORY https://chromium.googlesource.com/webm/libwebp.git
+  GIT_TAG        v1.4.0
+)
+set(WEBP_BUILD_ANIM_UTILS OFF CACHE BOOL "" FORCE)
+set(WEBP_BUILD_CWEBP OFF CACHE BOOL "" FORCE)
+set(WEBP_BUILD_DWEBP OFF CACHE BOOL "" FORCE)
+set(WEBP_BUILD_GIF2WEBP OFF CACHE BOOL "" FORCE)
+set(WEBP_BUILD_IMG2WEBP OFF CACHE BOOL "" FORCE)
+set(WEBP_BUILD_VWEBP OFF CACHE BOOL "" FORCE)
+set(WEBP_BUILD_WEBPINFO OFF CACHE BOOL "" FORCE)
+set(WEBP_BUILD_LIBWEBPMUX OFF CACHE BOOL "" FORCE)
+set(WEBP_BUILD_WEBPMUX OFF CACHE BOOL "" FORCE)
+set(WEBP_BUILD_EXTRAS OFF CACHE BOOL "" FORCE)
+set(WEBP_UNICODE OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(libwebp)
+set_property(TARGET webp PROPERTY FOLDER "ThirdParty/libwebp")
+set_property(TARGET webpdecode PROPERTY FOLDER "ThirdParty/libwebp")
+set_property(TARGET webpdspdecode PROPERTY FOLDER "ThirdParty/libwebp")
+set_property(TARGET webputilsdecode PROPERTY FOLDER "ThirdParty/libwebp")
+message(STATUS "libwebp enabled for SOG format support")
+
+#####
 # WebSocket++ for ComfyUI integration
 option(ENABLE_COMFYUI "Enable ComfyUI WebSocket integration" ON)
 
@@ -217,7 +243,11 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
   vk_radix_sort
   spz::spz
   meshoptimizer
+  webp
+  zlib
 )
+
+target_include_directories(${PROJECT_NAME} PRIVATE ${libwebp_SOURCE_DIR}/src)
 
 # WebSocket++ linkage for ComfyUI
 if(ENABLE_COMFYUI)

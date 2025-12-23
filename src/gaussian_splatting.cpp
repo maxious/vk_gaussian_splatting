@@ -65,7 +65,7 @@ void GaussianSplatting::onAttach(nvapp::Application* app)
   m_profilerGpuTimer.init(m_profilerTimeline, m_app->getDevice(), m_app->getPhysicalDevice(), m_app->getQueue(0).familyIndex, false);
 
   // starts the asynchronous services
-  m_plyLoader.initialize();
+  m_splatLoader.initialize();
   m_cpuSorter.initialize(m_profilerTimeline);
 
   // Memory allocator
@@ -158,7 +158,7 @@ void GaussianSplatting::onDetach()
 #endif
 
   // stops the threads
-  m_plyLoader.shutdown();
+  m_splatLoader.shutdown();
   m_cpuSorter.shutdown();
   // release scene and rendering related resources
   deinitAll();
@@ -328,8 +328,12 @@ void GaussianSplatting::initializeOpenXR()
     m_xr = std::make_unique<GsOpenXr>();
   }
 
+  // Use SRGB format for XR swapchain - GPU will automatically convert linear->sRGB on write
+  // This is the correct way to handle color space for VR displays
+  VkFormat xrColorFormat = VK_FORMAT_R8G8B8A8_SRGB;
+
   if(!m_xr->initialize(m_app->getInstance(), m_app->getPhysicalDevice(), m_app->getDevice(),
-                       m_app->getQueue(0).familyIndex, 0, m_colorFormat, m_depthFormat))
+                       m_app->getQueue(0).familyIndex, 0, xrColorFormat, m_depthFormat))
   {
     LOGE("Failed to initialize OpenXR\n");
     m_xr.reset();
@@ -509,23 +513,26 @@ void GaussianSplatting::copyToXrSwapchain(VkCommandBuffer cmd)
                          VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 2, barriers);
   }
 
-  // Copy color image
+  // Blit color image (using blit instead of copy to handle UNORM->SRGB format conversion)
+  // The XR swapchain uses VK_FORMAT_R8G8B8A8_SRGB, so the GPU will automatically
+  // apply linear->sRGB gamma correction during the blit operation
   {
-    VkImageCopy region            = {};
+    VkImageBlit region = {};
     region.srcSubresource.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
     region.srcSubresource.mipLevel       = 0;
     region.srcSubresource.baseArrayLayer = 0;
     region.srcSubresource.layerCount     = 1;
-    region.srcOffset                     = {0, 0, 0};
+    region.srcOffsets[0]                 = {0, 0, 0};
+    region.srcOffsets[1]                 = {static_cast<int32_t>(extent.width), static_cast<int32_t>(extent.height), 1};
     region.dstSubresource.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
     region.dstSubresource.mipLevel       = 0;
     region.dstSubresource.baseArrayLayer = 0;
     region.dstSubresource.layerCount     = 1;
-    region.dstOffset                     = {0, 0, 0};
-    region.extent                        = {extent.width, extent.height, 1};
+    region.dstOffsets[0]                 = {0, 0, 0};
+    region.dstOffsets[1]                 = {static_cast<int32_t>(extent.width), static_cast<int32_t>(extent.height), 1};
 
-    vkCmdCopyImage(cmd, srcColorImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, m_xrColorImage,
-                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+    vkCmdBlitImage(cmd, srcColorImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, m_xrColorImage,
+                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region, VK_FILTER_NEAREST);
   }
 
   // Copy depth image

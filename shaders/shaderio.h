@@ -203,6 +203,10 @@ struct FrameInfo
   float hdrMaxNits DEFAULT(1000.0f);        // Display peak luminance in nits
   float hdrExposure DEFAULT(1.0f);          // Exposure multiplier
   int32_t hdrEnabled DEFAULT(0);            // 0 = disabled, 1 = enabled
+
+  // Color space conversion for ML-SHARP linearRGB Gaussians
+  // When enabled, applies linear-to-sRGB gamma correction after rendering
+  int32_t linearToSrgb DEFAULT(0);          // 0 = disabled, 1 = enabled (for SHARP PLY files)
 };
 
 // Push constant for raster

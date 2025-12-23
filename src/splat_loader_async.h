@@ -17,8 +17,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef _PLY_ASYNC_LOADER_H_
-#define _PLY_ASYNC_LOADER_H_
+#ifndef _SPLAT_ASYNC_LOADER_H_
+#define _SPLAT_ASYNC_LOADER_H_
 
 #include <string>
 // threading
@@ -31,16 +31,17 @@
 
 namespace vk_gaussian_splatting {
 
-class PlyLoaderAsync
+// Async loader for Gaussian splat formats (PLY, SPZ, SOG)
+class SplatLoaderAsync
 {
 public:
   enum State
   {
-    E_SHUTDOWN,  // loader must be initialized (loading thread is not started)
-    E_READY,     // loader ready to load a new model
-    E_LOADING,   // loader is currently loading
-    E_LOADED,    // loader has finished loading, model is available. call reset before another load.
-    E_FAILURE    // an error eccured. call reset before another load.
+    STATE_SHUTDOWN,  // loader must be initialized (loading thread is not started)
+    STATE_READY,     // loader ready to load a new model
+    STATE_LOADING,   // loader is currently loading
+    STATE_LOADED,    // loader has finished loading, model is available. call reset before another load.
+    STATE_FAILURE    // an error occurred. call reset before another load.
   };
 
 public:
@@ -101,7 +102,7 @@ private:
   // loading thread
   std::thread m_loader;
   // loader status
-  State m_status = E_SHUTDOWN;
+  State m_status = STATE_SHUTDOWN;
   // ask to cancel a load
   bool m_cancelRequested = false;
   // ask for loader shutdown before destruction
@@ -111,7 +112,7 @@ private:
   // loader wakeup condition
   mutable std::condition_variable m_loadCV;
 
-  // the ply pathname
+  // the splat file pathname
   std::filesystem::path m_filename = "";
   // the output data storage
   SplatSet* m_output = nullptr;

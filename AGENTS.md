@@ -30,7 +30,7 @@ The logger writes to both console and log file, making debugging easier.
 - **Rendering**: `gaussian_splatting.cpp`, `gaussian_splatting_render.cpp`
 - **UI**: `gaussian_splatting_ui.cpp` (ImGui-based)
 - **Video Export**: `video_renderer.cpp`, `camera_trajectory.cpp`
-- **Scene Loading**: `ply_loader_async.cpp`, `splat_set.cpp`
+- **Scene Loading**: `splat_loader_async.cpp`, `sog_loader.cpp`, `splat_set.cpp`
 
 ## Third-party Libraries
 

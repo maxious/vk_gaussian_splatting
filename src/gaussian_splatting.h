@@ -89,7 +89,7 @@
 #include "utilities.h"
 #include "splat_set.h"
 #include "splat_set_vk.h"
-#include "ply_loader_async.h"
+#include "splat_loader_async.h"
 #include "splat_sorter_async.h"
 #include "mesh_set_vk.h"
 #include "light_set_vk.h"
@@ -266,7 +266,7 @@ protected:
   std::filesystem::path m_loadedSceneFilename;
 
   // scene loader
-  PlyLoaderAsync m_plyLoader;
+  SplatLoaderAsync m_splatLoader;
   // 3DGS/3DGRT model in RAM
   SplatSet m_splatSet = {};
   // 3DGS/3DGRT model in VRAM

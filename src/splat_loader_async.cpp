@@ -31,15 +31,16 @@
 #include "load-spz.h"
 
 //
-#include "ply_loader_async.h"
+#include "splat_loader_async.h"
+#include "sog_loader.h"
 #include "utilities.h"
 
 using namespace vk_gaussian_splatting;
 
-bool PlyLoaderAsync::loadScene(std::filesystem::path filename, SplatSet& output)
+bool SplatLoaderAsync::loadScene(std::filesystem::path filename, SplatSet& output)
 {
   std::lock_guard<std::mutex> lock(m_mutex);
-  if(m_status != E_READY)
+  if(m_status != STATE_READY)
   {
     return false;
   }
@@ -52,11 +53,11 @@ bool PlyLoaderAsync::loadScene(std::filesystem::path filename, SplatSet& output)
   return true;
 }
 
-bool PlyLoaderAsync::initialize()
+bool SplatLoaderAsync::initialize()
 {
   // original state shall be shutdown
   std::unique_lock<std::mutex> lock(m_mutex);
-  if(m_status != E_SHUTDOWN)
+  if(m_status != STATE_SHUTDOWN)
     return false;  // will unlock through lock destructor
   else
     lock.unlock();
@@ -65,7 +66,7 @@ bool PlyLoaderAsync::initialize()
   m_loader = std::thread([this]() {
     //
     std::unique_lock<std::mutex> lock(m_mutex);
-    m_status = E_READY;
+    m_status = STATE_READY;
     lock.unlock();
     //
     while(true)
@@ -80,19 +81,19 @@ bool PlyLoaderAsync::initialize()
       {
         // let's load
         std::unique_lock<std::mutex> lock(m_mutex);
-        m_status = E_LOADING;
+        m_status = STATE_LOADING;
         lock.unlock();
         if(m_output != nullptr && innerLoad(m_filename, *m_output))
         {
           std::lock_guard<std::mutex> lock(m_mutex);
-          m_status   = E_LOADED;
+          m_status   = STATE_LOADED;
           m_output   = nullptr;
           m_filename = "";
         }
         else
         {
           std::lock_guard<std::mutex> lock(m_mutex);
-          m_status   = E_FAILURE;
+          m_status   = STATE_FAILURE;
           m_output   = nullptr;
           m_filename = "";
         }
@@ -100,7 +101,7 @@ bool PlyLoaderAsync::initialize()
       else
       {
         std::lock_guard<std::mutex> lock(m_mutex);
-        m_status            = E_SHUTDOWN;
+        m_status            = STATE_SHUTDOWN;
         m_shutdownRequested = false;
         m_output            = nullptr;
         m_filename          = "";
@@ -112,24 +113,24 @@ bool PlyLoaderAsync::initialize()
   return true;
 }
 
-void PlyLoaderAsync::cancel()
+void SplatLoaderAsync::cancel()
 {
   // does nothing for the time beeing
 }
 
-PlyLoaderAsync::State PlyLoaderAsync::getStatus()
+SplatLoaderAsync::State SplatLoaderAsync::getStatus()
 {
   std::lock_guard<std::mutex> lock(m_mutex);
   return m_status;
 }
 
-bool PlyLoaderAsync::reset()
+bool SplatLoaderAsync::reset()
 {
   std::lock_guard<std::mutex> lock(m_mutex);
-  if(m_status == E_LOADED || m_status == E_FAILURE)
+  if(m_status == STATE_LOADED || m_status == STATE_FAILURE)
   {
     m_progress = 0.0;
-    m_status   = E_READY;
+    m_status   = STATE_READY;
     return true;
   }
   else
@@ -138,9 +139,22 @@ bool PlyLoaderAsync::reset()
   }
 }
 
-bool PlyLoaderAsync::innerLoad(std::filesystem::path filename, SplatSet& output)
+bool SplatLoaderAsync::innerLoad(std::filesystem::path filename, SplatSet& output)
 {
   auto startTime = std::chrono::high_resolution_clock::now();
+
+  // SOG format (bundled .sog or unbundled meta.json)
+  if(hasExtension(filename, ".sog") || filename.filename() == "meta.json")
+  {
+    bool success = SogLoader::load(filename, output, [this](float progress) { setProgress(progress); });
+    if(success)
+    {
+      auto      endTime  = std::chrono::high_resolution_clock::now();
+      long long loadTime = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
+      LOGI("SOG file loaded in %lldms\n", loadTime);
+    }
+    return success;
+  }
 
   // we use spz library for .spz extensions
   if(hasExtension(filename, ".spz"))
@@ -199,7 +213,7 @@ bool PlyLoaderAsync::innerLoad(std::filesystem::path filename, SplatSet& output)
   miniply::PLYReader reader(filename.string().c_str());
   if(!reader.valid())
   {
-    LOGE("Error: ply loader failed to open file: %s\n", filename.string().c_str());
+    LOGE("Error: splat loader failed to open file: %s\n", filename.string().c_str());
     return false;
   }
 
@@ -213,7 +227,7 @@ bool PlyLoaderAsync::innerLoad(std::filesystem::path filename, SplatSet& output)
       const uint32_t numVerts = reader.num_rows();
       if(numVerts == 0)
       {
-        LOGW("Warning: ply loader skipping empty ply element\n");
+        LOGW("Warning: splat loader skipping empty ply element\n");
         continue;  // move to next while iteration
       }
 

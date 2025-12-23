@@ -32,137 +32,114 @@
 
 namespace vk_gaussian_splatting {
 
+FFmpegCapabilities VideoRenderer::s_capabilities;
+
 VideoRenderer::~VideoRenderer()
 {
   cancelRender();
 }
 
-bool VideoRenderer::isFFmpegAvailable()
+void VideoRenderer::initCapabilities()
 {
+  LOGI("Detecting FFmpeg capabilities...\n");
+
 #ifdef _WIN32
   int result = std::system("where ffmpeg >nul 2>&1");
 #else
   int result = std::system("which ffmpeg >/dev/null 2>&1");
 #endif
-  return result == 0;
-}
+  s_capabilities.available = (result == 0);
 
-std::string VideoRenderer::getFFmpegPath()
-{
+  if(!s_capabilities.available)
+  {
+    LOGI("FFmpeg not found in PATH\n");
+    return;
+  }
+
 #ifdef _WIN32
   FILE* pipe = _popen("where ffmpeg 2>nul", "r");
 #else
   FILE* pipe = popen("which ffmpeg 2>/dev/null", "r");
 #endif
-
-  if(!pipe)
-    return "";
-
-  char        buffer[256];
-  std::string result;
-  if(fgets(buffer, sizeof(buffer), pipe) != nullptr)
+  if(pipe)
   {
-    result = buffer;
-    while(!result.empty() && (result.back() == '\n' || result.back() == '\r'))
-      result.pop_back();
+    char buffer[256];
+    if(fgets(buffer, sizeof(buffer), pipe) != nullptr)
+    {
+      s_capabilities.path = buffer;
+      while(!s_capabilities.path.empty() &&
+            (s_capabilities.path.back() == '\n' || s_capabilities.path.back() == '\r'))
+        s_capabilities.path.pop_back();
+    }
+#ifdef _WIN32
+    _pclose(pipe);
+#else
+    pclose(pipe);
+#endif
   }
 
 #ifdef _WIN32
-  _pclose(pipe);
+  pipe = _popen("ffmpeg -version 2>nul", "r");
 #else
-  pclose(pipe);
+  pipe = popen("ffmpeg -version 2>/dev/null", "r");
 #endif
-
-  return result;
-}
-
-int VideoRenderer::getFFmpegMajorVersion()
-{
-#ifdef _WIN32
-  FILE* pipe = _popen("ffmpeg -version 2>nul", "r");
-#else
-  FILE* pipe = popen("ffmpeg -version 2>/dev/null", "r");
-#endif
-
-  if(!pipe)
-    return 0;
-
-  char buffer[512];
-  int  majorVersion = 0;
-
-  if(fgets(buffer, sizeof(buffer), pipe) != nullptr)
+  if(pipe)
   {
-    std::string line = buffer;
-    size_t      pos  = line.find("ffmpeg version ");
-    if(pos != std::string::npos)
+    char buffer[512];
+    if(fgets(buffer, sizeof(buffer), pipe) != nullptr)
     {
-      pos += 15;  // Skip "ffmpeg version "
-      std::string versionStr;
-      while(pos < line.size() && std::isdigit(line[pos]))
+      std::string line = buffer;
+      size_t      pos  = line.find("ffmpeg version ");
+      if(pos != std::string::npos)
       {
-        versionStr += line[pos];
-        pos++;
-      }
-      if(!versionStr.empty())
-      {
-        majorVersion = std::stoi(versionStr);
+        pos += 15;
+        std::string versionStr;
+        while(pos < line.size() && std::isdigit(line[pos]))
+        {
+          versionStr += line[pos];
+          pos++;
+        }
+        if(!versionStr.empty())
+        {
+          s_capabilities.majorVersion = std::stoi(versionStr);
+        }
       }
     }
+#ifdef _WIN32
+    _pclose(pipe);
+#else
+    pclose(pipe);
+#endif
   }
 
-#ifdef _WIN32
-  _pclose(pipe);
-#else
-  pclose(pipe);
-#endif
-
-  return majorVersion;
-}
-
-bool VideoRenderer::supportsHDR10Encoding()
-{
-  return getFFmpegMajorVersion() >= 6;
-}
-
-bool VideoRenderer::supportsNVENC()
-{
-  static int cached = -1;
-  if(cached >= 0)
-    return cached == 1;
+  s_capabilities.hdr10Available = (s_capabilities.majorVersion >= 6);
 
 #ifdef _WIN32
-  FILE* pipe = _popen("ffmpeg -encoders 2>nul", "r");
+  pipe = _popen("ffmpeg -encoders 2>nul", "r");
 #else
-  FILE* pipe = popen("ffmpeg -encoders 2>/dev/null", "r");
+  pipe = popen("ffmpeg -encoders 2>/dev/null", "r");
 #endif
-
-  if(!pipe)
+  if(pipe)
   {
-    cached = 0;
-    return false;
-  }
-
-  char buffer[512];
-  bool found = false;
-
-  while(fgets(buffer, sizeof(buffer), pipe) != nullptr)
-  {
-    std::string line = buffer;
-    if(line.find("hevc_nvenc") != std::string::npos)
+    char buffer[512];
+    while(fgets(buffer, sizeof(buffer), pipe) != nullptr)
     {
-      found = true;
-      break;
+      std::string line = buffer;
+      if(line.find("hevc_nvenc") != std::string::npos)
+      {
+        s_capabilities.nvencAvailable = true;
+        break;
+      }
     }
+#ifdef _WIN32
+    _pclose(pipe);
+#else
+    pclose(pipe);
+#endif
   }
 
-#ifdef _WIN32
-  _pclose(pipe);
-#else
-  pclose(pipe);
-#endif
-
-  cached = found ? 1 : 0;
-  return found;
+  LOGI("FFmpeg %d at %s (NVENC: %s, HDR10: %s)\n", s_capabilities.majorVersion, s_capabilities.path.c_str(),
+       s_capabilities.nvencAvailable ? "yes" : "no", s_capabilities.hdr10Available ? "yes" : "no");
 }
 
 void VideoRenderer::startRender(const VideoRenderSettings&                        settings,
@@ -270,7 +247,7 @@ void VideoRenderer::checkFramesComplete()
   int totalFrames = static_cast<int>(m_trajectory.size());
 
   // Frames are saved synchronously, so proceed to encoding immediately
-  if(m_settings.encodeVideo && isFFmpegAvailable())
+  if(m_settings.encodeVideo && s_capabilities.available)
   {
     m_state         = VideoRenderState::STATE_ENCODING;
     m_statusMessage = "Encoding video with FFmpeg...";
@@ -298,7 +275,7 @@ void VideoRenderer::checkFramesComplete()
   {
     m_state         = VideoRenderState::STATE_COMPLETED;
     m_statusMessage = "Frame sequence saved. ";
-    if(!isFFmpegAvailable())
+    if(!s_capabilities.available)
     {
       m_statusMessage += "FFmpeg not found - run manually:\n" + buildFFmpegCommand(m_settings, totalFrames);
     }
@@ -311,14 +288,14 @@ bool VideoRenderer::encodeVideo(const VideoRenderSettings& settings)
   
   if(isHDR)
   {
-    int ffmpegVersion = getFFmpegMajorVersion();
-    if(ffmpegVersion >= 6)
+    if(s_capabilities.hdr10Available)
     {
-      LOGI("Encoding HDR10 video with FFmpeg %d (BT.2020/PQ)\n", ffmpegVersion);
+      LOGI("Encoding HDR10 video with FFmpeg %d (BT.2020/PQ)\n", s_capabilities.majorVersion);
     }
     else
     {
-      LOGW("FFmpeg version %d detected. HDR10 encoding requires FFmpeg 6+. Output will be SDR.\n", ffmpegVersion);
+      LOGW("FFmpeg version %d detected. HDR10 encoding requires FFmpeg 6+. Output will be SDR.\n",
+           s_capabilities.majorVersion);
     }
   }
 
@@ -343,13 +320,18 @@ std::string VideoRenderer::buildFFmpegCommand(const VideoRenderSettings& setting
 {
   std::stringstream ss;
 
-  std::string extension    = settings.outputFormat == VideoOutputFormat::FORMAT_HDR ? ".hdr" : ".png";
+  std::string extension;
+  switch(settings.outputFormat)
+  {
+    case VideoOutputFormat::FORMAT_TGA: extension = ".tga"; break;
+    case VideoOutputFormat::FORMAT_HDR: extension = ".hdr"; break;
+  }
   std::string inputPattern = (settings.outputDir / ("frame_%04d" + extension)).string();
 
   std::string outputPath = (settings.outputDir / (settings.outputName + ".mp4")).string();
 
   bool isHDR         = (settings.outputFormat == VideoOutputFormat::FORMAT_HDR);
-  bool canEncodeHDR  = isHDR && supportsHDR10Encoding();
+  bool canEncodeHDR  = isHDR && s_capabilities.hdr10Available;
 
   ss << "ffmpeg -y -loglevel warning ";
   ss << "-framerate " << settings.frameRate << " ";
@@ -449,12 +431,11 @@ std::string VideoRenderer::getFrameFilename(int frameIndex, VideoOutputFormat fo
 
   switch(format)
   {
+    case VideoOutputFormat::FORMAT_TGA:
+      ss << ".tga";
+      break;
     case VideoOutputFormat::FORMAT_HDR:
       ss << ".hdr";
-      break;
-    case VideoOutputFormat::FORMAT_PNG:
-    default:
-      ss << ".png";
       break;
   }
 

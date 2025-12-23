@@ -1,0 +1,818 @@
+/*
+ * Copyright (c) 2023-2025, NVIDIA CORPORATION.  All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+#include "sog_loader.h"
+
+#include <fstream>
+#include <cmath>
+#include <algorithm>
+#include <unordered_map>
+
+#include <nvutils/logger.hpp>
+#include <tinygltf/json.hpp>
+
+// WebP decoder
+#include <webp/decode.h>
+
+// ZIP archive reading using zlib
+#include <zlib.h>
+#include <cstring>
+
+using nlohmann::json;
+using namespace vk_gaussian_splatting;
+
+namespace {
+
+// Simple ZIP file reader using zlib
+// ZIP format: https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT
+
+struct ZipLocalFileHeader
+{
+  uint32_t signature;         // 0x04034b50
+  uint16_t versionNeeded;
+  uint16_t flags;
+  uint16_t compression;
+  uint16_t modTime;
+  uint16_t modDate;
+  uint32_t crc32;
+  uint32_t compressedSize;
+  uint32_t uncompressedSize;
+  uint16_t fileNameLength;
+  uint16_t extraFieldLength;
+};
+
+struct ZipCentralDirHeader
+{
+  uint32_t signature;         // 0x02014b50
+  uint16_t versionMade;
+  uint16_t versionNeeded;
+  uint16_t flags;
+  uint16_t compression;
+  uint16_t modTime;
+  uint16_t modDate;
+  uint32_t crc32;
+  uint32_t compressedSize;
+  uint32_t uncompressedSize;
+  uint16_t fileNameLength;
+  uint16_t extraFieldLength;
+  uint16_t commentLength;
+  uint16_t diskStart;
+  uint16_t internalAttrs;
+  uint32_t externalAttrs;
+  uint32_t localHeaderOffset;
+};
+
+struct ZipEndOfCentralDir
+{
+  uint32_t signature;         // 0x06054b50
+  uint16_t diskNumber;
+  uint16_t diskWithCentralDir;
+  uint16_t numEntriesThisDisk;
+  uint16_t numEntriesTotal;
+  uint32_t centralDirSize;
+  uint32_t centralDirOffset;
+  uint16_t commentLength;
+};
+
+#pragma pack(push, 1)
+struct ZipLocalFileHeaderPacked
+{
+  uint32_t signature;
+  uint16_t versionNeeded;
+  uint16_t flags;
+  uint16_t compression;
+  uint16_t modTime;
+  uint16_t modDate;
+  uint32_t crc32;
+  uint32_t compressedSize;
+  uint32_t uncompressedSize;
+  uint16_t fileNameLength;
+  uint16_t extraFieldLength;
+};
+#pragma pack(pop)
+
+class SimpleZipReader
+{
+public:
+  struct FileEntry
+  {
+    std::string filename;
+    uint32_t    compressedSize;
+    uint32_t    uncompressedSize;
+    uint32_t    localHeaderOffset;
+    uint16_t    compression;
+  };
+
+  bool open(const std::vector<uint8_t>& zipData)
+  {
+    m_data = &zipData;
+    return parseZipDirectory();
+  }
+
+  const std::vector<FileEntry>& getEntries() const { return m_entries; }
+
+  std::vector<uint8_t> extractFile(const std::string& filename) const
+  {
+    for(const auto& entry : m_entries)
+    {
+      if(entry.filename == filename)
+      {
+        return extractEntry(entry);
+      }
+    }
+    return {};
+  }
+
+private:
+  const std::vector<uint8_t>* m_data = nullptr;
+  std::vector<FileEntry>      m_entries;
+
+  bool parseZipDirectory()
+  {
+    if(m_data->size() < 22)
+      return false;
+
+    // Find End of Central Directory record (search backwards)
+    const uint8_t* data = m_data->data();
+    size_t         size = m_data->size();
+
+    size_t eocdPos = size - 22;
+    while(eocdPos > 0)
+    {
+      if(data[eocdPos] == 0x50 && data[eocdPos + 1] == 0x4b && data[eocdPos + 2] == 0x05 && data[eocdPos + 3] == 0x06)
+      {
+        break;
+      }
+      eocdPos--;
+    }
+
+    if(eocdPos == 0 && !(data[0] == 0x50 && data[1] == 0x4b && data[2] == 0x05 && data[3] == 0x06))
+    {
+      LOGE("Failed to find ZIP end of central directory\n");
+      return false;
+    }
+
+    // Read EOCD
+    size_t centralDirOffset = *reinterpret_cast<const uint32_t*>(data + eocdPos + 16);
+    size_t numEntries       = *reinterpret_cast<const uint16_t*>(data + eocdPos + 10);
+
+    // Parse central directory
+    size_t pos = centralDirOffset;
+    for(size_t i = 0; i < numEntries && pos < eocdPos; i++)
+    {
+      if(pos + 46 > size)
+        break;
+
+      uint32_t sig = *reinterpret_cast<const uint32_t*>(data + pos);
+      if(sig != 0x02014b50)
+        break;
+
+      FileEntry entry;
+      entry.compression      = *reinterpret_cast<const uint16_t*>(data + pos + 10);
+      entry.compressedSize   = *reinterpret_cast<const uint32_t*>(data + pos + 20);
+      entry.uncompressedSize = *reinterpret_cast<const uint32_t*>(data + pos + 24);
+      uint16_t nameLen       = *reinterpret_cast<const uint16_t*>(data + pos + 28);
+      uint16_t extraLen      = *reinterpret_cast<const uint16_t*>(data + pos + 30);
+      uint16_t commentLen    = *reinterpret_cast<const uint16_t*>(data + pos + 32);
+      entry.localHeaderOffset = *reinterpret_cast<const uint32_t*>(data + pos + 42);
+
+      if(pos + 46 + nameLen > size)
+        break;
+
+      entry.filename = std::string(reinterpret_cast<const char*>(data + pos + 46), nameLen);
+      m_entries.push_back(entry);
+
+      pos += 46 + nameLen + extraLen + commentLen;
+    }
+
+    return !m_entries.empty();
+  }
+
+  std::vector<uint8_t> extractEntry(const FileEntry& entry) const
+  {
+    const uint8_t* data = m_data->data();
+    size_t         size = m_data->size();
+
+    if(entry.localHeaderOffset + 30 > size)
+      return {};
+
+    // Read local file header
+    size_t   pos = entry.localHeaderOffset;
+    uint32_t sig = *reinterpret_cast<const uint32_t*>(data + pos);
+    if(sig != 0x04034b50)
+      return {};
+
+    uint16_t nameLen  = *reinterpret_cast<const uint16_t*>(data + pos + 26);
+    uint16_t extraLen = *reinterpret_cast<const uint16_t*>(data + pos + 28);
+
+    size_t dataOffset = pos + 30 + nameLen + extraLen;
+    if(dataOffset + entry.compressedSize > size)
+      return {};
+
+    const uint8_t* compressedData = data + dataOffset;
+
+    if(entry.compression == 0)
+    {
+      // Stored (no compression)
+      return std::vector<uint8_t>(compressedData, compressedData + entry.uncompressedSize);
+    }
+    else if(entry.compression == 8)
+    {
+      // Deflate
+      std::vector<uint8_t> output(entry.uncompressedSize);
+
+      z_stream strm = {};
+      strm.next_in  = const_cast<Bytef*>(compressedData);
+      strm.avail_in = entry.compressedSize;
+      strm.next_out = output.data();
+      strm.avail_out = entry.uncompressedSize;
+
+      // Use raw inflate (-MAX_WBITS for raw deflate data without zlib header)
+      if(inflateInit2(&strm, -MAX_WBITS) != Z_OK)
+        return {};
+
+      int ret = inflate(&strm, Z_FINISH);
+      inflateEnd(&strm);
+
+      if(ret != Z_STREAM_END)
+        return {};
+
+      return output;
+    }
+
+    return {};
+  }
+};
+
+// Inverse log transform: reverses logTransform(v) = sign(v) * ln(|v| + 1)
+inline float invLogTransform(float v)
+{
+  float a = std::abs(v);
+  float e = std::exp(a) - 1.0f;
+  return v < 0.0f ? -e : e;
+}
+
+// Inverse sigmoid for opacity decoding
+inline float sigmoidInv(float y)
+{
+  float e = std::clamp(y, 1e-6f, 1.0f - 1e-6f);
+  return std::log(e / (1.0f - e));
+}
+
+// Read entire file into vector
+std::vector<uint8_t> readFile(const std::filesystem::path& path)
+{
+  std::ifstream file(path, std::ios::binary | std::ios::ate);
+  if(!file)
+    return {};
+
+  std::streamsize size = file.tellg();
+  file.seekg(0, std::ios::beg);
+
+  std::vector<uint8_t> buffer(size);
+  if(!file.read(reinterpret_cast<char*>(buffer.data()), size))
+    return {};
+
+  return buffer;
+}
+
+}  // namespace
+
+bool SogLoader::parseMeta(const std::vector<uint8_t>& jsonData, SogMeta& meta)
+{
+  try
+  {
+    json j = json::parse(jsonData.begin(), jsonData.end());
+
+    meta.version = j.value("version", 0u);
+    meta.count   = j.value("count", 0u);
+
+    if(meta.version < 2)
+    {
+      LOGE("SOG version %u not supported, requires version 2+\n", meta.version);
+      return false;
+    }
+
+    // Parse means
+    if(j.contains("means"))
+    {
+      auto& means = j["means"];
+      if(means.contains("mins"))
+        meta.means.mins = means["mins"].get<std::vector<float>>();
+      if(means.contains("maxs"))
+        meta.means.maxs = means["maxs"].get<std::vector<float>>();
+      if(means.contains("files"))
+        meta.means.files = means["files"].get<std::vector<std::string>>();
+    }
+
+    // Parse scales
+    if(j.contains("scales"))
+    {
+      auto& scales = j["scales"];
+      if(scales.contains("codebook"))
+        meta.scales.codebook = scales["codebook"].get<std::vector<float>>();
+      if(scales.contains("files"))
+        meta.scales.files = scales["files"].get<std::vector<std::string>>();
+    }
+
+    // Parse quats
+    if(j.contains("quats"))
+    {
+      auto& quats = j["quats"];
+      if(quats.contains("files"))
+        meta.quats.files = quats["files"].get<std::vector<std::string>>();
+    }
+
+    // Parse sh0
+    if(j.contains("sh0"))
+    {
+      auto& sh0 = j["sh0"];
+      if(sh0.contains("codebook"))
+        meta.sh0.codebook = sh0["codebook"].get<std::vector<float>>();
+      if(sh0.contains("files"))
+        meta.sh0.files = sh0["files"].get<std::vector<std::string>>();
+    }
+
+    // Parse optional shN
+    if(j.contains("shN"))
+    {
+      auto& shN      = j["shN"];
+      meta.shN.count = shN.value("count", 0u);
+      meta.shN.bands = shN.value("bands", 0u);
+      if(shN.contains("codebook"))
+        meta.shN.codebook = shN["codebook"].get<std::vector<float>>();
+      if(shN.contains("files"))
+        meta.shN.files = shN["files"].get<std::vector<std::string>>();
+    }
+
+    return true;
+  }
+  catch(const std::exception& e)
+  {
+    LOGE("Failed to parse SOG meta.json: %s\n", e.what());
+    return false;
+  }
+}
+
+bool SogLoader::decodeWebP(const std::vector<uint8_t>& webpData, WebPImage& output)
+{
+  int width = 0, height = 0;
+
+  // Get image dimensions first
+  if(!WebPGetInfo(webpData.data(), webpData.size(), &width, &height))
+  {
+    LOGE("Failed to get WebP image info\n");
+    return false;
+  }
+
+  output.width  = static_cast<uint32_t>(width);
+  output.height = static_cast<uint32_t>(height);
+  output.rgba.resize(width * height * 4);
+
+  // Decode to RGBA
+  uint8_t* result = WebPDecodeRGBAInto(webpData.data(), webpData.size(), output.rgba.data(),
+                                       output.rgba.size(), width * 4);
+  if(!result)
+  {
+    LOGE("Failed to decode WebP image\n");
+    return false;
+  }
+
+  return true;
+}
+
+void SogLoader::decodePositions(const WebPImage& meansL, const WebPImage& meansU, const SogMeta& meta, SplatSet& output)
+{
+  const uint32_t count = meta.count;
+  output.positions.resize(count * 3);
+
+  const float minX = meta.means.mins[0];
+  const float minY = meta.means.mins[1];
+  const float minZ = meta.means.mins[2];
+  const float maxX = meta.means.maxs[0];
+  const float maxY = meta.means.maxs[1];
+  const float maxZ = meta.means.maxs[2];
+
+  for(uint32_t i = 0; i < count; i++)
+  {
+    const uint32_t offset = i * 4;
+
+    // Combine low and high bytes for 16-bit values
+    uint16_t xVal = meansL.rgba[offset + 0] | (static_cast<uint16_t>(meansU.rgba[offset + 0]) << 8);
+    uint16_t yVal = meansL.rgba[offset + 1] | (static_cast<uint16_t>(meansU.rgba[offset + 1]) << 8);
+    uint16_t zVal = meansL.rgba[offset + 2] | (static_cast<uint16_t>(meansU.rgba[offset + 2]) << 8);
+
+    // Normalize to [0, 1]
+    float xNorm = static_cast<float>(xVal) / 65535.0f;
+    float yNorm = static_cast<float>(yVal) / 65535.0f;
+    float zNorm = static_cast<float>(zVal) / 65535.0f;
+
+    // Scale to bounding box
+    float xScaled = minX + xNorm * (maxX - minX);
+    float yScaled = minY + yNorm * (maxY - minY);
+    float zScaled = minZ + zNorm * (maxZ - minZ);
+
+    // Inverse log transform to recover original positions
+    // SOG uses Y-up (RUB) coordinate system, same as what we convert to internally
+    output.positions[i * 3 + 0] = invLogTransform(xScaled);
+    output.positions[i * 3 + 1] = invLogTransform(yScaled);
+    output.positions[i * 3 + 2] = invLogTransform(zScaled);
+  }
+}
+
+// Quaternion decoding based on PlayCanvas engine implementation:
+// https://github.com/playcanvas/engine/blob/main/src/scene/gsplat/gsplat-sogs-data.js#L83-L96
+void SogLoader::decodeQuaternions(const WebPImage& quats, uint32_t count, SplatSet& output)
+{
+  output.rotation.resize(count * 4);
+  const float sqrt2 = std::sqrt(2.0f);
+
+  for(uint32_t i = 0; i < count; i++)
+  {
+    const uint32_t offset = i * 4;
+
+    uint8_t px  = quats.rgba[offset + 0];
+    uint8_t py  = quats.rgba[offset + 1];
+    uint8_t pz  = quats.rgba[offset + 2];
+    uint8_t tag = quats.rgba[offset + 3];
+
+    // Tag must be 252-255, indicating which component was largest
+    if(tag < 252)
+    {
+      // Invalid tag - use identity quaternion
+      output.rotation[i * 4 + 0] = 1.0f;  // w
+      output.rotation[i * 4 + 1] = 0.0f;  // x
+      output.rotation[i * 4 + 2] = 0.0f;  // y
+      output.rotation[i * 4 + 3] = 0.0f;  // z
+      continue;
+    }
+
+    int mode = tag - 252;  // 0=w was max, 1=x was max, 2=y was max, 3=z was max
+
+    // Map from [0, 255] to [-√2/2, √2/2] range
+    // PlayCanvas uses: (byte / 255 - 0.5) * sqrt2, which is equivalent to ((byte / 255) * 2 - 1) / sqrt2
+    float a = ((static_cast<float>(px) / 255.0f) - 0.5f) * sqrt2;
+    float b = ((static_cast<float>(py) / 255.0f) - 0.5f) * sqrt2;
+    float c = ((static_cast<float>(pz) / 255.0f) - 0.5f) * sqrt2;
+
+    // Reconstruct the max component using unit quaternion constraint
+    float d = std::sqrt(std::max(0.0f, 1.0f - (a * a + b * b + c * c)));
+
+    // PlayCanvas quaternion order is (x, y, z, w)
+    // Mode determines which component was omitted (the largest):
+    //   mode 0: w was max -> quat = (a, b, c, d)  i.e., x=a, y=b, z=c, w=d
+    //   mode 1: x was max -> quat = (d, b, c, a)  i.e., x=d, y=b, z=c, w=a
+    //   mode 2: y was max -> quat = (b, d, c, a)  i.e., x=b, y=d, z=c, w=a
+    //   mode 3: z was max -> quat = (b, c, d, a)  i.e., x=b, y=c, z=d, w=a
+    float x, y, z, w;
+    switch(mode)
+    {
+      case 0:  // w was max
+        x = a;
+        y = b;
+        z = c;
+        w = d;
+        break;
+      case 1:  // x was max
+        x = d;
+        y = b;
+        z = c;
+        w = a;
+        break;
+      case 2:  // y was max
+        x = b;
+        y = d;
+        z = c;
+        w = a;
+        break;
+      case 3:  // z was max
+        x = b;
+        y = c;
+        z = d;
+        w = a;
+        break;
+      default:
+        x = 0.0f;
+        y = 0.0f;
+        z = 0.0f;
+        w = 1.0f;
+        break;
+    }
+
+    // Output quaternion in INRIA format: (w, x, y, z)
+    output.rotation[i * 4 + 0] = w;
+    output.rotation[i * 4 + 1] = x;
+    output.rotation[i * 4 + 2] = y;
+    output.rotation[i * 4 + 3] = z;
+  }
+}
+
+void SogLoader::decodeScales(const WebPImage& scales, const std::vector<float>& codebook, uint32_t count, SplatSet& output)
+{
+  output.scale.resize(count * 3);
+
+  for(uint32_t i = 0; i < count; i++)
+  {
+    const uint32_t offset = i * 4;
+
+    // Each channel is an index into the codebook
+    uint8_t xIdx = scales.rgba[offset + 0];
+    uint8_t yIdx = scales.rgba[offset + 1];
+    uint8_t zIdx = scales.rgba[offset + 2];
+
+    // Scales are stored in log-space in SOG (already log-transformed)
+    output.scale[i * 3 + 0] = codebook[xIdx];
+    output.scale[i * 3 + 1] = codebook[yIdx];
+    output.scale[i * 3 + 2] = codebook[zIdx];
+  }
+}
+
+void SogLoader::decodeSh0(const WebPImage& sh0, const std::vector<float>& codebook, uint32_t count, SplatSet& output)
+{
+  output.f_dc.resize(count * 3);
+  output.opacity.resize(count);
+
+  for(uint32_t i = 0; i < count; i++)
+  {
+    const uint32_t offset = i * 4;
+
+    // RGB channels are indices into the codebook
+    uint8_t rIdx    = sh0.rgba[offset + 0];
+    uint8_t gIdx    = sh0.rgba[offset + 1];
+    uint8_t bIdx    = sh0.rgba[offset + 2];
+    uint8_t opacity = sh0.rgba[offset + 3];
+
+    // Look up DC color from codebook
+    output.f_dc[i * 3 + 0] = codebook[rIdx];
+    output.f_dc[i * 3 + 1] = codebook[gIdx];
+    output.f_dc[i * 3 + 2] = codebook[bIdx];
+
+    // Decode opacity (stored as sigmoid-transformed value)
+    output.opacity[i] = sigmoidInv(static_cast<float>(opacity) / 255.0f);
+  }
+}
+
+void SogLoader::decodeShN(const WebPImage& centroids, const WebPImage& labels, const ShNInfo& shN, uint32_t count, SplatSet& output)
+{
+  if(shN.bands == 0 || shN.count == 0)
+    return;
+
+  // Number of SH coefficients per channel based on bands
+  static const uint32_t coeffsPerBand[] = {0, 3, 8, 15};
+  const uint32_t        shCoeffs        = coeffsPerBand[std::min(shN.bands, 3u)];
+
+  // f_rest stores SH coefficients for all 3 channels
+  // INRIA layout: per-splat, grouped by channel (R coeffs, G coeffs, B coeffs)
+  output.f_rest.resize(count * shCoeffs * 3);
+
+  const uint32_t centroidsWidth = centroids.width;
+
+  for(uint32_t i = 0; i < count; i++)
+  {
+    const uint32_t labelOffset = i * 4;
+
+    // Get 16-bit palette index from labels texture
+    uint16_t paletteIdx = labels.rgba[labelOffset + 0] | (static_cast<uint16_t>(labels.rgba[labelOffset + 1]) << 8);
+
+    if(paletteIdx >= shN.count)
+    {
+      // Invalid index - use zero coefficients
+      for(uint32_t j = 0; j < shCoeffs * 3; j++)
+      {
+        output.f_rest[i * shCoeffs * 3 + j] = 0.0f;
+      }
+      continue;
+    }
+
+    // For each SH coefficient
+    for(uint32_t j = 0; j < shCoeffs; j++)
+    {
+      // Calculate centroid pixel location
+      uint32_t cx              = (paletteIdx % 64) * shCoeffs + j;
+      uint32_t cy              = paletteIdx / 64;
+      uint32_t centroidOffset  = (cy * centroidsWidth + cx) * 4;
+
+      // Extract RGB from centroid and map through codebook
+      uint8_t rIdx = centroids.rgba[centroidOffset + 0];
+      uint8_t gIdx = centroids.rgba[centroidOffset + 1];
+      uint8_t bIdx = centroids.rgba[centroidOffset + 2];
+
+      // Store in INRIA layout (grouped by channel)
+      output.f_rest[i * shCoeffs * 3 + j]                   = shN.codebook[rIdx];
+      output.f_rest[i * shCoeffs * 3 + shCoeffs + j]        = shN.codebook[gIdx];
+      output.f_rest[i * shCoeffs * 3 + shCoeffs * 2 + j]    = shN.codebook[bIdx];
+    }
+  }
+}
+
+bool SogLoader::loadWithReader(const SogMeta& meta, FileReader reader, SplatSet& output, std::function<void(float)> progressCallback)
+{
+  const uint32_t count = meta.count;
+  if(count == 0)
+  {
+    LOGE("SOG file has 0 splats\n");
+    return false;
+  }
+
+  float progress = 0.1f;
+  if(progressCallback)
+    progressCallback(progress);
+
+  // Load and decode means_l and means_u
+  WebPImage meansL, meansU;
+  if(meta.means.files.size() >= 2)
+  {
+    auto meansLData = reader(meta.means.files[0]);
+    auto meansUData = reader(meta.means.files[1]);
+    if(meansLData.empty() || meansUData.empty())
+    {
+      LOGE("Failed to read means WebP files\n");
+      return false;
+    }
+    if(!decodeWebP(meansLData, meansL) || !decodeWebP(meansUData, meansU))
+    {
+      return false;
+    }
+    decodePositions(meansL, meansU, meta, output);
+  }
+  progress = 0.3f;
+  if(progressCallback)
+    progressCallback(progress);
+
+  // Load and decode quats
+  if(!meta.quats.files.empty())
+  {
+    auto      quatsData = reader(meta.quats.files[0]);
+    WebPImage quatsImg;
+    if(quatsData.empty() || !decodeWebP(quatsData, quatsImg))
+    {
+      LOGE("Failed to read quats WebP file\n");
+      return false;
+    }
+    decodeQuaternions(quatsImg, count, output);
+  }
+  progress = 0.5f;
+  if(progressCallback)
+    progressCallback(progress);
+
+  // Load and decode scales
+  if(!meta.scales.files.empty() && !meta.scales.codebook.empty())
+  {
+    auto      scalesData = reader(meta.scales.files[0]);
+    WebPImage scalesImg;
+    if(scalesData.empty() || !decodeWebP(scalesData, scalesImg))
+    {
+      LOGE("Failed to read scales WebP file\n");
+      return false;
+    }
+    decodeScales(scalesImg, meta.scales.codebook, count, output);
+  }
+  progress = 0.7f;
+  if(progressCallback)
+    progressCallback(progress);
+
+  // Load and decode sh0 (base color + opacity)
+  if(!meta.sh0.files.empty() && !meta.sh0.codebook.empty())
+  {
+    auto      sh0Data = reader(meta.sh0.files[0]);
+    WebPImage sh0Img;
+    if(sh0Data.empty() || !decodeWebP(sh0Data, sh0Img))
+    {
+      LOGE("Failed to read sh0 WebP file\n");
+      return false;
+    }
+    decodeSh0(sh0Img, meta.sh0.codebook, count, output);
+  }
+  progress = 0.85f;
+  if(progressCallback)
+    progressCallback(progress);
+
+  // Load and decode higher-order SH (optional)
+  if(meta.shN.bands > 0 && meta.shN.files.size() >= 2 && !meta.shN.codebook.empty())
+  {
+    auto      centroidsData = reader(meta.shN.files[0]);
+    auto      labelsData    = reader(meta.shN.files[1]);
+    WebPImage centroidsImg, labelsImg;
+    if(!centroidsData.empty() && !labelsData.empty() && decodeWebP(centroidsData, centroidsImg)
+       && decodeWebP(labelsData, labelsImg))
+    {
+      decodeShN(centroidsImg, labelsImg, meta.shN, count, output);
+    }
+  }
+
+  progress = 1.0f;
+  if(progressCallback)
+    progressCallback(progress);
+
+  // SOG format claims RUB (x: right, y: up, z: back) but typical 3DGS training
+  // produces data with OpenGL-style coordinates. After testing, we need to
+  // flip Y and Z to match our internal RUB coordinate system.
+  // This is equivalent to converting from RDF (right-down-forward) to RUB.
+  output.convertCoordinates(spz::CoordinateSystem::RDF, spz::CoordinateSystem::RUB);
+
+  LOGI("Loaded SOG file: %u splats\n", count);
+  return true;
+}
+
+bool SogLoader::loadBundled(const std::filesystem::path& sogPath, SplatSet& output, std::function<void(float)> progressCallback)
+{
+  // Read the entire ZIP file
+  std::vector<uint8_t> zipData = readFile(sogPath);
+  if(zipData.empty())
+  {
+    LOGE("Failed to read SOG file: %s\n", sogPath.string().c_str());
+    return false;
+  }
+
+  // Open ZIP archive
+  SimpleZipReader zip;
+  if(!zip.open(zipData))
+  {
+    LOGE("Failed to open SOG archive: %s\n", sogPath.string().c_str());
+    return false;
+  }
+
+  // Find and read meta.json
+  std::vector<uint8_t> metaData = zip.extractFile("meta.json");
+  if(metaData.empty())
+  {
+    LOGE("meta.json not found in SOG archive\n");
+    return false;
+  }
+
+  SogMeta meta;
+  if(!parseMeta(metaData, meta))
+  {
+    return false;
+  }
+
+  // Create file reader lambda
+  FileReader reader = [&zip](const std::string& filename) -> std::vector<uint8_t> {
+    return zip.extractFile(filename);
+  };
+
+  return loadWithReader(meta, reader, output, progressCallback);
+}
+
+bool SogLoader::loadUnbundled(const std::filesystem::path& metaPath, SplatSet& output, std::function<void(float)> progressCallback)
+{
+  // Read meta.json
+  std::vector<uint8_t> metaData = readFile(metaPath);
+  if(metaData.empty())
+  {
+    LOGE("Failed to read meta.json: %s\n", metaPath.string().c_str());
+    return false;
+  }
+
+  SogMeta meta;
+  if(!parseMeta(metaData, meta))
+  {
+    return false;
+  }
+
+  // Get directory containing meta.json
+  std::filesystem::path baseDir = metaPath.parent_path();
+
+  // Create file reader lambda
+  FileReader reader = [&baseDir](const std::string& filename) -> std::vector<uint8_t> {
+    return readFile(baseDir / filename);
+  };
+
+  return loadWithReader(meta, reader, output, progressCallback);
+}
+
+bool SogLoader::load(const std::filesystem::path& filename, SplatSet& output, std::function<void(float)> progressCallback)
+{
+  std::string ext = filename.extension().string();
+  std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+
+  if(ext == ".sog")
+  {
+    return loadBundled(filename, output, progressCallback);
+  }
+  else if(filename.filename() == "meta.json" || ext == ".json")
+  {
+    return loadUnbundled(filename, output, progressCallback);
+  }
+  else
+  {
+    LOGE("Unknown SOG file type: %s\n", filename.string().c_str());
+    return false;
+  }
+}
