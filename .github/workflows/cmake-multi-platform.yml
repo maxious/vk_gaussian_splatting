@@ -53,7 +53,8 @@ jobs:
         install_runtime: true
         cache: true
 
-    # Setup sccache for faster rebuilds (CMakeLists.txt auto-detects ccache/sccache)
+    # Setup sccache for faster rebuilds (better MSVC support than ccache)
+    # CMakeLists.txt auto-detects sccache and configures CMAKE_CXX_COMPILER_LAUNCHER
     - name: Setup sccache
       uses: hendrikmuhs/ccache-action@v1
       with:
@@ -93,22 +94,37 @@ jobs:
       run: ctest --build-config ${{ matrix.build_type }}
 
     # Prepare artifacts for upload
+    # Note: nvpro_core2 outputs to _bin/<config>/<config>/ on Windows with Visual Studio (multi-config)
+    # or _bin/<config>/ with single-config generators like Ninja
     - name: Prepare Windows artifacts
       if: runner.os == 'Windows'
       shell: pwsh
       run: |
         $artifactDir = "${{ github.workspace }}/artifact"
         New-Item -ItemType Directory -Force -Path $artifactDir
+        
+        # Try multi-config path first (_bin/Release/Release/), then single-config (_bin/Release/)
+        $multiConfigDir = "${{ github.workspace }}/_bin/${{ matrix.build_type }}/${{ matrix.build_type }}"
+        $singleConfigDir = "${{ github.workspace }}/_bin/${{ matrix.build_type }}"
+        
+        if (Test-Path "$multiConfigDir/*.exe") {
+          $binDir = $multiConfigDir
+        } else {
+          $binDir = $singleConfigDir
+        }
+        
+        Write-Host "Using bin directory: $binDir"
+        
         # Copy executable and required DLLs
-        Copy-Item "${{ steps.strings.outputs.build-output-dir }}/${{ matrix.build_type }}/*.exe" $artifactDir -Force
-        Copy-Item "${{ steps.strings.outputs.build-output-dir }}/${{ matrix.build_type }}/*.dll" $artifactDir -Force -ErrorAction SilentlyContinue
+        Copy-Item "$binDir/*.exe" $artifactDir -Force
+        Copy-Item "$binDir/*.dll" $artifactDir -Force -ErrorAction SilentlyContinue
         # Copy shaders
-        if (Test-Path "${{ steps.strings.outputs.build-output-dir }}/${{ matrix.build_type }}/shaders") {
-          Copy-Item "${{ steps.strings.outputs.build-output-dir }}/${{ matrix.build_type }}/shaders" $artifactDir -Recurse -Force
+        if (Test-Path "$binDir/shaders") {
+          Copy-Item "$binDir/shaders" $artifactDir -Recurse -Force
         }
         # Copy nvshaders
-        if (Test-Path "${{ steps.strings.outputs.build-output-dir }}/${{ matrix.build_type }}/nvshaders") {
-          Copy-Item "${{ steps.strings.outputs.build-output-dir }}/${{ matrix.build_type }}/nvshaders" $artifactDir -Recurse -Force
+        if (Test-Path "$binDir/nvshaders") {
+          Copy-Item "$binDir/nvshaders" $artifactDir -Recurse -Force
         }
 
     - name: Upload build artifacts

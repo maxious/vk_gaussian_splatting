@@ -3,9 +3,15 @@ cmake_minimum_required(VERSION 3.6...3.31)
 # Export compile commands for clangd/IDE support
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# Enable ccache if available
+# Enable compiler cache (sccache or ccache) if available
+# sccache is preferred on Windows/MSVC, ccache works better on Linux
+find_program(SCCACHE_PROGRAM sccache)
 find_program(CCACHE_PROGRAM ccache)
-if(CCACHE_PROGRAM)
+if(SCCACHE_PROGRAM)
+  set(CMAKE_C_COMPILER_LAUNCHER "${SCCACHE_PROGRAM}")
+  set(CMAKE_CXX_COMPILER_LAUNCHER "${SCCACHE_PROGRAM}")
+  message(STATUS "Using sccache: ${SCCACHE_PROGRAM}")
+elseif(CCACHE_PROGRAM)
   set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
   set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
   message(STATUS "Using ccache: ${CCACHE_PROGRAM}")
