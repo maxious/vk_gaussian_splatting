@@ -53,20 +53,7 @@ jobs:
         install_runtime: true
         cache: true
 
-    # Setup MSVC environment for Ninja builds (otherwise it picks up MinGW)
-    - name: Setup MSVC
-      uses: ilammy/msvc-dev-cmd@v1
-
-    # Setup sccache for faster rebuilds (better MSVC support than ccache)
-    # CMakeLists.txt auto-detects sccache and configures CMAKE_CXX_COMPILER_LAUNCHER
-    - name: Setup sccache
-      uses: hendrikmuhs/ccache-action@v1
-      with:
-        key: ${{ matrix.os }}-${{ matrix.c_compiler }}-${{ matrix.build_type }}
-        max-size: 500M
-        variant: sccache
-
-    # Cache CMake _deps folder (Slang, DLSS, OpenXR downloads)
+    # Cache CMake _deps folder (Slang, DLSS, OpenXR downloads) - main time saver
     - name: Cache CMake dependencies
       uses: actions/cache@v4
       with:
@@ -74,19 +61,17 @@ jobs:
         key: cmake-deps-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', 'nvpro_core2/cmake/FindSlang.cmake', 'nvpro_core2/cmake/FindNGX.cmake') }}
 
     - name: Configure CMake
-      # Use Ninja generator for proper sccache integration (VS generator doesn't support CMAKE_CXX_COMPILER_LAUNCHER)
+      # Use Visual Studio generator (sccache doesn't work well with MSVC parallel builds)
       # OpenXR SDK is fetched via FetchContent in CMakeLists.txt if not found
-      # Disable asset downloads to save build time
       run: >
         cmake -B ${{ steps.strings.outputs.build-output-dir }}
-        -G Ninja
         -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
         -DDISABLE_DEFAULT_SCENE=ON
         -DDISABLE_MESH_ASSETS_DOWNLOAD=ON
         -S ${{ github.workspace }}
 
     - name: Build
-      run: cmake --build ${{ steps.strings.outputs.build-output-dir }}
+      run: cmake --build ${{ steps.strings.outputs.build-output-dir }} --config ${{ matrix.build_type }}
 
     - name: Test
       working-directory: ${{ steps.strings.outputs.build-output-dir }}
