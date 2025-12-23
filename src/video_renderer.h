@@ -102,6 +102,10 @@ public:
 
   static std::string getFFmpegPath();
 
+  static int getFFmpegMajorVersion();
+
+  static bool supportsHDR10Encoding();
+
   void startRender(const VideoRenderSettings&                        settings,
                    const Camera&                                      startCamera,
                    const std::vector<Camera>&                         keyframes,

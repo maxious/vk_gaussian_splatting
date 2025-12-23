@@ -76,6 +76,54 @@ std::string VideoRenderer::getFFmpegPath()
   return result;
 }
 
+int VideoRenderer::getFFmpegMajorVersion()
+{
+#ifdef _WIN32
+  FILE* pipe = _popen("ffmpeg -version 2>nul", "r");
+#else
+  FILE* pipe = popen("ffmpeg -version 2>/dev/null", "r");
+#endif
+
+  if(!pipe)
+    return 0;
+
+  char buffer[512];
+  int  majorVersion = 0;
+
+  if(fgets(buffer, sizeof(buffer), pipe) != nullptr)
+  {
+    std::string line = buffer;
+    size_t      pos  = line.find("ffmpeg version ");
+    if(pos != std::string::npos)
+    {
+      pos += 15;  // Skip "ffmpeg version "
+      std::string versionStr;
+      while(pos < line.size() && std::isdigit(line[pos]))
+      {
+        versionStr += line[pos];
+        pos++;
+      }
+      if(!versionStr.empty())
+      {
+        majorVersion = std::stoi(versionStr);
+      }
+    }
+  }
+
+#ifdef _WIN32
+  _pclose(pipe);
+#else
+  pclose(pipe);
+#endif
+
+  return majorVersion;
+}
+
+bool VideoRenderer::supportsHDR10Encoding()
+{
+  return getFFmpegMajorVersion() >= 6;
+}
+
 void VideoRenderer::startRender(const VideoRenderSettings&                        settings,
                                 const Camera&                                      startCamera,
                                 const std::vector<Camera>&                         keyframes,
@@ -218,6 +266,21 @@ void VideoRenderer::checkFramesComplete()
 
 bool VideoRenderer::encodeVideo(const VideoRenderSettings& settings)
 {
+  bool isHDR = (settings.outputFormat == VideoOutputFormat::FORMAT_HDR);
+  
+  if(isHDR)
+  {
+    int ffmpegVersion = getFFmpegMajorVersion();
+    if(ffmpegVersion >= 6)
+    {
+      LOGI("Encoding HDR10 video with FFmpeg %d (BT.2020/PQ)\n", ffmpegVersion);
+    }
+    else
+    {
+      LOGW("FFmpeg version %d detected. HDR10 encoding requires FFmpeg 6+. Output will be SDR.\n", ffmpegVersion);
+    }
+  }
+
   std::string cmd = buildFFmpegCommand(settings, static_cast<int>(m_trajectory.size()));
 
   LOGI("Running FFmpeg command:\n%s\n", cmd.c_str());
@@ -244,6 +307,9 @@ std::string VideoRenderer::buildFFmpegCommand(const VideoRenderSettings& setting
 
   std::string outputPath = (settings.outputDir / (settings.outputName + ".mp4")).string();
 
+  bool isHDR         = (settings.outputFormat == VideoOutputFormat::FORMAT_HDR);
+  bool canEncodeHDR  = isHDR && supportsHDR10Encoding();
+
   ss << "ffmpeg -y -loglevel warning ";
   ss << "-framerate " << settings.frameRate << " ";
   ss << "-i \"" << inputPattern << "\" ";
@@ -251,24 +317,42 @@ std::string VideoRenderer::buildFFmpegCommand(const VideoRenderSettings& setting
   // Pad to even dimensions (required by H.264/H.265)
   ss << "-vf \"pad=ceil(iw/2)*2:ceil(ih/2)*2\" ";
 
-  switch(settings.codec)
+  if(canEncodeHDR)
   {
-    case VideoCodec::CODEC_H264_LOSSLESS:
-      ss << "-c:v libx264 -crf 0 -preset veryslow ";
-      break;
-    case VideoCodec::CODEC_H265_HIGH:
-      ss << "-c:v libx265 -crf 18 -preset slow ";
-      break;
-    case VideoCodec::CODEC_PRORES:
-      ss << "-c:v prores_ks -profile:v 3 ";
-      break;
-    case VideoCodec::CODEC_H264_HIGH:
-    default:
-      ss << "-c:v libx264 -crf 18 -preset slow ";
-      break;
+    // HDR10 encoding requires H.265 with 10-bit color and BT.2020 color space
+    ss << "-c:v libx265 -crf 18 -preset slow ";
+    ss << "-pix_fmt yuv420p10le ";
+    ss << "-x265-params \"";
+    ss << "colorprim=bt2020:";
+    ss << "transfer=smpte2084:";
+    ss << "colormatrix=bt2020nc:";
+    ss << "hdr-opt=1:";
+    ss << "repeat-headers=1:";
+    ss << "max-cll=1000,400\" ";
+    ss << "-color_primaries bt2020 ";
+    ss << "-color_trc smpte2084 ";
+    ss << "-colorspace bt2020nc ";
   }
-
-  ss << "-pix_fmt yuv420p ";
+  else
+  {
+    switch(settings.codec)
+    {
+      case VideoCodec::CODEC_H264_LOSSLESS:
+        ss << "-c:v libx264 -crf 0 -preset veryslow ";
+        break;
+      case VideoCodec::CODEC_H265_HIGH:
+        ss << "-c:v libx265 -crf 18 -preset slow ";
+        break;
+      case VideoCodec::CODEC_PRORES:
+        ss << "-c:v prores_ks -profile:v 3 ";
+        break;
+      case VideoCodec::CODEC_H264_HIGH:
+      default:
+        ss << "-c:v libx264 -crf 18 -preset slow ";
+        break;
+    }
+    ss << "-pix_fmt yuv420p ";
+  }
 
   ss << "\"" << outputPath << "\"";
 

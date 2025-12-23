@@ -3030,36 +3030,11 @@ void GaussianSplattingUI::guiDrawVideoExportWindow()
   {
     PE::begin("##Resolution");
 
-    static const char* resolutions[]      = {"Current Window", "1280x720 (720p)", "1920x1080 (1080p)", "2560x1440 (1440p)",
-                                             "3840x2160 (4K)", "Custom"};
-    static int         resWidths[]        = {0, 1280, 1920, 2560, 3840, -1};
-    static int         resHeights[]       = {0, 720, 1080, 1440, 2160, -1};
-    static int         resolutionIdx      = 2;
+    m_videoSettings.width  = static_cast<int>(m_viewSize.x);
+    m_videoSettings.height = static_cast<int>(m_viewSize.y);
 
-    if(PE::entry(
-           "Preset", [&]() { return ImGui::Combo("##ResPreset", &resolutionIdx, resolutions, IM_ARRAYSIZE(resolutions)); }, ""))
-    {
-      if(resolutionIdx == 0)
-      {
-        m_videoSettings.width  = m_viewSize.x;
-        m_videoSettings.height = m_viewSize.y;
-      }
-      else if(resolutionIdx < 5)
-      {
-        m_videoSettings.width  = resWidths[resolutionIdx];
-        m_videoSettings.height = resHeights[resolutionIdx];
-      }
-    }
-
-    if(resolutionIdx == 5)
-    {
-      PE::InputInt("Width", &m_videoSettings.width);
-      PE::InputInt("Height", &m_videoSettings.height);
-    }
-    else
-    {
-      PE::Text("Size", "%d x %d", m_videoSettings.width, m_videoSettings.height);
-    }
+    PE::Text("Size", "%d x %d", m_videoSettings.width, m_videoSettings.height);
+    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Resize viewport to change resolution");
 
     PE::end();
   }
@@ -3120,6 +3095,26 @@ void GaussianSplattingUI::guiDrawVideoExportWindow()
     if(PE::InputText("Filename", outputName, sizeof(outputName)))
     {
       m_videoSettings.outputName = outputName;
+    }
+
+    static const char* formats[]    = {"PNG (SDR)", "HDR (Radiance .hdr)"};
+    int                formatIdx    = static_cast<int>(m_videoSettings.outputFormat);
+    if(PE::entry(
+           "Frame Format", [&]() { return ImGui::Combo("##Format", &formatIdx, formats, IM_ARRAYSIZE(formats)); }, "Frame output format"))
+    {
+      m_videoSettings.outputFormat = static_cast<VideoOutputFormat>(formatIdx);
+    }
+
+    if(m_videoSettings.outputFormat == VideoOutputFormat::FORMAT_HDR)
+    {
+      if(!VideoRenderer::supportsHDR10Encoding())
+      {
+        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), ICON_MS_WARNING " FFmpeg 6+ required for HDR10 video");
+      }
+      else
+      {
+        ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), ICON_MS_CHECK_CIRCLE " HDR10 encoding (BT.2020/PQ)");
+      }
     }
 
     static const char* codecs[]     = {"H.264 High Quality", "H.264 Lossless", "H.265/HEVC", "ProRes"};
