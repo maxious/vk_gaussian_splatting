@@ -2,6 +2,23 @@
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
+## 🚀 Fork Additions (maxious)
+
+This fork adds the following features to the original NVIDIA sample:
+
+### VR & Immersive Display Support
+- **OpenXR VR Support** - Full VR headset support via OpenXR with head tracking and controller input
+- **Side-by-Side (SBS) Stereo Output** - Stereoscopic 3D output for VR headsets, 3D displays, and Looking Glass displays
+- **VR Locomotion Controls** - Left stick for movement/strafe, right stick for rotation and vertical movement
+
+### AI Upscaling
+- **NVIDIA DLSS Ray Reconstruction (DLSS-RR)** - AI-powered ray reconstruction for enhanced image quality with the ray tracing pipelines
+
+### Generative AI Integration
+- **ComfyUI Integration** - Generate 3D Gaussian Splats from text/image prompts via ComfyUI workflows
+
+---
+
 ![image showing the rendering modes on the train 3DGS model](doc/rendering_modes.jpg)
 
 We envision this project as a **testbed** to explore and compare various approaches to real-time visualization of **3D Gaussian Splatting (3DGS) [[Kerbl2023](https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/)]** and related evolutions. By evaluating various techniques and optimizations, we aim to provide valuable insights into **performance, quality, and implementation trade-offs** when using the **Vulkan API**.
