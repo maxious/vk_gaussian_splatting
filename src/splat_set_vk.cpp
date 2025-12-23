@@ -21,7 +21,6 @@
 #include "shaderio.h"
 #include "utilities.h"
 
-#include <iostream>
 #include <chrono>
 
 // mathematics
@@ -129,24 +128,17 @@ void SplatSetVk::initDataBuffers(SplatSet& splatSet)
     if(splatId < splatSet.size())
     {
 
-      std::cout << splatSet.positions[splatId * 3 + 0] << " ";
-      std::cout << splatSet.positions[splatId * 3 + 1] << " ";
-      std::cout << splatSet.positions[splatId * 3 + 2] << "  0 1 0  ";
-      std::cout << splatSet.f_dc[splatId * 3 + 0] << " ";
-      std::cout << splatSet.f_dc[splatId * 3 + 1] << " ";
-      std::cout << splatSet.f_dc[splatId * 3 + 2] << "  ";
+      LOGD("pos: %f %f %f  0 1 0  f_dc: %f %f %f\n", splatSet.positions[splatId * 3 + 0],
+           splatSet.positions[splatId * 3 + 1], splatSet.positions[splatId * 3 + 2], splatSet.f_dc[splatId * 3 + 0],
+           splatSet.f_dc[splatId * 3 + 1], splatSet.f_dc[splatId * 3 + 2]);
       for(int i = 0; i < 45; ++i)
       {
-        std::cout << splatSet.f_rest[splatId * 45 + i] << " ";
+        LOGD("f_rest[%d]: %f\n", i, splatSet.f_rest[splatId * 45 + i]);
       }
-      std::cout << " " << splatSet.opacity[splatId] << "  ";
-      std::cout << splatSet.scale[splatId * 3 + 0] << " ";
-      std::cout << splatSet.scale[splatId * 3 + 1] << " ";
-      std::cout << splatSet.scale[splatId * 3 + 2] << "  ";
-      std::cout << splatSet.rotation[splatId * 4 + 0] << " ";
-      std::cout << splatSet.rotation[splatId * 4 + 1] << " ";
-      std::cout << splatSet.rotation[splatId * 4 + 2] << " ";
-      std::cout << splatSet.rotation[splatId * 4 + 3] << std::endl;
+      LOGD("opacity: %f  scale: %f %f %f  rotation: %f %f %f %f\n", splatSet.opacity[splatId],
+           splatSet.scale[splatId * 3 + 0], splatSet.scale[splatId * 3 + 1], splatSet.scale[splatId * 3 + 2],
+           splatSet.rotation[splatId * 4 + 0], splatSet.rotation[splatId * 4 + 1], splatSet.rotation[splatId * 4 + 2],
+           splatSet.rotation[splatId * 4 + 3]);
     }
   }
   auto       startTime  = std::chrono::high_resolution_clock::now();
@@ -405,7 +397,7 @@ void SplatSetVk::initDataBuffers(SplatSet& splatSet)
 
     auto      endShTime   = std::chrono::high_resolution_clock::now();
     long long buildShTime = std::chrono::duration_cast<std::chrono::milliseconds>(endShTime - startShTime).count();
-    std::cout << "Sh data updated in " << buildShTime << "ms" << std::endl;
+    LOGI("Sh data updated in %lldms\n", buildShTime);
 
     // copy from host buffer to device buffer
     // barrier at the end of this method.
@@ -448,7 +440,7 @@ void SplatSetVk::initDataBuffers(SplatSet& splatSet)
 
   auto      endTime   = std::chrono::high_resolution_clock::now();
   long long buildTime = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
-  std::cout << "Data buffers updated in " << buildTime << "ms" << std::endl;
+  LOGI("Data buffers updated in %lldms\n", buildTime);
 }
 
 void SplatSetVk::deinitDataBuffers()
@@ -688,7 +680,7 @@ void SplatSetVk::initDataTextures(SplatSet& splatSet)
 
   auto      endTime   = std::chrono::high_resolution_clock::now();
   long long buildTime = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
-  std::cout << "Data textures updated in " << buildTime << "ms" << std::endl;
+  LOGI("Data textures updated in %lldms\n", buildTime);
 }
 
 void SplatSetVk::deinitDataTextures()

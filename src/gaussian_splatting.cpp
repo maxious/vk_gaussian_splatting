@@ -28,6 +28,8 @@
 #include "gaussian_splatting.h"
 #include "utilities.h"
 
+#include <nvutils/logger.hpp>
+
 #define GLM_ENABLE_SWIZZLE
 #include <glm/gtc/packing.hpp>  // Required for half-float operations
 
@@ -292,17 +294,16 @@ void GaussianSplatting::deinitScene()
 
 void GaussianSplatting::benchmarkAdvance()
 {
-  std::cout << "BENCHMARK_ADV " << m_benchmarkId << " {" << std::endl;
-  std::cout << " Memory Scene; Host used \t" << m_splatSetVk.memoryStats.srcAll << "; Device Used \t"
-            << m_splatSetVk.memoryStats.odevAll << "; Device Allocated \t" << m_splatSetVk.memoryStats.devAll
-            << "; (bytes)" << std::endl;
-  std::cout << " Memory Rasterization; Host used \t" << m_renderMemoryStats.rasterHostTotal << "; Device Used \t"
-            << m_renderMemoryStats.rasterDeviceUsedTotal << "; Device Allocated \t"
-            << m_renderMemoryStats.rasterDeviceAllocTotal << "; (bytes)" << std::endl;
-  std::cout << " Memory Raytracing; Host used \t" << m_renderMemoryStats.rtxHostTotal << "; Device Used \t"
-            << m_renderMemoryStats.rtxDeviceUsedTotal << "; Device Allocated \t"
-            << m_renderMemoryStats.rtxDeviceAllocTotal << "; (bytes)" << std::endl;
-  std::cout << "}" << std::endl;
+  LOGI("BENCHMARK_ADV %d {\n", m_benchmarkId);
+  LOGI(" Memory Scene; Host used \t%zu; Device Used \t%zu; Device Allocated \t%zu; (bytes)\n",
+       m_splatSetVk.memoryStats.srcAll, m_splatSetVk.memoryStats.odevAll, m_splatSetVk.memoryStats.devAll);
+  LOGI(" Memory Rasterization; Host used \t%zu; Device Used \t%zu; Device Allocated \t%zu; (bytes)\n",
+       m_renderMemoryStats.rasterHostTotal, m_renderMemoryStats.rasterDeviceUsedTotal,
+       m_renderMemoryStats.rasterDeviceAllocTotal);
+  LOGI(" Memory Raytracing; Host used \t%zu; Device Used \t%zu; Device Allocated \t%zu; (bytes)\n",
+       m_renderMemoryStats.rtxHostTotal, m_renderMemoryStats.rtxDeviceUsedTotal,
+       m_renderMemoryStats.rtxDeviceAllocTotal);
+  LOGI("}\n");
 
   m_benchmarkId++;
 }

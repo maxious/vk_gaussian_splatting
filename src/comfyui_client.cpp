@@ -25,7 +25,8 @@
 #include <sstream>
 #include <random>
 #include <iomanip>
-#include <iostream>
+
+#include <nvutils/logger.hpp>
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -158,7 +159,7 @@ void ComfyUIClient::onOpen(websocketpp::connection_hdl hdl)
 {
     m_connectionHdl = hdl;
     m_state.store(State::Connected);
-    std::cout << "ComfyUI: WebSocket connected" << std::endl;
+    LOGI("ComfyUI: WebSocket connected\n");
 }
 
 void ComfyUIClient::onClose(websocketpp::connection_hdl hdl)
@@ -180,7 +181,7 @@ void ComfyUIClient::onClose(websocketpp::connection_hdl hdl)
     std::lock_guard<std::mutex> lock(m_mutex);
     m_lastError = "Connection closed - " + reason;
     m_state.store(State::Disconnected);
-    std::cout << "ComfyUI: WebSocket closed (" << reason << ")" << std::endl;
+    LOGI("ComfyUI: WebSocket closed (%s)\n", reason.c_str());
 }
 
 void ComfyUIClient::onFail(websocketpp::connection_hdl hdl)
@@ -228,7 +229,7 @@ void ComfyUIClient::onFail(websocketpp::connection_hdl hdl)
     std::lock_guard<std::mutex> lock(m_mutex);
     m_lastError = errorDetail;
     m_state.store(State::Error);
-    std::cout << "ComfyUI: " << errorDetail << std::endl;
+    LOGE("ComfyUI: %s\n", errorDetail.c_str());
 }
 
 void ComfyUIClient::onMessage(websocketpp::connection_hdl hdl, WsClient::message_ptr msg)
@@ -290,7 +291,7 @@ void ComfyUIClient::onMessage(websocketpp::connection_hdl hdl, WsClient::message
                 {
                     std::lock_guard<std::mutex> lock(m_mutex);
                     m_outputPlyPath = output["ply_path"].get<std::string>();
-                    std::cout << "ComfyUI: PLY output path: " << m_outputPlyPath << std::endl;
+                    LOGI("ComfyUI: PLY output path: %s\n", m_outputPlyPath.c_str());
                 }
             }
         }
@@ -308,7 +309,7 @@ void ComfyUIClient::onMessage(websocketpp::connection_hdl hdl, WsClient::message
     }
     catch (const std::exception& e)
     {
-        std::cerr << "ComfyUI: Error parsing message: " << e.what() << std::endl;
+        LOGE("ComfyUI: Error parsing message: %s\n", e.what());
     }
 }
 
@@ -503,7 +504,7 @@ bool ComfyUIClient::queueWorkflow(const std::filesystem::path& workflowPath,
                     m_outputPlyPath.clear();
                 }
 
-                std::cout << "ComfyUI: Workflow queued with prompt_id: " << m_currentPromptId << std::endl;
+                LOGI("ComfyUI: Workflow queued with prompt_id: %s\n", m_currentPromptId.c_str());
                 return true;
             }
             else if (responseJson.contains("error"))

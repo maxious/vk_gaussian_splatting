@@ -14,6 +14,12 @@ This fork adds the following features to the original NVIDIA sample:
 ### AI Upscaling
 - **NVIDIA DLSS Ray Reconstruction (DLSS-RR)** - AI-powered ray reconstruction for enhanced image quality with the ray tracing pipelines
 
+### Video Export
+- **Video Rendering** - Export camera trajectory animations to MP4 video files
+- **Multiple Trajectory Modes** - Orbit, Swipe, Rotate+Zoom, and Camera Shake animations
+- **Codec Support** - H.264, H.265/HEVC, and ProRes encoding via FFmpeg
+- **Stereo VR Output** - Side-by-side stereoscopic video export for VR playback
+
 ### Generative AI Integration
 - **ComfyUI Integration** - Generate 3D Gaussian Splats from text/image prompts via ComfyUI workflows
 

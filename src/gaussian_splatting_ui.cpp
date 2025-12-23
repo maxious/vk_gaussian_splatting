@@ -18,6 +18,7 @@
  */
 
 #include "nvutils/file_operations.hpp"
+#include <nvutils/logger.hpp>
 
 #include "nvgui/fonts.hpp"
 #include "nvgui/tooltip.hpp"
@@ -326,7 +327,7 @@ void GaussianSplattingUI::onUIMenu()
     if(!m_loadedSceneFilename.empty())
       m_requestUpdateShaders = true;
     else
-      std::cout << "No scene loaded, cannot rebuild shader" << std::endl;
+      LOGW("No scene loaded, cannot rebuild shader\n");
   }
   if(close_app)
   {
@@ -372,7 +373,7 @@ void GaussianSplattingUI::onFileDrop(const std::filesystem::path& filename)
   else if(extension == ".obj")
     prmScene.meshToImportFilename = filename;
   else
-    std::cout << "Error: unsupported file extension " << extension << std::endl;
+    LOGE("Error: unsupported file extension %s\n", extension.c_str());
 }
 
 void GaussianSplattingUI::onUIRender()
@@ -494,11 +495,11 @@ void GaussianSplattingUI::onUIRender()
       //
       vkDeviceWaitIdle(m_device);
 
-      std::cout << "Start loading file " << prmScene.sceneToLoadFilename << std::endl;
+      LOGI("Start loading file %s\n", prmScene.sceneToLoadFilename.string().c_str());
       if(!m_plyLoader.loadScene(prmScene.sceneToLoadFilename, m_splatSet))
       {
         // this should never occur since status is READY.
-        std::cout << "Error: cannot start scene load while loader is not ready status=" << m_plyLoader.getStatus() << std::endl;
+        LOGE("Error: cannot start scene load while loader is not ready status=%d\n", static_cast<int>(m_plyLoader.getStatus()));
       }
       else
       {
@@ -2313,12 +2314,12 @@ bool GaussianSplattingUI::loadProjectIfNeeded()
 
     if(doReset)
     {
-      std::cout << "Opening project file " << path << std::endl;
+      LOGI("Opening project file %s\n", path.c_str());
 
       std::ifstream i(path);
       if(!i.is_open())
       {
-        std::cout << "Error : unable to open project file " << path << std::endl;
+        LOGE("Error : unable to open project file %s\n", path.c_str());
         prmScene.projectToLoadFilename = "";
         return false;
       }
@@ -2329,7 +2330,7 @@ bool GaussianSplattingUI::loadProjectIfNeeded()
       }
       catch(...)
       {
-        std::cout << "Error : invalid project file " << path << std::endl;
+        LOGE("Error : invalid project file %s\n", path.c_str());
         prmScene.projectToLoadFilename = "";
         return false;
       }
@@ -2709,14 +2710,14 @@ void GaussianSplattingUI::dumpSplat(uint32_t splatIdx)
 {
   if(!(splatIdx >= 0 && splatIdx < m_splatSet.size()))
   {
-    std::cout << "Error: no splat to dump" << std::endl;
+    LOGE("Error: no splat to dump\n");
     return;
   }
 
   std::ofstream out("c:\\Temp\\debug_splat.ply");
   if(!out)
   {
-    std::cout << "Error: coud not open file c:\\Temp\\debug_splat.ply" << std::endl;
+    LOGE("Error: could not open file c:\\Temp\\debug_splat.ply\n");
     return;
   }
 
@@ -2760,7 +2761,7 @@ void GaussianSplattingUI::dumpSplat(uint32_t splatIdx)
   out.close();
 
   //
-  std::cout << "Splat " << splatIdx << " was dumped to c:\\Temp\\debug_splat.ply" << std::endl;
+  LOGI("Splat %u was dumped to c:\\Temp\\debug_splat.ply\n", splatIdx);
 }
 
 #ifdef WITH_COMFYUI
@@ -2930,7 +2931,7 @@ void GaussianSplattingUI::onComfyUIWorkflowComplete(const ComfyUIClient::Workflo
   if (result.success && !result.plyPath.empty())
   {
     m_comfyStatusMessage = "Success! Loading: " + result.plyPath;
-    std::cout << "ComfyUI workflow completed. PLY path: " << result.plyPath << std::endl;
+    LOGI("ComfyUI workflow completed. PLY path: %s\n", result.plyPath.c_str());
 
     if (std::filesystem::exists(result.plyPath))
     {
