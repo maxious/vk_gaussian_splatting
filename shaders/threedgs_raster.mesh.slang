@@ -98,6 +98,9 @@ void main(
   uint3 groupThreadID : SV_GroupThreadID,
   uint3 groupID : SV_GroupID,
   uint3 dispatchThreadID : SV_DispatchThreadID,
+#ifdef MULTIVIEW_ENABLED
+  uint viewIndex : SV_ViewID,
+#endif
   OutputIndices<uint3, MAX_PRIMITIVES> tris,
   OutputVertices<VertexOutput, MAX_VERTICES> verts,
   OutputPrimitives<PrimitiveOutput, MAX_PRIMITIVES> prims
@@ -107,29 +110,36 @@ void main(
   const uint localIndex = groupThreadID.x;
   
 #if FRUSTUM_CULLING_MODE == FRUSTUM_CULLING_AT_DIST
-  // if culling is already performed we use the subset of splats
   const uint splatCount = indirectBuffer[0].instanceCount;
 #else
-  // otherwise we use all the splats
   const uint splatCount = frameInfo.splatCount;
 #endif
   const uint outputQuadCount = min(RASTER_MESH_WORKGROUP_SIZE, splatCount - groupID.x * RASTER_MESH_WORKGROUP_SIZE);
 
   if(localIndex == 0)
   {
-    // set the number of vertices and primitives to put out just once for the complete workgroup
     SetMeshOutputCounts(outputQuadCount * 4, outputQuadCount * 2);
   }
+
+  // Select view/projection matrices based on multiview mode
+#ifdef MULTIVIEW_ENABLED
+  float4x4 viewMatrix = (frameInfo.multiviewEnabled != 0) ? frameInfo.viewMatrixArray[viewIndex] : frameInfo.viewMatrix;
+  float4x4 projMatrix = (frameInfo.multiviewEnabled != 0) ? frameInfo.projectionMatrixArray[viewIndex] : frameInfo.projectionMatrix;
+  float3 cameraPos = (frameInfo.multiviewEnabled != 0) ? frameInfo.cameraPositionArray[viewIndex] : frameInfo.cameraPosition;
+#else
+  float4x4 viewMatrix = frameInfo.viewMatrix;
+  float4x4 projMatrix = frameInfo.projectionMatrix;
+  float3 cameraPos = frameInfo.cameraPosition;
+#endif
 
   if(baseIndex < splatCount)
   {
     const uint splatIndex = indices[baseIndex];
 
-    // emit primitives (triangles) as soon as possible
     tris[localIndex * 2 + 0] = uint3(0, 2, 1) + localIndex * 4;
     tris[localIndex * 2 + 1] = uint3(2, 0, 3) + localIndex * 4;
 
-    const float4x4 modelViewMatrix = mul(pcRaster.modelMatrix, frameInfo.viewMatrix);
+    const float4x4 modelViewMatrix = mul(pcRaster.modelMatrix, viewMatrix);
 
     // Fetches are done as early as possible.
     float4       splatColor  = fetchColor(splatIndex);
@@ -138,16 +148,15 @@ void main(
 
     // Row-major: vector * matrix
     const float4 viewCenter = mul(float4(splatCenter, 1.0), modelViewMatrix);
-    const float4 clipCenter  = mul(viewCenter, frameInfo.projectionMatrix);
+    const float4 clipCenter  = mul(viewCenter, projMatrix);
 
 #if SHOW_SH_ONLY == 1
     splatColor.rgb = float3(0.5, 0.5, 0.5);
 #endif
 
     // fetch radiance from SH coefs > degree 0
-    // const float3 worldViewDir = normalize(splatCenter - frameInfo.cameraPosition);
     // Row-major: vector * matrix (camera position transformed by inverse model matrix)
-    const float3 worldViewDir = normalize(splatCenter - mul(float4(frameInfo.cameraPosition, 1.0), pcRaster.modelMatrixInverse).xyz);
+    const float3 worldViewDir = normalize(splatCenter - mul(float4(cameraPos, 1.0), pcRaster.modelMatrixInverse).xyz);
 
     splatColor.rgb += fetchViewDependentRadiance(splatIndex, worldViewDir);
 

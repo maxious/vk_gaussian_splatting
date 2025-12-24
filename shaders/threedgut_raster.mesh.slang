@@ -72,6 +72,9 @@ void main(
   uint3 groupThreadID : SV_GroupThreadID,
   uint3 groupID : SV_GroupID,
   uint3 dispatchThreadID : SV_DispatchThreadID,
+#ifdef MULTIVIEW_ENABLED
+  uint viewIndex : SV_ViewID,
+#endif
   out OutputVertices<VertexOutput, MAX_VERTICES> verts,
   out OutputPrimitives<PrimitiveOutput, MAX_PRIMITIVES> prims,
   out OutputIndices<uint3, MAX_PRIMITIVES> triangles)
@@ -79,43 +82,40 @@ void main(
   const uint localIndex = groupThreadID.x;
   const uint32_t baseIndex = dispatchThreadID.x;
 #if FRUSTUM_CULLING_MODE == FRUSTUM_CULLING_AT_DIST
-  // if culling is already performed we use the subset of splats
   const uint splatCount = indirectBuffer[0].instanceCount;
 #else
-  // otherwise we use all the splats
   const uint splatCount = frameInfo.splatCount;
 #endif
   const uint outputQuadCount = min(RASTER_MESH_WORKGROUP_SIZE, splatCount - groupID.x * RASTER_MESH_WORKGROUP_SIZE);
 
   if(localIndex == 0)
   {
-    // set the number of vertices and primitives to put out just once for the complete workgroup
     SetMeshOutputCounts(outputQuadCount * 4, outputQuadCount * 2);
   }
+
+  // Select camera position based on multiview mode
+#ifdef MULTIVIEW_ENABLED
+  float3 cameraPos = (frameInfo.multiviewEnabled != 0) ? frameInfo.cameraPositionArray[viewIndex] : frameInfo.cameraPosition;
+#else
+  float3 cameraPos = frameInfo.cameraPosition;
+#endif
 
   if(baseIndex < splatCount)
   {
     const uint splatIndex = indices[baseIndex];
 
-    // emit primitives (triangles) as soon as possible
     triangles[localIndex * 2 + 0] = uint3(0, 2, 1) + localIndex * 4;
     triangles[localIndex * 2 + 1] = uint3(2, 0, 3) + localIndex * 4;
     
-    // Fetch particle minimal data
-    // Fetches are done as early as possible.
-    // Moving those after culling statments will reduce the performance
-    float4       splatColor  = fetchColor(splatIndex);  // contains opacity as .a
+    // Fetch particle minimal data (done as early as possible for performance)
+    float4       splatColor  = fetchColor(splatIndex);
     const float3 splatCenter = fetchCenter(splatIndex);
     const float3 splatScale  = exp(fetchScale(splatIndex));
-    // INRIA quaternions are scalar first: w in splatRotation.x and xyz in splatRotation.yzw)
-    // our internal representation (hence splatRotation), uses xyz, w. vec4ToQuat does convertion
     const float4 splatRotation = normalize(vec4toQuat(fetchRotation(splatIndex)));
 
-    // provides the splatIndex to the fragment shader
     prims[localIndex * 2 + 0].splatId = splatIndex;
     prims[localIndex * 2 + 1].splatId = splatIndex;
     
-    // emit per primitive data ASAP
     prims[localIndex * 2 + 0].splatPosition = splatCenter;
     prims[localIndex * 2 + 1].splatPosition = splatCenter;
     prims[localIndex * 2 + 0].splatScale    = splatScale;
@@ -124,7 +124,7 @@ void main(
     prims[localIndex * 2 + 1].splatRotation = splatRotation;
 
     // fetch radiance from SH coefs > degree 0, we work in model coordinates
-    const float3 worldViewDir = normalize(splatCenter - mul(float4(frameInfo.cameraPosition, 1.0), pcRaster.modelMatrixInverse).xyz);
+    const float3 worldViewDir = normalize(splatCenter - mul(float4(cameraPos, 1.0), pcRaster.modelMatrixInverse).xyz);
 
 #if SHOW_SH_ONLY == 1
     splatColor.rgb = float3(0.5);

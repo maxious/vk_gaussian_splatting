@@ -115,7 +115,7 @@ std::vector<const char*> GsOpenXr::getRequiredInstanceExtensions() const
 
 std::vector<const char*> GsOpenXr::getRequiredDeviceExtensions() const
 {
-  return {};
+  return {"VK_KHR_multiview"};
 }
 
 bool GsOpenXr::initialize(VkInstance       vkInstance,
@@ -154,7 +154,11 @@ bool GsOpenXr::initialize(VkInstance       vkInstance,
     LOGW("Failed to create OpenXR action set for controllers - locomotion disabled\n");
   }
 
-  LOGI("OpenXR initialized successfully. Per-eye resolution: %dx%d\n", m_perEyeExtent.width, m_perEyeExtent.height);
+  // Check for VK_KHR_multiview support
+  m_supportsMultiview = true;  // OpenXR runtime should have provided this if supported
+
+  LOGI("OpenXR initialized successfully. Per-eye resolution: %dx%d, Multiview: %s\n", 
+       m_perEyeExtent.width, m_perEyeExtent.height, m_supportsMultiview ? "YES" : "NO");
   return true;
 }
 

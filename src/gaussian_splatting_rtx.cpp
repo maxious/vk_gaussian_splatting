@@ -371,6 +371,72 @@ void GaussianSplatting::raytrace(const VkCommandBuffer& cmdBuf, bool meshDepthOn
                     traceWidth, traceHeight, 1);
 }
 
+//--------------------------------------------------------------------------------------------------
+// Ray Tracing with VK_KHR_multiview support (mobile VR optimization)
+// Single raytrace call renders both eyes efficiently for side-by-side stereo
+//
+void GaussianSplatting::raytraceMultiview(const VkCommandBuffer& cmdBuf, bool meshDepthOnly,
+                                          const glm::mat4& leftViewMat, const glm::mat4& leftProjMat,
+                                          const glm::mat4& rightViewMat, const glm::mat4& rightProjMat,
+                                          const glm::vec3& leftEyePos, const glm::vec3& rightEyePos,
+                                          glm::ivec2 viewportSize)
+{
+  NVVK_DBG_SCOPE(cmdBuf);
+
+  const std::string name = meshDepthOnly ? "Raytracing multiview prepass" : "Raytracing multiview";
+
+  auto timerSection = m_profilerGpuTimer.cmdFrameSection(cmdBuf, name);
+
+  // Use full SBS dimensions for multiview rendering
+  const uint32_t traceWidth  = (viewportSize.x > 0) ? static_cast<uint32_t>(viewportSize.x) : static_cast<uint32_t>(m_viewSize.x);
+  const uint32_t traceHeight = (viewportSize.y > 0) ? static_cast<uint32_t>(viewportSize.y) : static_cast<uint32_t>(m_viewSize.y);
+
+  // Store both eye matrices in arrays for multiview shader access
+  prmFrame.viewMatrixArray[0] = leftViewMat;
+  prmFrame.viewMatrixArray[1] = rightViewMat;
+  prmFrame.viewInverseArray[0] = glm::inverse(leftViewMat);
+  prmFrame.viewInverseArray[1] = glm::inverse(rightViewMat);
+  prmFrame.projectionMatrixArray[0] = leftProjMat;
+  prmFrame.projectionMatrixArray[1] = rightProjMat;
+  prmFrame.projInverseArray[0] = glm::inverse(leftProjMat);
+  prmFrame.projInverseArray[1] = glm::inverse(rightProjMat);
+  prmFrame.cameraPositionArray[0] = leftEyePos;
+  prmFrame.cameraPositionArray[1] = rightEyePos;
+  prmFrame.multiviewEnabled = 1;
+
+  // Upload frame info UBO using vkCmdUpdateBuffer (same pattern as updateAndUploadFrameInfoUBO)
+  vkCmdUpdateBuffer(cmdBuf, m_frameInfoBuffer.buffer, 0, sizeof(shaderio::FrameInfo), &prmFrame);
+
+  VkMemoryBarrier barrier = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+  barrier.srcAccessMask   = VK_ACCESS_TRANSFER_WRITE_BIT;
+  barrier.dstAccessMask   = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT;
+  vkCmdPipelineBarrier(cmdBuf, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                       VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR, 0, 1, &barrier, 0, NULL, 0, NULL);
+
+  // Initializing push constant values
+  m_pcRay.modelMatrix        = m_splatSetVk.transform;
+  m_pcRay.modelMatrixInverse = m_splatSetVk.transformInverse;
+  m_pcRay.modelMatrixRotScaleInverse = glm::inverse(glm::mat3(m_splatSetVk.transform));
+  m_pcRay.meshDepthOnly = meshDepthOnly;
+  m_pcRay.viewportOffset = glm::ivec2(0, 0);
+
+  std::vector<VkDescriptorSet> descSets{m_descriptorSet, m_rtDescriptorSet};
+  vkCmdBindPipeline(cmdBuf, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, m_rtPipeline);
+  vkCmdBindDescriptorSets(cmdBuf, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, m_rtPipelineLayout, 0,
+                          (uint32_t)descSets.size(), descSets.data(), 0, nullptr);
+
+  m_pcRay.vertexAddress = m_splatSetVk.m_splatModel.vertexBuffer.address;
+  m_pcRay.indexAddress = m_splatSetVk.m_splatModel.indexBuffer.address;
+
+  vkCmdPushConstants(cmdBuf, m_rtPipelineLayout,
+                     VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VK_SHADER_STAGE_ANY_HIT_BIT_KHR
+                         | VK_SHADER_STAGE_MISS_BIT_KHR | VK_SHADER_STAGE_INTERSECTION_BIT_KHR,
+                     0, sizeof(shaderio::PushConstantRay), &m_pcRay);
+
+  vkCmdTraceRaysKHR(cmdBuf, &m_sbtRegions.raygen, &m_sbtRegions.miss, &m_sbtRegions.hit, &m_sbtRegions.callable,
+                    traceWidth, traceHeight, 1);
+}
+
 
 bool GaussianSplatting::updateFrameCounter()
 {

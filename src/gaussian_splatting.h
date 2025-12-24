@@ -251,6 +251,12 @@ private:
   void initRtPipeline();
   void raytrace(const VkCommandBuffer& cmdBuf, bool meshDepthOnly = false,
                 glm::ivec2 viewportOffset = {0, 0}, glm::ivec2 viewportSize = {0, 0});
+  // VK_KHR_multiview optimized raytrace for stereo rendering (mobile VR)
+  void raytraceMultiview(const VkCommandBuffer& cmdBuf, bool meshDepthOnly,
+                         const glm::mat4& leftViewMat, const glm::mat4& leftProjMat,
+                         const glm::mat4& rightViewMat, const glm::mat4& rightProjMat,
+                         const glm::vec3& leftEyePos, const glm::vec3& rightEyePos,
+                         glm::ivec2 viewportSize = {0, 0});
 
   //////////////
   // Post processing
@@ -320,6 +326,18 @@ protected:
   bool  m_xrResizedThisFrame = false;  // Skip rendering frame after XR GBuffer resize
   VkImage m_xrColorImage  = VK_NULL_HANDLE;  // Current XR color swapchain image
   VkImage m_xrDepthImage  = VK_NULL_HANDLE;  // Current XR depth swapchain image
+  
+  // Multiview resources for stereo rendering (2-layer images)
+  nvvk::Image   m_xrMultiviewColor{};       // 2-layer color image for multiview
+  nvvk::Image   m_xrMultiviewDepth{};       // 2-layer depth image for multiview
+  VkImageView   m_xrMultiviewColorView = VK_NULL_HANDLE;  // Array view (both layers)
+  VkImageView   m_xrMultiviewDepthView = VK_NULL_HANDLE;  // Array view (both layers)
+  VkExtent2D    m_xrMultiviewExtent{};      // Per-eye extent for multiview
+  bool          m_xrMultiviewInitialized = false;
+  
+  void initXrMultiviewResources(VkCommandBuffer cmd, VkExtent2D perEyeExtent);
+  void deinitXrMultiviewResources();
+  void renderMultiviewRaster(VkCommandBuffer cmd, uint32_t splatCount);
 #endif
 
   nvapp::Application*         m_app{nullptr};
@@ -443,6 +461,12 @@ protected:
   VkPipeline m_graphicsPipeline3dgutMesh = VK_NULL_HANDLE;  // The graphic pipeline to rasterize 3DGUT splats using mesh shaders
   // 3D Meshes Pipelines
   VkPipeline m_graphicsPipelineMesh = VK_NULL_HANDLE;  // The graphic pipeline to rasterize meshes
+#ifdef WITH_OPENXR
+  // Multiview variants of raster pipelines (viewMask = 0x3 for stereo)
+  VkPipeline m_graphicsPipelineGsVertMultiview = VK_NULL_HANDLE;
+  VkPipeline m_graphicsPipelineGsMeshMultiview = VK_NULL_HANDLE;
+  VkPipeline m_graphicsPipeline3dgutMeshMultiview = VK_NULL_HANDLE;
+#endif
 
   // Common to 3D meshes and 3D Gaussians pipeline
   VkPipelineLayout      m_pipelineLayout      = VK_NULL_HANDLE;  // Raster Pipelines layout

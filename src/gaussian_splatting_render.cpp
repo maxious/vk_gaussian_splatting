@@ -149,36 +149,52 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
     glm::mat4 projMatrix = cameraManip->getPerspectiveMatrix();
 
 #ifdef WITH_OPENXR
-    // RTX path with OpenXR
-    if(xrFrameActive && m_xr)
-    {
-      VkExtent2D perEye = m_xr->getPerEyeExtent();
-      const uint32_t halfWidth = perEye.width;
-      const uint32_t height = perEye.height;
+     // RTX path with OpenXR
+     if(xrFrameActive && m_xr)
+     {
+       VkExtent2D perEye = m_xr->getPerEyeExtent();
+       const uint32_t halfWidth = perEye.width;
+       const uint32_t height = perEye.height;
 
-      // Left eye
-      GsOpenXr::EyeData leftEyeData = m_xr->getEyeData(0);
-      updateAndUploadFrameInfoUBO(cmd, splatCount, leftEyeData.view, leftEyeData.proj, leftEyeData.eyePos, glm::vec2(halfWidth, height));
-      raytrace(cmd, false, glm::ivec2(0, 0), glm::ivec2(halfWidth, height));
+       // Get eye data for both views
+       GsOpenXr::EyeData leftEyeData = m_xr->getEyeData(0);
+       GsOpenXr::EyeData rightEyeData = m_xr->getEyeData(1);
 
-      // Right eye
-      GsOpenXr::EyeData rightEyeData = m_xr->getEyeData(1);
-      updateAndUploadFrameInfoUBO(cmd, splatCount, rightEyeData.view, rightEyeData.proj, rightEyeData.eyePos, glm::vec2(halfWidth, height));
-      raytrace(cmd, false, glm::ivec2(halfWidth, 0), glm::ivec2(halfWidth, height));
+       // Check if multiview is supported for mobile VR optimization
+       if(m_xr->supportsMultiview())
+       {
+         // VK_KHR_multiview path: Upload both eye matrices, shader selects per-eye using gl_ViewIndex
+         raytraceMultiview(cmd, false,
+                           leftEyeData.view, leftEyeData.proj,
+                           rightEyeData.view, rightEyeData.proj,
+                           leftEyeData.eyePos, rightEyeData.eyePos,
+                           glm::ivec2(halfWidth * 2, height));
+       }
+       else
+       {
+         // Dual-eye rendering: Two raytrace calls (legacy fallback)
+         // Left eye
+         updateAndUploadFrameInfoUBO(cmd, splatCount, leftEyeData.view, leftEyeData.proj, leftEyeData.eyePos, glm::vec2(halfWidth, height));
+         raytrace(cmd, false, glm::ivec2(0, 0), glm::ivec2(halfWidth, height));
 
-      // Note: XR swapchain uses VK_FORMAT_R8G8B8A8_SRGB, so the GPU automatically
-      // applies linear->sRGB conversion during the blit to XR swapchain.
-      // No manual post-process needed for XR path.
+         // Right eye
+         updateAndUploadFrameInfoUBO(cmd, splatCount, rightEyeData.view, rightEyeData.proj, rightEyeData.eyePos, glm::vec2(halfWidth, height));
+         raytrace(cmd, false, glm::ivec2(halfWidth, 0), glm::ivec2(halfWidth, height));
+       }
 
-      readBackIndirectParametersIfNeeded(cmd);
-      updateRenderingMemoryStatistics(cmd, splatCount);
+       // Note: XR swapchain uses VK_FORMAT_R8G8B8A8_SRGB, so the GPU automatically
+       // applies linear->sRGB conversion during the blit to XR swapchain.
+       // No manual post-process needed for XR path.
 
-      // Copy to XR swapchain and finish frame
-      copyToXrSwapchain(cmd);
-      m_xr->releaseSwapchainImages();
-      m_xr->endFrame();
-      return;
-    }
+       readBackIndirectParametersIfNeeded(cmd);
+       updateRenderingMemoryStatistics(cmd, splatCount);
+
+       // Copy to XR swapchain and finish frame
+       copyToXrSwapchain(cmd);
+       m_xr->releaseSwapchainImages();
+       m_xr->endFrame();
+       return;
+     }
 #endif
 
     if(m_renderSBS)
@@ -311,36 +327,71 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
 
 #ifdef WITH_OPENXR
   // Use OpenXR view/projection when XR is active
+  bool useXrMultiview = false;
   if(xrFrameActive && m_xr)
   {
     VkExtent2D perEye = m_xr->getPerEyeExtent();
-    const float halfWidth = float(perEye.width);
-    const uint32_t halfWidthInt = perEye.width;
-    const uint32_t heightInt = perEye.height;
-
-    for(uint32_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx)
+    
+    // Check if we can use multiview optimization
+    if(m_xr->supportsMultiview() && m_graphicsPipelineGsMeshMultiview != VK_NULL_HANDLE)
     {
-      GsOpenXr::EyeData eyeData = m_xr->getEyeData(eyeIdx);
-
-      StereoView xrView;
-      xrView.eye = eyeData.eyePos;
-      xrView.view = eyeData.view;
-      xrView.proj = eyeData.proj;
-      xrView.stereoShift = glm::vec2(0.0f, 0.0f);  // Off-axis is in the XR projection matrix
-
-      float xOffset = float(eyeIdx * perEye.width);
-      xrView.viewport = {xOffset, 0.0f, halfWidth, float(perEye.height), 0.0f, 1.0f};
-      xrView.scissor = {{static_cast<int32_t>(eyeIdx * perEye.width), 0}, {halfWidthInt, heightInt}};
-
-      views.push_back(xrView);
+      useXrMultiview = true;
+      
+      // Initialize multiview resources if needed
+      initXrMultiviewResources(cmd, perEye);
+      
+      // Get both eye data
+      GsOpenXr::EyeData leftEye = m_xr->getEyeData(0);
+      GsOpenXr::EyeData rightEye = m_xr->getEyeData(1);
+      
+      // Update center eye for sorting
+      m_eye = (leftEye.eyePos + rightEye.eyePos) * 0.5f;
+      viewMatrix = leftEye.view;
+      projMatrix = leftEye.proj;
+      
+      // Upload both eye matrices to UBO for multiview shader
+      prmFrame.viewMatrixArray[0] = leftEye.view;
+      prmFrame.viewMatrixArray[1] = rightEye.view;
+      prmFrame.viewInverseArray[0] = glm::inverse(leftEye.view);
+      prmFrame.viewInverseArray[1] = glm::inverse(rightEye.view);
+      prmFrame.projectionMatrixArray[0] = leftEye.proj;
+      prmFrame.projectionMatrixArray[1] = rightEye.proj;
+      prmFrame.projInverseArray[0] = glm::inverse(leftEye.proj);
+      prmFrame.projInverseArray[1] = glm::inverse(rightEye.proj);
+      prmFrame.cameraPositionArray[0] = leftEye.eyePos;
+      prmFrame.cameraPositionArray[1] = rightEye.eyePos;
+      prmFrame.multiviewEnabled = 1;
     }
+    else
+    {
+      // Fallback to dual-pass rendering
+      const float halfWidth = float(perEye.width);
+      const uint32_t halfWidthInt = perEye.width;
+      const uint32_t heightInt = perEye.height;
 
-    // Update center eye for sorting (average of both eyes)
-    GsOpenXr::EyeData leftEye = m_xr->getEyeData(0);
-    GsOpenXr::EyeData rightEye = m_xr->getEyeData(1);
-    m_eye = (leftEye.eyePos + rightEye.eyePos) * 0.5f;
-    viewMatrix = leftEye.view;  // Use left eye view for sorting
-    projMatrix = leftEye.proj;
+      for(uint32_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx)
+      {
+        GsOpenXr::EyeData eyeData = m_xr->getEyeData(eyeIdx);
+
+        StereoView xrView;
+        xrView.eye = eyeData.eyePos;
+        xrView.view = eyeData.view;
+        xrView.proj = eyeData.proj;
+        xrView.stereoShift = glm::vec2(0.0f, 0.0f);
+
+        float xOffset = float(eyeIdx * perEye.width);
+        xrView.viewport = {xOffset, 0.0f, halfWidth, float(perEye.height), 0.0f, 1.0f};
+        xrView.scissor = {{static_cast<int32_t>(eyeIdx * perEye.width), 0}, {halfWidthInt, heightInt}};
+
+        views.push_back(xrView);
+      }
+
+      GsOpenXr::EyeData leftEye = m_xr->getEyeData(0);
+      GsOpenXr::EyeData rightEye = m_xr->getEyeData(1);
+      m_eye = (leftEye.eyePos + rightEye.eyePos) * 0.5f;
+      viewMatrix = leftEye.view;
+      projMatrix = leftEye.proj;
+    }
   }
   else
 #endif
@@ -510,7 +561,55 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
                                       {VK_IMAGE_ASPECT_DEPTH_BIT, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS}});
   }
 
-  // RENDER LOOP FOR VIEWS
+#ifdef WITH_OPENXR
+  // Multiview rendering path (single draw call for both eyes)
+  if(useXrMultiview && m_xrMultiviewInitialized && m_shaders.valid && splatCount)
+  {
+    // Upload UBO with multiview matrices
+    vkCmdUpdateBuffer(cmd, m_frameInfoBuffer.buffer, 0, sizeof(shaderio::FrameInfo), &prmFrame);
+    VkMemoryBarrier barrier = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    barrier.srcAccessMask   = VK_ACCESS_TRANSFER_WRITE_BIT;
+    barrier.dstAccessMask   = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_MESH_SHADER_BIT_EXT
+                             | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                         0, 1, &barrier, 0, NULL, 0, NULL);
+
+    // Render with multiview (single dispatch for both eyes)
+    renderMultiviewRaster(cmd, splatCount);
+
+    // Copy multiview result to XR swapchain
+    // Each layer goes to the corresponding half of the SBS swapchain
+    VkExtent2D perEye = m_xr->getPerEyeExtent();
+    
+    // Transition XR swapchain to transfer dst
+    nvvk::cmdImageMemoryBarrier(cmd, {m_xrColorImage, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL});
+
+    // Copy both layers to the SBS swapchain
+    VkImageCopy copyRegions[2] = {};
+    for(uint32_t eye = 0; eye < 2; ++eye)
+    {
+      copyRegions[eye].srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, eye, 1};
+      copyRegions[eye].srcOffset = {0, 0, 0};
+      copyRegions[eye].dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+      copyRegions[eye].dstOffset = {static_cast<int32_t>(eye * perEye.width), 0, 0};
+      copyRegions[eye].extent = {perEye.width, perEye.height, 1};
+    }
+    vkCmdCopyImage(cmd, m_xrMultiviewColor.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                   m_xrColorImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 2, copyRegions);
+
+    nvvk::cmdImageMemoryBarrier(cmd, {m_xrColorImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL});
+
+    readBackIndirectParametersIfNeeded(cmd);
+    updateRenderingMemoryStatistics(cmd, splatCount);
+
+    m_xr->releaseSwapchainImages();
+    m_xr->endFrame();
+    return;
+  }
+#endif
+
+  // RENDER LOOP FOR VIEWS (dual-pass fallback)
   for(size_t viewIndex = 0; viewIndex < views.size(); ++viewIndex)
   {
     const auto& view = views[viewIndex];

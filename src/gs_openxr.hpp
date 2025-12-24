@@ -116,6 +116,7 @@ public:
   bool isValid() const { return m_session != XR_NULL_HANDLE; }
   bool isSessionRunning() const { return m_sessionRunning; }
   bool shouldRender() const { return m_shouldRender; }
+  bool supportsMultiview() const { return m_supportsMultiview; }
 
   // Get the predicted display time for the current frame (useful for motion prediction)
   XrTime getPredictedDisplayTime() const { return m_predictedDisplayTime; }
@@ -166,6 +167,7 @@ private:
   XrSessionState m_sessionState  = XR_SESSION_STATE_UNKNOWN;
   bool           m_sessionRunning = false;
   bool           m_shouldRender   = false;
+  bool           m_supportsMultiview = false;
 
   // Swapchain structures
   struct Swapchain

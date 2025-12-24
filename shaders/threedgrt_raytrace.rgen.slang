@@ -68,14 +68,59 @@ void main()
   uint2 launchID   = DispatchRaysIndex().xy;
   uint2 launchSize = DispatchRaysDimensions().xy;
   
-  // Output pixel position includes viewport offset for SBS stereo rendering
-  uint2 outputPixel = launchID + uint2(pcRay.viewportOffset);
+  // Determine eye index for stereo rendering
+  // When multiviewEnabled, use X position to determine eye (SBS layout)
+  // Otherwise use legacy viewportOffset for dual-pass rendering
+  uint viewIndex = 0;
+  uint2 outputPixel;
+  uint2 rayPixel = launchID;  // Pixel coordinate for ray generation (per-eye local)
+  uint2 rayViewportSize = launchSize;  // Viewport size for ray generation
+  
+#ifdef MULTIVIEW_ENABLED
+  if(frameInfo.multiviewEnabled != 0)
+  {
+    // Single-pass SBS stereo: determine eye from X coordinate
+    uint halfWidth = launchSize.x / 2;
+    viewIndex = (launchID.x >= halfWidth) ? 1u : 0u;
+    outputPixel = launchID;
+    // Convert to per-eye local coordinate for ray generation
+    rayPixel = uint2(launchID.x - viewIndex * halfWidth, launchID.y);
+    rayViewportSize = uint2(halfWidth, launchSize.y);
+  }
+  else
+#endif
+  {
+    outputPixel = launchID + uint2(pcRay.viewportOffset);
+  }
 
-  // generate the ray for this pixel
+  // Select appropriate view/projection matrices based on view index
+  float4x4 viewMatrix;
+  float4x4 viewInverseMatrix;
+  float4x4 projMatrix;
+  float4x4 projInverseMatrix;
+
+#ifdef MULTIVIEW_ENABLED
+  if(frameInfo.multiviewEnabled != 0)
+  {
+    viewMatrix = frameInfo.viewMatrixArray[viewIndex];
+    viewInverseMatrix = frameInfo.viewInverseArray[viewIndex];
+    projMatrix = frameInfo.projectionMatrixArray[viewIndex];
+    projInverseMatrix = frameInfo.projInverseArray[viewIndex];
+  }
+  else
+#endif
+  {
+    viewMatrix = frameInfo.viewMatrix;
+    viewInverseMatrix = frameInfo.viewInverse;
+    projMatrix = frameInfo.projectionMatrix;
+    projInverseMatrix = frameInfo.projInverse;
+  }
+
+  // generate the ray for this pixel (using per-eye local coordinates)
 #if CAMERA_TYPE == CAMERA_PINHOLE
-  generatePinholeRay(launchID, float2(launchSize), frameInfo.viewInverse, frameInfo.projInverse, rayOrigin, rayDirection);
+  generatePinholeRay(rayPixel, float2(rayViewportSize), viewInverseMatrix, projInverseMatrix, rayOrigin, rayDirection);
 #else
-  if(!generateFisheyeRay(launchID, float2(launchSize), frameInfo.fovRad, float2(0.0), frameInfo.viewInverse, rayOrigin, rayDirection))
+  if(!generateFisheyeRay(rayPixel, float2(rayViewportSize), frameInfo.fovRad, float2(0.0), viewInverseMatrix, rayOrigin, rayDirection))
   {
     image[outputPixel] = float4(0.0, 0.0, 0.0, 1.0);
     return;
@@ -87,7 +132,7 @@ void main()
   // Initialize the random number
   uint seed = xxhash32(uint3(launchID, frameInfo.frameSampleId));
 
-  depthOfField(seed, frameInfo.focusDist, frameInfo.aperture, frameInfo.viewInverse, rayOrigin, rayDirection);
+  depthOfField(seed, frameInfo.focusDist, frameInfo.aperture, viewInverseMatrix, rayOrigin, rayDirection);
 #endif
 
   // will use Any hit only

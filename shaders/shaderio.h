@@ -207,6 +207,16 @@ struct FrameInfo
   // Color space conversion for ML-SHARP linearRGB Gaussians
   // When enabled, applies linear-to-sRGB gamma correction after rendering
   int32_t linearToSrgb DEFAULT(0);          // 0 = disabled, 1 = enabled (for SHARP PLY files)
+
+  // Multiview (VK_KHR_multiview) support for mobile VR
+  // When enabled, stores per-eye view/projection matrices for efficient stereo rendering
+  int32_t multiviewEnabled DEFAULT(0);      // 0 = disabled, 1 = enabled
+  // Eye-specific data (indexed by gl_ViewIndex in multiview mode)
+  float4x4 viewMatrixArray[2];              // View matrices for eye 0 and eye 1
+  float4x4 viewInverseArray[2];             // Inverse view matrices for eye 0 and eye 1
+  float4x4 projectionMatrixArray[2];        // Projection matrices for eye 0 and eye 1
+  float4x4 projInverseArray[2];             // Inverse projection matrices for eye 0 and eye 1
+  float3   cameraPositionArray[2];          // Eye positions for eye 0 and eye 1
 };
 
 // Push constant for raster

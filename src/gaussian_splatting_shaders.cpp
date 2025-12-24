@@ -53,6 +53,8 @@ void GaussianSplatting::updateSlangMacros()
        {"RTX_USE_AABBS", std::to_string((int)prmRtxData.useAABBs)},
        {"RTX_USE_MESHES", std::to_string((int)m_meshSetVk.instances.size())},
        {"RTX_DOF_ENABLED", std::to_string((int)m_cameraSet.getCamera().dofEnabled)},
+       // VK_KHR_multiview support for mobile VR (stereo rendering optimization)
+       {"MULTIVIEW_ENABLED", "1"},
 #ifdef WITH_DLSS_RR
        {"WITH_DLSS_RR", std::to_string((int)m_dlssRREnabled)}
 #endif

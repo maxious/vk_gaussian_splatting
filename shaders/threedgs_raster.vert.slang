@@ -57,6 +57,9 @@ struct VertexInput
 {
   [[vk::location(ATTRIBUTE_LOC_POSITION)]]    float3   inPosition : POSITION;
   [[vk::location(ATTRIBUTE_LOC_SPLAT_INDEX)]] uint32_t inSplatIndex : TEXCOORD0;
+#ifdef MULTIVIEW_ENABLED
+  uint viewIndex : SV_ViewID;
+#endif
 };
 
 // Vertex output
@@ -81,7 +84,18 @@ VertexOutput main(VertexInput input)
 
   const uint splatIndex = input.inSplatIndex;
 
-  const float4x4 modelViewMatrix = mul(pcRaster.modelMatrix, frameInfo.viewMatrix);
+  // Select view/projection matrices based on multiview mode
+#ifdef MULTIVIEW_ENABLED
+  float4x4 viewMatrix = (frameInfo.multiviewEnabled != 0) ? frameInfo.viewMatrixArray[input.viewIndex] : frameInfo.viewMatrix;
+  float4x4 projMatrix = (frameInfo.multiviewEnabled != 0) ? frameInfo.projectionMatrixArray[input.viewIndex] : frameInfo.projectionMatrix;
+  float3 cameraPos = (frameInfo.multiviewEnabled != 0) ? frameInfo.cameraPositionArray[input.viewIndex] : frameInfo.cameraPosition;
+#else
+  float4x4 viewMatrix = frameInfo.viewMatrix;
+  float4x4 projMatrix = frameInfo.projectionMatrix;
+  float3 cameraPos = frameInfo.cameraPosition;
+#endif
+
+  const float4x4 modelViewMatrix = mul(pcRaster.modelMatrix, viewMatrix);
 
   // Fetch data as early as possible
   const float3x3 cov3Dm      = fetchCovariance(splatIndex);
@@ -89,7 +103,7 @@ VertexOutput main(VertexInput input)
   const float3   splatCenter = fetchCenter(splatIndex);
 
   const float4 viewCenter = mul(float4(splatCenter, 1.0), modelViewMatrix);
-  const float4 clipCenter = mul(viewCenter, frameInfo.projectionMatrix);
+  const float4 clipCenter = mul(viewCenter, projMatrix);
 
 #if FRUSTUM_CULLING_MODE == FRUSTUM_CULLING_AT_RASTER
   const float clip = (1.0 + frameInfo.frustumDilation) * clipCenter.w;
@@ -122,10 +136,9 @@ VertexOutput main(VertexInput input)
 #endif
 
   // fetch radiance from SH coefs > degree 0
-  // const float3 worldViewDir = normalize(splatCenter - frameInfo.cameraPosition);
   // Row-major: vector * matrix (camera position transformed by inverse model matrix)
   const float3 worldViewDir =
-      normalize(splatCenter - mul(float4(frameInfo.cameraPosition, 1.0), pcRaster.modelMatrixInverse).xyz);
+      normalize(splatCenter - mul(float4(cameraPos, 1.0), pcRaster.modelMatrixInverse).xyz);
 
   splatColor.rgb += fetchViewDependentRadiance(splatIndex, worldViewDir);
 

@@ -248,6 +248,63 @@ void GaussianSplatting::initPipelines()
       creator.createGraphicsPipeline(m_device, nullptr, pipelineState, &m_graphicsPipelineGsVert);
       NVVK_DBG_NAME(m_graphicsPipelineGsVert);
     }
+
+#ifdef WITH_OPENXR
+    // Create multiview variants with viewMask = 0x3 (both eyes)
+    {
+      nvvk::GraphicsPipelineCreator creator;
+      creator.pipelineInfo.layout                  = m_pipelineLayout;
+      creator.colorFormats                         = {m_colorFormat};
+      creator.renderingState.depthAttachmentFormat = m_depthFormat;
+      creator.renderingState.viewMask              = 0x3;  // Render to both views
+      creator.dynamicStateValues.push_back(VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE);
+      creator.dynamicStateValues.push_back(VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE);
+
+      creator.addShader(VK_SHADER_STAGE_MESH_BIT_EXT, "main", m_shaders.meshShader);
+      creator.addShader(VK_SHADER_STAGE_FRAGMENT_BIT, "main_mesh", m_shaders.fragmentShader);
+
+      creator.createGraphicsPipeline(m_device, nullptr, pipelineState, &m_graphicsPipelineGsMeshMultiview);
+      NVVK_DBG_NAME(m_graphicsPipelineGsMeshMultiview);
+    }
+
+    {
+      nvvk::GraphicsPipelineCreator creator;
+      creator.pipelineInfo.layout                  = m_pipelineLayout;
+      creator.colorFormats                         = {m_colorFormat};
+      creator.renderingState.depthAttachmentFormat = m_depthFormat;
+      creator.renderingState.viewMask              = 0x3;
+      creator.dynamicStateValues.push_back(VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE);
+      creator.dynamicStateValues.push_back(VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE);
+
+      creator.addShader(VK_SHADER_STAGE_MESH_BIT_EXT, "main", m_shaders.threedgutMeshShader);
+      creator.addShader(VK_SHADER_STAGE_FRAGMENT_BIT, "main", m_shaders.threedgutFragmentShader);
+
+      creator.createGraphicsPipeline(m_device, nullptr, pipelineState, &m_graphicsPipeline3dgutMeshMultiview);
+      NVVK_DBG_NAME(m_graphicsPipeline3dgutMeshMultiview);
+    }
+
+    {
+      nvvk::GraphicsPipelineCreator creator;
+      creator.pipelineInfo.layout                  = m_pipelineLayout;
+      creator.colorFormats                         = {m_colorFormat};
+      creator.renderingState.depthAttachmentFormat = m_depthFormat;
+      creator.renderingState.viewMask              = 0x3;
+      creator.dynamicStateValues.push_back(VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE);
+      creator.dynamicStateValues.push_back(VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE);
+
+      pipelineState.vertexBindings   = {{.binding = 0, .stride = 3 * sizeof(float), .divisor = 1},
+                                        {.binding = 1, .stride = sizeof(uint32_t), .inputRate = VK_VERTEX_INPUT_RATE_INSTANCE, .divisor = 1}};
+      pipelineState.vertexAttributes = {
+          {.location = ATTRIBUTE_LOC_POSITION, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = 0},
+          {.location = ATTRIBUTE_LOC_SPLAT_INDEX, .binding = 1, .format = VK_FORMAT_R32_UINT, .offset = 0}};
+
+      creator.addShader(VK_SHADER_STAGE_VERTEX_BIT, "main", m_shaders.vertexShader);
+      creator.addShader(VK_SHADER_STAGE_FRAGMENT_BIT, "main", m_shaders.fragmentShader);
+
+      creator.createGraphicsPipeline(m_device, nullptr, pipelineState, &m_graphicsPipelineGsVertMultiview);
+      NVVK_DBG_NAME(m_graphicsPipelineGsVertMultiview);
+    }
+#endif
   }
   // Create the 3D mesh rasterization pipeline
   {
@@ -313,6 +370,11 @@ void GaussianSplatting::deinitPipelines()
   TEST_DESTROY_AND_RESET(m_graphicsPipeline3dgutMesh, vkDestroyPipeline(m_device, m_graphicsPipeline3dgutMesh, nullptr));
   TEST_DESTROY_AND_RESET(m_graphicsPipelineMesh, vkDestroyPipeline(m_device, m_graphicsPipelineMesh, nullptr));
   TEST_DESTROY_AND_RESET(m_computePipelineGsDistCull, vkDestroyPipeline(m_device, m_computePipelineGsDistCull, nullptr));
+#ifdef WITH_OPENXR
+  TEST_DESTROY_AND_RESET(m_graphicsPipelineGsVertMultiview, vkDestroyPipeline(m_device, m_graphicsPipelineGsVertMultiview, nullptr));
+  TEST_DESTROY_AND_RESET(m_graphicsPipelineGsMeshMultiview, vkDestroyPipeline(m_device, m_graphicsPipelineGsMeshMultiview, nullptr));
+  TEST_DESTROY_AND_RESET(m_graphicsPipeline3dgutMeshMultiview, vkDestroyPipeline(m_device, m_graphicsPipeline3dgutMeshMultiview, nullptr));
+#endif
 
   TEST_DESTROY_AND_RESET(m_pipelineLayout, vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr));
   TEST_DESTROY_AND_RESET(m_descriptorSetLayout, vkDestroyDescriptorSetLayout(m_device, m_descriptorSetLayout, nullptr));

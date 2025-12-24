@@ -26,6 +26,7 @@
   }
 
 #include "gaussian_splatting.h"
+#include "hdr_support.h"
 #include "utilities.h"
 
 #include <nvutils/logger.hpp>
@@ -141,6 +142,13 @@ void GaussianSplatting::onAttach(nvapp::Application* app)
   m_splatSetVk.init(m_app, &m_alloc, &m_uploader, &m_sampler, &m_physicalDeviceInfo, &m_accelStructProps);
   m_meshSetVk.init(m_app, &m_alloc, &m_uploader, &m_accelStructProps);
   m_cameraSet.init(cameraManip.get());
+
+  // Log HDR support status
+  {
+    const VkColorSpaceKHR colorSpace = m_app->getSwapchain().getColorSpace();
+    const VkFormat imageFormat = m_app->getSwapchain().getImageFormat();
+    HDRSupport::logHDRStatus(colorSpace, imageFormat);
+  }
 
 #ifdef WITH_OPENXR
   // Initialize OpenXR if enabled
@@ -354,6 +362,8 @@ void GaussianSplatting::initializeOpenXR()
 
 void GaussianSplatting::shutdownOpenXR()
 {
+  deinitXrMultiviewResources();
+  
   if(m_xr)
   {
     m_xr->shutdown();
@@ -632,5 +642,6 @@ void GaussianSplatting::copyToXrSwapchain(VkCommandBuffer cmd)
 #include "gaussian_splatting_pipelines.cpp"
 #include "gaussian_splatting_rtx.cpp"
 #include "gaussian_splatting_postprocess.cpp"
+#include "gaussian_splatting_multiview.cpp"
 
 #include "gaussian_splatting_dlss_rr.cpp"
