@@ -191,8 +191,10 @@ set_property(TARGET spz PROPERTY FOLDER "ThirdParty")
 # Source files for this project
 #
 file(GLOB SOURCE_FILES src/*.*)
+# Note: src/nvvk_swapchain_override.cpp implements the HDR support for the swapchain,
+# overriding the default implementation in nvpro_core2 without modifying the submodule.
 # Remove "unity build" partial source files that are #included by gaussian_splatting.cpp
-list(FILTER SOURCE_FILES EXCLUDE REGEX "gaussian_splatting_(render|shaders|pipelines|rtx|postprocess|dlss_rr|frame_ubo|sorting)\\.cpp$")
+list(FILTER SOURCE_FILES EXCLUDE REGEX "gaussian_splatting_(render|shaders|pipelines|rtx|postprocess|dlss_rr|frame_ubo|sorting|multiview)\\.cpp$")
 file(GLOB SHADER_FILES shaders/*.slang shaders/*.h)
 file(GLOB EXTERN_FILES 3rdparty/miniply/*.*)
 

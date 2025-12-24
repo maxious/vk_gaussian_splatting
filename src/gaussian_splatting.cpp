@@ -145,10 +145,13 @@ void GaussianSplatting::onAttach(nvapp::Application* app)
 
   // Log HDR support status
   {
-    const VkColorSpaceKHR colorSpace = m_app->getSwapchain().getColorSpace();
-    const VkFormat imageFormat = m_app->getSwapchain().getImageFormat();
+    // Use global accessor instead of m_app->getSwapchain().getColorSpace()
+    // because the original nvvk::Swapchain header does not support getColorSpace()
+    const VkColorSpaceKHR colorSpace = HDRSupport::getGlobalColorSpace();
+    const VkFormat imageFormat = HDRSupport::getGlobalFormat();
     HDRSupport::logHDRStatus(colorSpace, imageFormat);
   }
+
 
 #ifdef WITH_OPENXR
   // Initialize OpenXR if enabled
