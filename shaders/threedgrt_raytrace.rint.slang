@@ -78,13 +78,10 @@ void main()
 #else
   const int particleId = PrimitiveIndex();
 
-  // The two following transformations are to compute processHit with transformed splat set model
-  // Row-major: vector * matrix
-  const float3 modelRayOrigin = mul(float4(WorldRayOrigin(), 1.0), pcRay.modelMatrixInverse).xyz;
-  // Since the ray direction should not be affected by translation,
-  // uses the inverse of the rotation - scale part of the model matrix.
-  // Row-major: vector * matrix (extract 3x3 and multiply)
-  const float3 modelRayDirection = normalize(mul(WorldRayDirection(), float3x3(pcRay.modelMatrixRotScaleInverse)));
+  // Ray is already in model space (transformed before TraceRay in rgen shader)
+  // Use WorldRayOrigin/Direction directly since the rgen shader now traces in model space
+  const float3 modelRayOrigin = WorldRayOrigin();
+  const float3 modelRayDirection = WorldRayDirection();
 
   if (particleDensityHitCustom(modelRayOrigin, modelRayDirection, particleId, RayTMin(), RayTCurrent(), 9.0F, hitT)) {
       BuiltInTriangleIntersectionAttributes attr;

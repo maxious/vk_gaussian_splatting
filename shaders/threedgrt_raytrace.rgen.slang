@@ -296,9 +296,10 @@ void main()
         }
 
         // trace the PAYLOAD_ARRAY_SIZE any hits
+        // Use model-space ray since TLAS is built in model space with identity transform
         RayDesc raySplat;
-        raySplat.Origin    = rayOrigin;
-        raySplat.Direction = rayDirection;
+        raySplat.Origin    = splatSetModelRayOrigin;
+        raySplat.Direction = splatSetModelRayDirection;
         raySplat.TMin      = rayLastHitDistance + epsT;
         raySplat.TMax      = tMax + epsT;
 
@@ -466,8 +467,16 @@ void main()
   dlssNormalRough[outputPixel] = float4(viewNormal * 0.5 + 0.5, roughness);
   
   // Motion vectors: compute screen-space motion from current and previous frame matrices
-  // Project current world position to previous frame screen space
-  float3 worldPos = rayOrigin + rayDirection * closestParticleDist;
+  // Since splat tracing now uses model-space rays, compute hit position in model space first,
+  // then transform to world space for motion vector calculation.
+  // Note: For XR locomotion, the model matrix changes frame-to-frame, but we don't track
+  // prevModelMatrix, so motion vectors may be inaccurate during locomotion.
+  // This is acceptable since DLSS-RR is typically disabled during rapid movement.
+  const float3 splatSetModelRayOrigin = mul(float4(rayOrigin, 1.0), pcRay.modelMatrixInverse).xyz;
+  const float3 splatSetModelRayDirection = normalize(mul(rayDirection, float3x3(pcRay.modelMatrixRotScaleInverse)));
+  float3 modelPos = splatSetModelRayOrigin + splatSetModelRayDirection * closestParticleDist;
+  float3 worldPos = mul(float4(modelPos, 1.0), pcRay.modelMatrix).xyz;
+  
   float4 prevClip = mul(mul(float4(worldPos, 1.0), frameInfo.prevViewMatrix), frameInfo.prevProjectionMatrix);
   float2 prevNdc = prevClip.xy / prevClip.w;
   float4 currClip = mul(mul(float4(worldPos, 1.0), frameInfo.viewMatrix), frameInfo.projectionMatrix);
