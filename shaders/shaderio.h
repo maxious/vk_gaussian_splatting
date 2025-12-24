@@ -217,6 +217,9 @@ struct FrameInfo
   float4x4 projectionMatrixArray[2];        // Projection matrices for eye 0 and eye 1
   float4x4 projInverseArray[2];             // Inverse projection matrices for eye 0 and eye 1
   float3   cameraPositionArray[2];          // Eye positions for eye 0 and eye 1
+  // Per-eye sensor pose for 3DGUT projection (extracted from viewMatrixArray)
+  float4   viewQuatArray[2];                // Rotation quaternions for eye 0 and eye 1
+  float3   viewTransArray[2];               // Translation vectors for eye 0 and eye 1
 };
 
 // Push constant for raster

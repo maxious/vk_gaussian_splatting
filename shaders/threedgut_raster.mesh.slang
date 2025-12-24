@@ -150,8 +150,43 @@ void main(
     CameraModelParameters sensorModel = initPerfectFisheyeCamera(frameInfo.viewport, frameInfo.focal, frameInfo.stereoShift);
 #endif
 
-    // camera pose in world space, used by projector to compute the ray.
-    SensorState sensorState = initGlobalShutterSensorState(frameInfo.viewTrans, frameInfo.viewQuat);
+    // For XR locomotion with model matrix: We need to work in model space to avoid
+    // coordinate flip issues. The 3DGUT projection applies RUB-to-RUF coordinate flips
+    // that assume the position is in a canonical orientation. When the model matrix
+    // rotates the scene, the world-space Z-axis no longer corresponds to depth.
+    //
+    // Solution: Transform the camera pose to model space (like ray tracing fix),
+    // keep particles in model space, and pass identity matrix to the projection.
+    
+    // Get the appropriate view matrix for this eye
+#ifdef MULTIVIEW_ENABLED
+    const float4x4 viewMat = (frameInfo.multiviewEnabled != 0) ? frameInfo.viewMatrixArray[viewIndex] : frameInfo.viewMatrix;
+#else
+    const float4x4 viewMat = frameInfo.viewMatrix;
+#endif
+
+    // Compute the model-view matrix that transforms from model space to camera space
+    const float4x4 modelViewMatrix = mul(pcRaster.modelMatrix, viewMat);
+    
+    // Extract sensor pose from model-view matrix
+    // The translation is in the last row (row-major layout)
+    const float3 mvTrans = float3(modelViewMatrix[3].xyz);
+    
+    // For the quaternion: Slang uses row-major matrices with row-vector convention,
+    // but mat3toQuat expects column-major convention (matching GLM/CPU side).
+    // We must transpose the 3x3 rotation part before extracting the quaternion.
+    // 
+    // In row-major: matrix[i] gives row i, matrix[i][j] is element at row i, col j
+    // We need to extract columns and build a transposed matrix for correct quaternion.
+    float3x3 mvRot3x3;
+    // Extract columns from the 4x4 matrix (column j = elements [0][j], [1][j], [2][j])
+    mvRot3x3[0] = normalize(float3(modelViewMatrix[0][0], modelViewMatrix[1][0], modelViewMatrix[2][0]));
+    mvRot3x3[1] = normalize(float3(modelViewMatrix[0][1], modelViewMatrix[1][1], modelViewMatrix[2][1]));
+    mvRot3x3[2] = normalize(float3(modelViewMatrix[0][2], modelViewMatrix[1][2], modelViewMatrix[2][2]));
+    const quat mvQuat = mat3toQuat(mvRot3x3);
+    
+    // Create sensor state with model-space pose
+    SensorState sensorState = initGlobalShutterSensorState(mvTrans, mvQuat);
 
     int2 resolution = int2(int(frameInfo.viewport.x), int(frameInfo.viewport.y));
 
@@ -159,7 +194,10 @@ void main(
     float2 particleProjCenter;
     float3 particleProjCovariance;
 
-    if(!threedgutParticleProjection(resolution, sensorModel, pcRaster.modelMatrix, sensorState, splatCenter, splatScale,
+    // Pass identity matrix since model transform is now baked into the sensor state.
+    // Particles stay in model space; the sensor pose has been transformed to model space.
+    const float4x4 identityMatrix = float4x4(1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1);
+    if(!threedgutParticleProjection(resolution, sensorModel, identityMatrix, sensorState, splatCenter, splatScale,
                                     quatToMat3(splatRotation), particleProjCenter, particleProjCovariance))
     {
       emitDegeneratedQuad(localIndex, verts);
@@ -205,9 +243,16 @@ void main(
     const float2 ndcXY = (particleProjCenter / frameInfo.viewport) * 2.0 - 1.0;
 
     const float4 worldSplatCenter = mul(float4(splatCenter, 1.0), pcRaster.modelMatrix);
-    const float4 viewSplatCenter  = mul(worldSplatCenter, frameInfo.viewMatrix);
+    // In multiview mode, use per-eye projection matrix for correct depth
+    // Note: viewMat was already declared above for sensor pose computation
+#ifdef MULTIVIEW_ENABLED
+    const float4x4 projMat = (frameInfo.multiviewEnabled != 0) ? frameInfo.projectionMatrixArray[viewIndex] : frameInfo.projectionMatrix;
+#else
+    const float4x4 projMat = frameInfo.projectionMatrix;
+#endif
+    const float4 viewSplatCenter  = mul(worldSplatCenter, viewMat);
     // TODO: projection matrix is not correct with fisheye, this is a coarse aprox to compute depth
-    const float4 clipSplatCenter = mul(viewSplatCenter, frameInfo.projectionMatrix);
+    const float4 clipSplatCenter = mul(viewSplatCenter, projMat);
 
     const float3 ndcCenter = float3(ndcXY, clipSplatCenter.z / clipSplatCenter.w);
 #if EXTENT_METHOD == EXTENT_CONIC

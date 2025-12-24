@@ -360,6 +360,13 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
       prmFrame.projInverseArray[1] = glm::inverse(rightEye.proj);
       prmFrame.cameraPositionArray[0] = leftEye.eyePos;
       prmFrame.cameraPositionArray[1] = rightEye.eyePos;
+      // Per-eye sensor pose for 3DGUT projection
+      for(int eyeIdx = 0; eyeIdx < 2; ++eyeIdx)
+      {
+        glm::quat viewQuat         = glm::quat_cast(prmFrame.viewMatrixArray[eyeIdx]);
+        prmFrame.viewQuatArray[eyeIdx]  = glm::vec4(viewQuat.x, viewQuat.y, viewQuat.z, viewQuat.w);
+        prmFrame.viewTransArray[eyeIdx] = prmFrame.viewMatrixArray[eyeIdx][3];
+      }
       prmFrame.multiviewEnabled = 1;
     }
     else
