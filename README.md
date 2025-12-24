@@ -13,6 +13,7 @@ This fork adds the following features to the original NVIDIA sample.
 ### VR & Immersive Display Support
 - **OpenXR VR Support** - Full VR headset support via OpenXR with head tracking and controller input
 - **Side-by-Side (SBS) Stereo Output** - Stereoscopic 3D output for VR headsets, 3D displays, and Looking Glass displays
+- **HDR Display Support** - Native High Dynamic Range (HDR) output for compatible displays (10-bit/16-bit color)
 - **VR Locomotion Controls** - Left stick for movement/strafe, right stick for rotation and vertical movement
 
 ### AI Upscaling
