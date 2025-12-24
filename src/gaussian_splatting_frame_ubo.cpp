@@ -85,6 +85,9 @@ void GaussianSplatting::updateAndUploadFrameInfoUBO(VkCommandBuffer cmd, const u
   prmFrame.focusDist = camera.focusDist;
   prmFrame.aperture  = camera.aperture;
 
+  // Disable multiview mode for mono rendering (ensures clean state after XR is disabled)
+  prmFrame.multiviewEnabled = 0;
+
   // the buffer is small so we use vkCmdUpdateBuffer for the transfer
   vkCmdUpdateBuffer(cmd, m_frameInfoBuffer.buffer, 0, sizeof(shaderio::FrameInfo), &prmFrame);
 
@@ -161,6 +164,9 @@ void GaussianSplatting::updateAndUploadFrameInfoUBO(VkCommandBuffer  cmd,
 
   prmFrame.focusDist = camera.focusDist;
   prmFrame.aperture  = camera.aperture;
+
+  // Disable multiview mode for stereo SBS rendering (ensures clean state after XR is disabled)
+  prmFrame.multiviewEnabled = 0;
 
 #ifdef WITH_DLSS_RR
   // Store previous frame matrices for motion vector calculation
