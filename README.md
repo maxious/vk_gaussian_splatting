@@ -16,6 +16,8 @@ This fork adds the following features to the original NVIDIA sample.
 - **HDR Display Support** - Native High Dynamic Range (HDR) output for compatible displays (10-bit/16-bit color)
 - **VR Locomotion Controls** - Left stick for movement/strafe, right stick for rotation and vertical movement
 
+> **Note on 3DGUT Mode**: The **3DGUT** rendering pipeline (and hybrid variants) currently has known issues with XR locomotion and SBS stereo rendering, where particles may render incorrectly or with distortion when moving. For the best VR/stereo experience, we recommend using the standard **3DGS Rasterization** (Vertex/Mesh) or **3DGRT Ray Tracing** pipelines, which are fully supported.
+
 ### AI Upscaling
 - **NVIDIA DLSS Ray Reconstruction (DLSS-RR)** - AI-powered ray reconstruction for enhanced image quality with the ray tracing pipelines
 
