@@ -301,8 +301,10 @@ bool GaussianSplatting::initAll()
 
 void GaussianSplatting::deinitScene()
 {
-  m_splatSet            = {};
-  m_loadedSceneFilename = "";
+  m_splatSet.clear();
+  m_splatSetPending.clear();
+  m_radianceFields.clear();
+  m_pendingLoadFilename = "";
 }
 
 void GaussianSplatting::benchmarkAdvance()

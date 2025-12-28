@@ -231,6 +231,14 @@ private:
 
   bool        m_objListUpdated = false;
   const float TREE_INDENT      = 16.0f;
+  
+  // Radiance field deletion request
+  bool   m_requestDeleteRadianceField = false;
+  size_t m_radianceFieldToDelete = 0;
+
+  // Reload queue for multiple files
+  std::vector<std::filesystem::path> m_reloadQueue;
+  bool                               m_isReloading = false;
 
   // Project loading
   bool loadingProject = false;

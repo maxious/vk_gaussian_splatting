@@ -24,11 +24,26 @@
 #include <cassert>
 #include <cmath>
 #include <algorithm>
+#include <filesystem>
+#include <string>
 
 // 3rd party spz library, used here for coordinate system convertions
 #include "splat-types.h"
 
 namespace vk_gaussian_splatting {
+
+// Represents a single loaded radiance field file with its metadata
+struct RadianceFieldEntry
+{
+  std::filesystem::path filename;     // Source file path
+  std::string           displayName;  // Short name for UI display
+  size_t                splatOffset = 0;  // Offset into merged SplatSet
+  size_t                splatCount = 0;   // Number of splats from this file
+  bool                  visible = true;   // Visibility toggle (for future use)
+  
+  // Per-field transform (for future use)
+  // Currently all splats share the SplatSetVk transform
+};
 
 // Storage for a 3D gaussian splatting (3DGS) model loaded from PLY file
 struct SplatSet
@@ -114,6 +129,69 @@ struct SplatSet
     // For now, we only convert f_dc which has the dominant effect.
   }
 
+  // Remove splats that are black or very close to black
+  void removeBlackSplats(float threshold = 0.001f)
+  {
+    if(size() == 0)
+      return;
+
+    const size_t splatCount = size();
+    const size_t shPerSplat = f_rest.size() / splatCount;
+    
+    std::vector<float> newPos, newFDc, newFRest, newOpacity, newScale, newRotation;
+    newPos.reserve(positions.size());
+    newFDc.reserve(f_dc.size());
+    newFRest.reserve(f_rest.size());
+    newOpacity.reserve(opacity.size());
+    newScale.reserve(scale.size());
+    newRotation.reserve(rotation.size());
+
+    constexpr float SH_C0 = 0.28209479177387814f;
+
+    for(size_t i = 0; i < splatCount; ++i)
+    {
+      // Compute base color from SH DC components
+      float r = 0.5f + SH_C0 * f_dc[i * 3 + 0];
+      float g = 0.5f + SH_C0 * f_dc[i * 3 + 1];
+      float b = 0.5f + SH_C0 * f_dc[i * 3 + 2];
+
+      // If any channel is above threshold, keep the splat
+      if(r > threshold || g > threshold || b > threshold)
+      {
+        newPos.push_back(positions[i * 3 + 0]);
+        newPos.push_back(positions[i * 3 + 1]);
+        newPos.push_back(positions[i * 3 + 2]);
+
+        newFDc.push_back(f_dc[i * 3 + 0]);
+        newFDc.push_back(f_dc[i * 3 + 1]);
+        newFDc.push_back(f_dc[i * 3 + 2]);
+
+        for(size_t j = 0; j < shPerSplat; ++j)
+        {
+          newFRest.push_back(f_rest[i * shPerSplat + j]);
+        }
+
+        newOpacity.push_back(opacity[i]);
+
+        newScale.push_back(scale[i * 3 + 0]);
+        newScale.push_back(scale[i * 3 + 1]);
+        newScale.push_back(scale[i * 3 + 2]);
+
+        newRotation.push_back(rotation[i * 4 + 0]);
+        newRotation.push_back(rotation[i * 4 + 1]);
+        newRotation.push_back(rotation[i * 4 + 2]);
+        newRotation.push_back(rotation[i * 4 + 3]);
+      }
+    }
+
+    positions = std::move(newPos);
+    f_dc      = std::move(newFDc);
+    f_rest    = std::move(newFRest);
+    opacity   = std::move(newOpacity);
+    scale     = std::move(newScale);
+    rotation  = std::move(newRotation);
+  }
+
   // Convert between two coordinate systems
   // This is performed in-place.
   void convertCoordinates(spz::CoordinateSystem from, spz::CoordinateSystem to)
@@ -152,6 +230,95 @@ struct SplatSet
       }
       idx += 3 * numCoeffsPerPoint;
     }
+  }
+
+  // Merge another SplatSet into this one
+  // Returns the offset where the new splats start in the merged set
+  size_t merge(const SplatSet& other)
+  {
+    if(other.size() == 0)
+      return size();
+    
+    const size_t offset = size();
+    const size_t otherSize = other.size();
+    
+    // Append positions (3 components per splat)
+    positions.insert(positions.end(), other.positions.begin(), other.positions.end());
+    
+    // Append f_dc (3 components per splat)
+    f_dc.insert(f_dc.end(), other.f_dc.begin(), other.f_dc.end());
+    
+    // Handle f_rest merging - need to handle different SH degrees
+    // This set's SH coefficients per splat
+    const size_t thisShPerSplat = (offset > 0) ? (f_rest.size() / offset) : 0;
+    // Other set's SH coefficients per splat
+    const size_t otherShPerSplat = other.f_rest.size() / otherSize;
+    
+    if(thisShPerSplat == otherShPerSplat || offset == 0)
+    {
+      // Same SH degree or empty - simple append
+      f_rest.insert(f_rest.end(), other.f_rest.begin(), other.f_rest.end());
+    }
+    else if(thisShPerSplat > otherShPerSplat)
+    {
+      // This set has higher SH degree - pad other's data with zeros
+      for(size_t i = 0; i < otherSize; ++i)
+      {
+        for(size_t j = 0; j < otherShPerSplat; ++j)
+        {
+          f_rest.push_back(other.f_rest[i * otherShPerSplat + j]);
+        }
+        // Pad with zeros
+        for(size_t j = otherShPerSplat; j < thisShPerSplat; ++j)
+        {
+          f_rest.push_back(0.0f);
+        }
+      }
+    }
+    else
+    {
+      // Other set has higher SH degree - need to expand existing data first
+      std::vector<float> newFRest;
+      newFRest.reserve(offset * otherShPerSplat + other.f_rest.size());
+      // Expand existing splats to new SH degree
+      for(size_t i = 0; i < offset; ++i)
+      {
+        for(size_t j = 0; j < thisShPerSplat; ++j)
+        {
+          newFRest.push_back(f_rest[i * thisShPerSplat + j]);
+        }
+        // Pad with zeros
+        for(size_t j = thisShPerSplat; j < otherShPerSplat; ++j)
+        {
+          newFRest.push_back(0.0f);
+        }
+      }
+      // Append other's data
+      newFRest.insert(newFRest.end(), other.f_rest.begin(), other.f_rest.end());
+      f_rest = std::move(newFRest);
+    }
+    
+    // Append opacity (1 component per splat)
+    opacity.insert(opacity.end(), other.opacity.begin(), other.opacity.end());
+    
+    // Append scale (3 components per splat)
+    scale.insert(scale.end(), other.scale.begin(), other.scale.end());
+    
+    // Append rotation (4 components per splat)
+    rotation.insert(rotation.end(), other.rotation.begin(), other.rotation.end());
+    
+    return offset;
+  }
+
+  // Clear all data
+  void clear()
+  {
+    positions.clear();
+    f_dc.clear();
+    f_rest.clear();
+    opacity.clear();
+    scale.clear();
+    rotation.clear();
   }
 };
 

@@ -34,7 +34,11 @@ struct SceneParameters
 #endif
 
   // triggers a scene load at next frame when set to non empty string
+  // If addToExisting is true, adds to existing scene; otherwise replaces
   std::filesystem::path sceneToLoadFilename;
+  // When true, the new scene will be added to existing radiance fields
+  // When false, all existing radiance fields will be replaced
+  bool addSceneToExisting = false;
   // triggers a project load at next frame when set to non empty string
   std::filesystem::path projectToLoadFilename;
   // triggers an obj file import at next frame when set to non empty string
@@ -44,6 +48,8 @@ struct SceneParameters
   // 0 = None (assume sRGB, standard for most 3DGS)
   // 1 = sRGB to Linear (for ML-SHARP compatibility-exported files, undo the sRGB conversion)
   int colorSpaceConversion = 0;
+  // If true, splats with (almost) black color will be removed during load
+  bool removeBlackSplats = false;
 };
 
 // Parameters that controls the scene

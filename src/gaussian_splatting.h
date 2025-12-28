@@ -269,12 +269,23 @@ private:
 
 
 protected:
-  // name of the loaded scene if load is successfull
-  std::filesystem::path m_loadedSceneFilename;
+  // Loaded radiance fields metadata (each file appears as a separate entry)
+  std::vector<RadianceFieldEntry> m_radianceFields;
+  
+  // Helper to get first loaded scene filename (for backward compatibility)
+  std::filesystem::path getLoadedSceneFilename() const
+  {
+    return m_radianceFields.empty() ? std::filesystem::path{} : m_radianceFields[0].filename;
+  }
+  
+  // Pending filename being loaded (stored during async load)
+  std::filesystem::path m_pendingLoadFilename;
 
   // scene loader
   SplatLoaderAsync m_splatLoader;
-  // 3DGS/3DGRT model in RAM
+  // Temporary storage for newly loaded splat data before merging
+  SplatSet m_splatSetPending = {};
+  // 3DGS/3DGRT model in RAM (merged from all radiance fields)
   SplatSet m_splatSet = {};
   // 3DGS/3DGRT model in VRAM
   SplatSetVk m_splatSetVk = {};

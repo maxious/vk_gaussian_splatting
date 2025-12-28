@@ -210,10 +210,17 @@ void GaussianSplattingUI::onUIMenu()
     {
       prmScene.sceneToLoadFilename = nvgui::windowOpenFileDialog(m_app->getWindowHandle(), "Load splat file",
                                                                  "All Files|*.ply;*.spz;*.sog|PLY Files|*.ply|SPZ files|*.spz|SOG files|*.sog");
+      prmScene.addSceneToExisting = false;
     }
-    if(ImGui::MenuItem(ICON_MS_RESTORE_PAGE " Re Open", "F5", false, m_loadedSceneFilename != ""))
+    if(ImGui::MenuItem(ICON_MS_ADD " Add file", ""))
     {
-      prmScene.sceneToLoadFilename = m_loadedSceneFilename;
+      prmScene.sceneToLoadFilename = nvgui::windowOpenFileDialog(m_app->getWindowHandle(), "Add splat file",
+                                                                 "All Files|*.ply;*.spz;*.sog|PLY Files|*.ply|SPZ files|*.spz|SOG files|*.sog");
+      prmScene.addSceneToExisting = true;
+    }
+    if(ImGui::MenuItem(ICON_MS_RESTORE_PAGE " Re Open", "F5", false, !m_radianceFields.empty()))
+    {
+      prmScene.sceneToLoadFilename = getLoadedSceneFilename();
     }
     if(ImGui::BeginMenu(ICON_MS_HISTORY " Recent Files"))
     {
@@ -236,6 +243,7 @@ void GaussianSplattingUI::onUIMenu()
       ImGui::TextDisabled("Applied when loading PLY files");
       ImGui::EndMenu();
     }
+    
     ImGui::Separator();
     if(ImGui::MenuItem(ICON_MS_FILE_OPEN " Open project", ""))
     {
@@ -337,7 +345,7 @@ void GaussianSplattingUI::onUIMenu()
   // hot rebuild of shaders only if scene exist
   if(ImGui::IsKeyPressed(ImGuiKey_R))
   {
-    if(!m_loadedSceneFilename.empty())
+    if(!m_radianceFields.empty())
       m_requestUpdateShaders = true;
     else
       LOGW("No scene loaded, cannot rebuild shader\n");
@@ -445,11 +453,28 @@ void GaussianSplattingUI::onUIRender()
   loadProjectIfNeeded();
 
   /////////////////
+  // Handle radiance field deletion request
+  if(m_requestDeleteRadianceField && m_radianceFieldToDelete < m_radianceFields.size())
+  {
+    // For now, deleting a radiance field clears all and requires re-adding
+    // This is because the merged splat set would need to be rebuilt from remaining files
+    // TODO: Implement proper incremental deletion by reloading remaining files
+    vkDeviceWaitIdle(m_device);
+    deinitAll();
+    m_radianceFields.clear();
+    m_splatSet.clear();
+    LOGI("Radiance field deleted. All radiance fields cleared.\n");
+    m_requestDeleteRadianceField = false;
+    m_selectedItemIndex = -1;
+  }
+  m_requestDeleteRadianceField = false;
+
+  /////////////////
   // Handle scene loading
 
 #ifdef WITH_DEFAULT_SCENE_FEATURE
   // load a default scene if none was provided by command line
-  if(prmScene.enableDefaultScene && m_loadedSceneFilename.empty() && prmScene.sceneToLoadFilename.empty()
+  if(prmScene.enableDefaultScene && m_radianceFields.empty() && prmScene.sceneToLoadFilename.empty()
      && m_splatLoader.getStatus() == SplatLoaderAsync::State::STATE_READY)
   {
     const std::vector<std::filesystem::path> defaultSearchPaths = getResourcesDirs();
@@ -461,26 +486,26 @@ void GaussianSplattingUI::onUIRender()
   // do we need to load a new scene ?
   if(!prmScene.sceneToLoadFilename.empty() && m_splatLoader.getStatus() == SplatLoaderAsync::State::STATE_READY)
   {
-
-    if(!m_loadedSceneFilename.empty() && prmScene.projectToLoadFilename.empty())
+    // Show confirmation popup only when replacing existing scene (not adding)
+    if(!m_radianceFields.empty() && prmScene.projectToLoadFilename.empty() && !prmScene.addSceneToExisting)
       ImGui::OpenPopup("Load .ply file ?");
 
     // Always center this window when appearing
     ImVec2 center = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
 
-    bool doReset = true;
+    bool doLoad = true;
 
     if(ImGui::BeginPopupModal("Load .ply file ?", NULL, ImGuiWindowFlags_AlwaysAutoResize))
     {
-      doReset = false;
+      doLoad = false;
 
       ImGui::Text("The current project will be entirely replaced.\nThis operation cannot be undone!");
       ImGui::Separator();
 
       if(ImGui::Button("OK", ImVec2(120, 0)))
       {
-        doReset = true;
+        doLoad = true;
         ImGui::CloseCurrentPopup();
       }
       ImGui::SetItemDefaultFocus();
@@ -490,26 +515,49 @@ void GaussianSplattingUI::onUIRender()
         // cancel any request leading to a reset
         prmScene.sceneToLoadFilename   = "";
         prmScene.projectToLoadFilename = "";
+        prmScene.addSceneToExisting    = false;
         ImGui::CloseCurrentPopup();
       }
       ImGui::EndPopup();
     }
 
-    if(doReset)
+    if(doLoad)
     {
-      // reset if a scene already exists
-      const auto splatCount = m_splatSet.positions.size() / 3;
-      if(splatCount)
+      // If replacing (not adding), reset existing scene
+      if(!prmScene.addSceneToExisting)
       {
-        deinitAll();
+        const auto splatCount = m_splatSet.positions.size() / 3;
+        if(splatCount)
+        {
+          deinitAll();
+        }
+        m_radianceFields.clear();
+      }
+      else
+      {
+        // When adding, we need to deinit GPU resources but keep CPU data
+        const auto splatCount = m_splatSet.positions.size() / 3;
+        if(splatCount)
+        {
+          vkDeviceWaitIdle(m_device);
+          m_splatSetVk.deinitDataStorage();
+          m_splatSetVk.rtxDeinitSplatModel();
+          m_splatSetVk.rtxDeinitAccelerationStructures();
+        }
       }
 
-      m_loadedSceneFilename = prmScene.sceneToLoadFilename;
       //
       vkDeviceWaitIdle(m_device);
 
-      LOGI("Start loading file %s\n", prmScene.sceneToLoadFilename.string().c_str());
-      if(!m_splatLoader.loadScene(prmScene.sceneToLoadFilename, m_splatSet))
+      LOGI("Start loading file %s (add=%s)\n", prmScene.sceneToLoadFilename.string().c_str(),
+           prmScene.addSceneToExisting ? "true" : "false");
+      
+      // Store the pending filename for when load completes
+      m_pendingLoadFilename = prmScene.sceneToLoadFilename;
+      
+      // Load into pending set (will be merged on success)
+      m_splatSetPending.clear();
+      if(!m_splatLoader.loadScene(prmScene.sceneToLoadFilename, m_splatSetPending))
       {
         // this should never occur since status is READY.
         LOGE("Error: cannot start scene load while loader is not ready status=%d\n", static_cast<int>(m_splatLoader.getStatus()));
@@ -554,12 +602,14 @@ void GaussianSplattingUI::onUIRender()
         ImGui::Text("Error: invalid ply file");
         if(ImGui::Button("Ok", ImVec2(120, 0)))
         {
-          m_loadedSceneFilename = "";
+          m_pendingLoadFilename = "";
+          m_splatSetPending.clear();
           // destroy scene just in case it was
           // loaded but not properly since in error
           deinitScene();
           // set ready for next load
           m_splatLoader.reset();
+          prmScene.addSceneToExisting = false;
           ImGui::CloseCurrentPopup();
         }
       }
@@ -569,7 +619,7 @@ void GaussianSplattingUI::onUIRender()
         if(prmScene.colorSpaceConversion == 1)
         {
           LOGI("Converting color space: sRGB -> linearRGB (for ML-SHARP compatibility files)\n");
-          m_splatSet.convertColorSpace(true);  // sRGB to linear
+          m_splatSetPending.convertColorSpace(true);  // sRGB to linear
 
           // Auto-enable linear-to-sRGB post-processing for correct display
           // Since we're now working with linear RGB data, we need gamma correction for output
@@ -577,21 +627,62 @@ void GaussianSplattingUI::onUIRender()
           LOGI("Auto-enabled Linear to sRGB output for ML-SHARP content\n");
         }
 
-        // TODO add error modal or better continue on error since it is false only if shaders does not compile
-        // Then print shader compilation error directly as a viewport overlay
-        // Will allow for fix and hot reload
-        if(!initAll())
+        // Remove black splats if requested
+        if(prmScene.removeBlackSplats)
         {
-          // destroy scene
-          deinitScene();
+          const size_t countBefore = m_splatSetPending.size();
+          m_splatSetPending.removeBlackSplats();
+          const size_t countAfter = m_splatSetPending.size();
+          LOGI("Removed %zu black splats (%zu remaining)\n", countBefore - countAfter, countAfter);
+        }
+
+        // Merge the pending splat set into main splat set
+        const size_t newSplatOffset = m_splatSet.merge(m_splatSetPending);
+        const size_t newSplatCount = m_splatSetPending.size();
+        
+        // Add radiance field entry
+        RadianceFieldEntry entry;
+        entry.filename = m_pendingLoadFilename;
+        entry.displayName = m_pendingLoadFilename.filename().string();
+        entry.splatOffset = newSplatOffset;
+        entry.splatCount = newSplatCount;
+        entry.visible = true;
+        m_radianceFields.push_back(entry);
+        
+        LOGI("Added radiance field: %s (offset=%zu, count=%zu, total=%zu)\n",
+             entry.displayName.c_str(), newSplatOffset, newSplatCount, m_splatSet.size());
+        
+        // Clear pending data
+        m_splatSetPending.clear();
+
+        // If we are in the middle of a reload queue, trigger the next file
+        if(!m_reloadQueue.empty())
+        {
+          prmScene.sceneToLoadFilename = m_reloadQueue.front();
+          m_reloadQueue.erase(m_reloadQueue.begin());
+          prmScene.addSceneToExisting = true;
+          m_pendingLoadFilename = prmScene.sceneToLoadFilename;
         }
         else
         {
-          guiAddToRecentFiles(m_loadedSceneFilename);
+          // Queue finished or single file load
+          if(!initAll())
+          {
+            // destroy scene
+            deinitScene();
+          }
+          else if(!m_isReloading) // Only add to recent if not a reload
+          {
+            guiAddToRecentFiles(entry.filename);
+          }
+          
+          m_isReloading = false;
+          m_pendingLoadFilename = "";
+          prmScene.addSceneToExisting = false;
+          // set ready for next load
+          m_splatLoader.reset();
+          ImGui::CloseCurrentPopup();
         }
-        // set ready for next load
-        m_splatLoader.reset();
-        ImGui::CloseCurrentPopup();
       }
       break;
       default: {
@@ -860,7 +951,7 @@ void GaussianSplattingUI::guiDrawRadianceFieldsTree()
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.0f, 0.0f, 1.0f));
   }
   bool node_open = ImGui::TreeNodeEx(
-      fmt::format(ICON_MS_GRAIN " Radiance Fields ({}){}", m_loadedSceneFilename.empty() ? 0 : 1, rtxError).c_str(), node_flags);
+      fmt::format(ICON_MS_GRAIN " Radiance Fields ({}){}", m_radianceFields.size(), rtxError).c_str(), node_flags);
   if(m_splatSet.size() != 0 && !m_splatSetVk.rtxValid)
     ImGui::PopStyleColor();
   if(ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
@@ -868,22 +959,46 @@ void GaussianSplattingUI::guiDrawRadianceFieldsTree()
     m_selectedAsset     = GUI_NONE;
     m_selectedItemIndex = -1;
   }
+  
+  // Add button to load additional radiance field
+  ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - 30);
+  if(ImGui::SmallButton(ICON_MS_ADD "##AddSplat"))
+  {
+    prmScene.sceneToLoadFilename = nvgui::windowOpenFileDialog(m_app->getWindowHandle(), "Add splat file",
+                                                               "All Files|*.ply;*.spz;*.sog|PLY Files|*.ply|SPZ files|*.spz|SOG files|*.sog");
+    prmScene.addSceneToExisting = true;  // Add to existing instead of replacing
+  }
+  nvgui::tooltip("Add radiance field to scene");
+  
   if(node_open)
   {
     // display the radiance fields tree
-    for(int i = 0; i < 1; ++i)
+    for(size_t i = 0; i < m_radianceFields.size(); ++i)
     {
-      ImGuiTreeNodeFlags node_flags = base_flags | ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
-      if(m_selectedAsset == GUI_SPLATSET && m_selectedItemIndex != -1)
-        node_flags |= ImGuiTreeNodeFlags_Selected;
+      ImGui::PushID(static_cast<int>(i));
+      ImGuiTreeNodeFlags item_flags = base_flags | ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+      if(m_selectedAsset == GUI_SPLATSET && m_selectedItemIndex == static_cast<int64_t>(i))
+        item_flags |= ImGuiTreeNodeFlags_Selected;
 
-      bool node_open = ImGui::TreeNodeEx((void*)(intptr_t)i, node_flags, ICON_MS_SUBDIRECTORY_ARROW_RIGHT "Splat set %d - %s",
-                                         i, m_loadedSceneFilename.filename().string().c_str());
+      const auto& field = m_radianceFields[i];
+      bool item_open = ImGui::TreeNodeEx((void*)(intptr_t)i, item_flags, 
+                                         ICON_MS_SUBDIRECTORY_ARROW_RIGHT "Splat set %zu - %s (%zu splats)",
+                                         i, field.displayName.c_str(), field.splatCount);
       if(ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
       {
         m_selectedAsset     = GUI_SPLATSET;
-        m_selectedItemIndex = i;
+        m_selectedItemIndex = static_cast<int64_t>(i);
       }
+      
+      // Delete button for individual radiance field
+      ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - 30);
+      if(ImGui::SmallButton(ICON_MS_DELETE))
+      {
+        m_requestDeleteRadianceField = true;
+        m_radianceFieldToDelete = i;
+      }
+      nvgui::tooltip("Remove radiance field (clears all)");
+      ImGui::PopID();
     }
 
     ImGui::TreePop();
@@ -1587,6 +1702,59 @@ void GaussianSplattingUI::guiDrawSplatSetProperties()
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.0f, 0.0f, 1.0f));
         PE::Text("Error", "RTX allocation failed");
         ImGui::PopStyleColor();
+      }
+
+      PE::end();
+    }
+  }
+  if(ImGui::CollapsingHeader("Loading Options", ImGuiTreeNodeFlags_DefaultOpen))
+  {
+    if(PE::begin("##Loading Options"))
+    {
+      if(PE::entry(
+             "Color Space",
+             [&] {
+               bool changed = false;
+               changed |= ImGui::RadioButton("None", &prmScene.colorSpaceConversion, 0);
+               ImGui::SameLine();
+               changed |= ImGui::RadioButton("sRGB to Linear", &prmScene.colorSpaceConversion, 1);
+               return changed;
+             },
+             "Select color space conversion for the next loaded PLY file.\n"
+             "sRGB to Linear is required for ML-SHARP compatibility-exported files."))
+      {
+      }
+      
+      PE::Checkbox("Remove black splats", &prmScene.removeBlackSplats,
+                    "If on, splats with (almost) zero color will be discarded during loading.\n"
+                    "This can help reduce point count and improve performance without visible quality loss.");
+
+      if(PE::entry(
+             "Apply to scene", [&] { return ImGui::Button("Reload all files"); },
+             "Reloads all radiance fields with the current loading options (Color Space and Black Splat Removal)"))
+      {
+        // Store current files
+        m_reloadQueue.clear();
+        for(const auto& field : m_radianceFields)
+        {
+          m_reloadQueue.push_back(field.filename);
+        }
+
+        if(!m_reloadQueue.empty())
+        {
+          // Clear scene
+          vkDeviceWaitIdle(m_device);
+          deinitAll();
+          m_radianceFields.clear();
+          m_splatSet.clear();
+
+          // Start reloading first file
+          prmScene.sceneToLoadFilename = m_reloadQueue.front();
+          m_reloadQueue.erase(m_reloadQueue.begin());
+          prmScene.addSceneToExisting = false;
+          m_isReloading               = true;
+          // Note: the actual load will be triggered by prmScene.sceneToLoadFilename in onUIRender
+        }
       }
 
       PE::end();
@@ -2314,7 +2482,7 @@ bool GaussianSplattingUI::loadProjectIfNeeded()
   // load the json and set loading status
   if(!loadingProject)
   {
-    if(!m_loadedSceneFilename.empty())
+    if(!m_radianceFields.empty())
       ImGui::OpenPopup("Load .vkg project file ?");
 
     // Always center this window when appearing
@@ -2378,6 +2546,13 @@ bool GaussianSplattingUI::loadProjectIfNeeded()
       {
         const auto& item             = data["splats"][0];
         prmScene.sceneToLoadFilename = makeAbsolutePath(std::filesystem::path(path).parent_path(), item["path"]);
+        
+        // Warn if project has multiple splat sets (only first will be loaded initially)
+        if(data["splats"].size() > 1)
+        {
+          LOGW("Project contains %zu radiance fields. Only the first will be loaded initially. "
+               "Use File > Add to load additional files.\n", data["splats"].size());
+        }
       }
     }
 
@@ -2678,11 +2853,12 @@ bool GaussianSplattingUI::saveProject(std::string path)
       data["splatsGlobals"] = item;
     }
 
-    // Splat sets
+    // Splat sets - save all radiance fields
     data["splats"] = json::array();
+    for(const auto& field : m_radianceFields)
     {
       json item;
-      item["path"]     = getRelativePath(std::filesystem::path(path).parent_path(), m_loadedSceneFilename);
+      item["path"]     = getRelativePath(std::filesystem::path(path).parent_path(), field.filename);
       item["position"] = {m_splatSetVk.translation.x, m_splatSetVk.translation.y, m_splatSetVk.translation.z};
       item["rotation"] = {m_splatSetVk.rotation.x, m_splatSetVk.rotation.y, m_splatSetVk.rotation.z};
       item["scale"]    = {m_splatSetVk.scale.x, m_splatSetVk.scale.y, m_splatSetVk.scale.z};
@@ -3221,7 +3397,7 @@ void GaussianSplattingUI::guiDrawVideoExportWindow()
       ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), ICON_MS_ERROR " %s", progress.errorMessage.c_str());
     }
 
-    bool sceneLoaded = !m_loadedSceneFilename.empty();
+    bool sceneLoaded = !m_radianceFields.empty();
     ImGui::BeginDisabled(!sceneLoaded);
 
     if(ImGui::Button(ICON_MS_MOVIE " Start Render", ImVec2(-1, 30)))
