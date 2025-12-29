@@ -128,7 +128,7 @@ By default the application opens a 3DGS model representing a bouquet of flowers 
 * Other reconstruction software's ply outputs such as [NerfStudio](https://docs.nerf.studio/nerfology/methods/splat.html), [LichtFeld Studio](https://github.com/MrNeRF/LichtFeld-Studio) should also work.
 * SPZ file import can be tested using the sample [models](https://github.com/nianticlabs/spz/tree/main/samples) provided by nianticlabs.
 * SOG files can be created from PLY files using the [SplatTransform](https://github.com/playcanvas/splat-transform) tool. SOG is a highly compressed format (~15–20× smaller than PLY) using quantization and WebP encoding.
-* This implementation includes color space corrections for SOG files based on research from the [GitHub Spark](https://github.com/sparkjsdev/spark) project (see [PR #159](https://github.com/sparkjsdev/spark/pull/159)), ensuring correct gamma-to-linear conversion for DC coefficients.
+* This implementation includes color space corrections for SOG files based on research from the [GitHub Spark](https://github.com/sparkjsdev/spark) project (see [issue #242](https://github.com/sparkjsdev/spark/issues/242)), ensuring correct gamma-to-linear conversion for DC coefficients.
 
 **Apple ML-SHARP Support**
 
