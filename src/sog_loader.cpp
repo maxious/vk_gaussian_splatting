@@ -513,9 +513,11 @@ void SogLoader::decodeSh0(const WebPImage& sh0, const std::vector<float>& codebo
       uint8_t gIdx    = sh0.rgba[offset + 1];
       uint8_t bIdx    = sh0.rgba[offset + 2];
       uint8_t opacity = sh0.rgba[offset + 3];
+
       output.f_dc[i * 3 + 0] = codebook[rIdx];
       output.f_dc[i * 3 + 1] = codebook[gIdx];
       output.f_dc[i * 3 + 2] = codebook[bIdx];
+
       output.opacity[i] = sigmoidInv(static_cast<float>(opacity) / 255.0f);
     }
   });
@@ -526,9 +528,8 @@ void SogLoader::decodeShN(const WebPImage& centroids, const WebPImage& labels, c
   if(shN.bands == 0 || shN.count == 0)
     return;
 
-  // Number of SH coefficients per channel based on bands
-  static const uint32_t coeffsPerBand[] = {0, 3, 8, 15};
-  const uint32_t        shCoeffs        = coeffsPerBand[std::min(shN.bands, 3u)];
+  static const uint32_t coeffsPerBand[] = {3, 8, 15};
+  const uint32_t        shCoeffs        = coeffsPerBand[std::min(shN.bands - 1, 2u)];
 
   // f_rest stores SH coefficients for all 3 channels
   // INRIA layout: per-splat, grouped by channel (R coeffs, G coeffs, B coeffs)
@@ -694,7 +695,7 @@ bool SogLoader::loadWithReader(const SogMeta& meta, FileReader reader, SplatSet&
     progressCallback(1.0f);
 
   output.convertCoordinates(spz::CoordinateSystem::RDF, spz::CoordinateSystem::RUB);
-  LOGI("Loaded SOG file: %u splats (parallelized)\n", count);
+  LOGI("Loaded SOG file: %u splats (parallelized, gamma-space DC)\n", count);
   return true;
 }
 
