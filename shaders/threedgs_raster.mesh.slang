@@ -144,7 +144,21 @@ void main(
     // Fetches are done as early as possible.
     float4       splatColor  = fetchColor(splatIndex);
     const float3x3 cov3Dm      = fetchCovariance(splatIndex);
-    const float3 splatCenter = fetchCenter(splatIndex);
+    float3         splatCenter = fetchCenter(splatIndex);
+
+    // Apply 4D Motion
+    float3 motion = fetchMotion(splatIndex);
+    float2 timeData = fetchTime(splatIndex);
+    float t_center = timeData.x;
+    float t_scale = timeData.y;
+    float dt = frameInfo.currentTime - t_center;
+    
+    if (frameInfo.temporalCulling != 0 && abs(dt) > t_scale) {
+       emitDegeneratedQuad(localIndex, verts);
+       return;
+    }
+    
+    splatCenter += motion * dt;
 
     // Row-major: vector * matrix
     const float4 viewCenter = mul(float4(splatCenter, 1.0), modelViewMatrix);

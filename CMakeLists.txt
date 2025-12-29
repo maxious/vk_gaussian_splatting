@@ -191,6 +191,7 @@ set_property(TARGET spz PROPERTY FOLDER "ThirdParty")
 #####################################################################################
 # Source files for this project
 #
+# Note: GLOB is used here, so if you add new files, you must re-run CMake or touch this file.
 file(GLOB SOURCE_FILES src/*.*)
 # Note: src/nvvk_swapchain_override.cpp implements the HDR support for the swapchain,
 # overriding the default implementation in nvpro_core2 without modifying the submodule.

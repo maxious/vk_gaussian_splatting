@@ -97,6 +97,10 @@
 #define BINDING_RTX_PAYLOAD_BUFFER 18
 #define BINDING_MESH_DESCRIPTORS 19
 #define BINDING_LIGHT_SET 20
+#define BINDING_MOTION_TEXTURE 21
+#define BINDING_TIME_TEXTURE 22
+#define BINDING_MOTION_BUFFER 23
+#define BINDING_TIME_BUFFER 24
 
 // bindings for set 1 of RTX
 #define RTX_BINDING_OUTIMAGE 0        // Ray tracer output image
@@ -162,6 +166,10 @@ struct FrameInfo
   float2   basisViewport;
   float2   viewportOffset DEFAULT(float2(0.0f, 0.0f));  // Viewport offset for SBS stereo (x,y offset in pixels)
   float2   stereoShift DEFAULT(float2(0.0f, 0.0f));    // Principal point shift for off-axis stereo projection (in pixels)
+  
+  float currentTime DEFAULT(0.0f);
+
+  int temporalCulling DEFAULT(1); // 1 = enabled, 0 = disabled
 
   float fovRad                 DEFAULT(0.009f);  // Field of view in radians for fisheye camera
   float inverseFocalAdjustment DEFAULT(1.0f);

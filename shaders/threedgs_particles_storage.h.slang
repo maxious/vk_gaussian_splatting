@@ -29,6 +29,8 @@
   [[vk::binding(BINDING_COLORS_TEXTURE, 0)]] Sampler2D colorsTexture;
   [[vk::binding(BINDING_COVARIANCES_TEXTURE, 0)]] Sampler2D covariancesTexture;
   [[vk::binding(BINDING_SH_TEXTURE, 0)]] Sampler2D sphericalHarmonicsTexture;
+  [[vk::binding(BINDING_MOTION_TEXTURE, 0)]] Sampler2D motionTexture;
+  [[vk::binding(BINDING_TIME_TEXTURE, 0)]] Sampler2D timeTexture;
 #else
   // buffers describing the 3DGS model (alternative to textures)
   [[vk::binding(BINDING_CENTERS_BUFFER, 0)]] RWStructuredBuffer<float> centersBuffer;
@@ -36,6 +38,8 @@
   [[vk::binding(BINDING_ROTATIONS_BUFFER, 0)]] RWStructuredBuffer<float> rotationsBuffer;
   [[vk::binding(BINDING_COLORS_BUFFER, 0)]] RWStructuredBuffer<float> colorsBuffer;
   [[vk::binding(BINDING_COVARIANCES_BUFFER, 0)]] RWStructuredBuffer<float> covariancesBuffer;
+  [[vk::binding(BINDING_MOTION_BUFFER, 0)]] RWStructuredBuffer<float> motionBuffer;
+  [[vk::binding(BINDING_TIME_BUFFER, 0)]] RWStructuredBuffer<float> timeBuffer;
   #if SH_FORMAT == FORMAT_FLOAT32
     [[vk::binding(BINDING_SH_BUFFER, 0)]] RWStructuredBuffer<float> sphericalHarmonicsBuffer;
   #else
@@ -123,6 +127,36 @@ float4 fetchRotation(in uint splatIndex)
 {
   return float4(rotationsBuffer[splatIndex * 4 + 0], rotationsBuffer[splatIndex * 4 + 1],
                 rotationsBuffer[splatIndex * 4 + 2], rotationsBuffer[splatIndex * 4 + 3]);
+}
+#endif
+
+#if DATA_STORAGE == STORAGE_TEXTURES
+// fetch motion value from texture map
+float3 fetchMotion(in uint splatIndex)
+{
+  int2 texSize;
+  motionTexture.GetDimensions(texSize.x, texSize.y);
+  return motionTexture.Load(int3(getDataPos(splatIndex, 1, 0, texSize), 0)).xyz;
+}
+
+// fetch time value from texture map
+float2 fetchTime(in uint splatIndex)
+{
+  int2 texSize;
+  timeTexture.GetDimensions(texSize.x, texSize.y);
+  return timeTexture.Load(int3(getDataPos(splatIndex, 1, 0, texSize), 0)).xy;
+}
+#else
+// fetch motion value from data buffer
+float3 fetchMotion(in uint splatIndex)
+{
+  return float3(motionBuffer[splatIndex * 3 + 0], motionBuffer[splatIndex * 3 + 1], motionBuffer[splatIndex * 3 + 2]);
+}
+
+// fetch time value from data buffer
+float2 fetchTime(in uint splatIndex)
+{
+  return float2(timeBuffer[splatIndex * 2 + 0], timeBuffer[splatIndex * 2 + 1]);
 }
 #endif
 

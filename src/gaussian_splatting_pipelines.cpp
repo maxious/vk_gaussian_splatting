@@ -39,6 +39,8 @@ void GaussianSplatting::initPipelines()
 
     bindings.addBinding(BINDING_COLORS_TEXTURE, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_ALL);
     bindings.addBinding(BINDING_SH_TEXTURE, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_ALL);
+    bindings.addBinding(BINDING_MOTION_TEXTURE, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_ALL);
+    bindings.addBinding(BINDING_TIME_TEXTURE, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_ALL);
   }
   else
   {
@@ -49,6 +51,8 @@ void GaussianSplatting::initPipelines()
 
     bindings.addBinding(BINDING_COLORS_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
     bindings.addBinding(BINDING_SH_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
+    bindings.addBinding(BINDING_MOTION_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
+    bindings.addBinding(BINDING_TIME_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
   }
 
   // Obj Mesh objectDescriptions
@@ -113,6 +117,8 @@ void GaussianSplatting::initPipelines()
 
     writeContainer.append(bindings.getWriteSet(BINDING_COLORS_TEXTURE, m_descriptorSet), m_splatSetVk.colorsMap);
     writeContainer.append(bindings.getWriteSet(BINDING_SH_TEXTURE, m_descriptorSet), m_splatSetVk.sphericalHarmonicsMap);
+    writeContainer.append(bindings.getWriteSet(BINDING_MOTION_TEXTURE, m_descriptorSet), m_splatSetVk.motionMap);
+    writeContainer.append(bindings.getWriteSet(BINDING_TIME_TEXTURE, m_descriptorSet), m_splatSetVk.timeMap);
   }
   else
   {
@@ -125,6 +131,9 @@ void GaussianSplatting::initPipelines()
     writeContainer.append(bindings.getWriteSet(BINDING_COLORS_BUFFER, m_descriptorSet), m_splatSetVk.colorsBuffer);
     if(m_splatSetVk.sphericalHarmonicsBuffer.buffer != NULL)
       writeContainer.append(bindings.getWriteSet(BINDING_SH_BUFFER, m_descriptorSet), m_splatSetVk.sphericalHarmonicsBuffer);
+      
+    writeContainer.append(bindings.getWriteSet(BINDING_MOTION_BUFFER, m_descriptorSet), m_splatSetVk.motionBuffer);
+    writeContainer.append(bindings.getWriteSet(BINDING_TIME_BUFFER, m_descriptorSet), m_splatSetVk.timeBuffer);
   }
 
   if(m_meshSetVk.instances.size())

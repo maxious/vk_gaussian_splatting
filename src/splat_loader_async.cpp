@@ -34,6 +34,7 @@
 //
 #include "splat_loader_async.h"
 #include "sog_loader.h"
+#include "fourdv_loader.h"
 #include "utilities.h"
 
 using namespace vk_gaussian_splatting;
@@ -207,6 +208,19 @@ bool SplatLoaderAsync::innerLoad(std::filesystem::path filename, SplatSet& outpu
     LOGI("File loaded in %lldms\n", loadTime);
     //
     return cloud.numPoints != 0;
+  }
+
+  // 4DV Loader
+  if(hasExtension(filename, ".4dv"))
+  {
+    bool success = FourDvLoader::load(filename, output, [this](float progress) { setProgress(progress); });
+    if(success)
+    {
+      auto      endTime  = std::chrono::high_resolution_clock::now();
+      long long loadTime = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
+      LOGI("4DV file loaded in %lldms\n", loadTime);
+    }
+    return success;
   }
 
   if(hasExtension(filename, ".ply") && SplatLoaderFast::canLoad(filename))

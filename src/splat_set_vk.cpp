@@ -210,6 +210,54 @@ void SplatSetVk::initDataBuffers(SplatSet& splatSet)
     memoryStats.devCenters  = bufferSize3Comp;  // same size as source
   }
 
+  {
+    const uint32_t count = splatSet.has_time_data ? splatCount : 1;
+    const uint32_t bufferSizeMotion = count * 3 * sizeof(float);
+    const uint32_t bufferSizeTime   = count * 2 * sizeof(float);
+
+    nvvk::Buffer hostBufferMotion;
+    m_alloc->createBuffer(hostBufferMotion, bufferSizeMotion, hostBufferUsageFlags, hostMemoryUsageFlags, hostAllocCreateFlags);
+    NVVK_DBG_NAME(hostBufferMotion.buffer);
+    
+    nvvk::Buffer hostBufferTime;
+    m_alloc->createBuffer(hostBufferTime, bufferSizeTime, hostBufferUsageFlags, hostMemoryUsageFlags, hostAllocCreateFlags);
+    NVVK_DBG_NAME(hostBufferTime.buffer);
+
+    m_alloc->createBuffer(motionBuffer, bufferSizeMotion, deviceBufferUsageFlags, deviceMemoryUsageFlags);
+    NVVK_DBG_NAME(motionBuffer.buffer);
+    
+    m_alloc->createBuffer(timeBuffer, bufferSizeTime, deviceBufferUsageFlags, deviceMemoryUsageFlags);
+    NVVK_DBG_NAME(timeBuffer.buffer);
+
+    if (splatSet.has_time_data) {
+        memcpy(hostBufferMotion.mapping, splatSet.motion.data(), bufferSizeMotion);
+        float* timeMapped = (float*)hostBufferTime.mapping;
+        START_PAR_LOOP(splatCount, i)
+        {
+          timeMapped[i * 2 + 0] = splatSet.time[i];
+          timeMapped[i * 2 + 1] = splatSet.time_scale[i];
+        }
+        END_PAR_LOOP()
+    } else {
+        memset(hostBufferMotion.mapping, 0, bufferSizeMotion);
+        
+        float* timeMapped = (float*)hostBufferTime.mapping;
+        for(uint32_t i = 0; i < count; ++i) {
+            timeMapped[i * 2 + 0] = 0.0f;
+            timeMapped[i * 2 + 1] = 1.0e20f;
+        }
+    }
+
+    VkBufferCopy bcMotion{.srcOffset = 0, .dstOffset = 0, .size = bufferSizeMotion};
+    vkCmdCopyBuffer(cmd, hostBufferMotion.buffer, motionBuffer.buffer, 1, &bcMotion);
+    
+    VkBufferCopy bcTime{.srcOffset = 0, .dstOffset = 0, .size = bufferSizeTime};
+    vkCmdCopyBuffer(cmd, hostBufferTime.buffer, timeBuffer.buffer, 1, &bcTime);
+
+    buffersToDestroy.push_back(hostBufferMotion);
+    buffersToDestroy.push_back(hostBufferTime);
+  }
+
   // covariances (for raster only)
   {
     const uint32_t bufferSize = splatCount * 2 * 3 * sizeof(float);
@@ -451,6 +499,9 @@ void SplatSetVk::deinitDataBuffers()
   m_alloc->destroyBuffer(colorsBuffer);
   m_alloc->destroyBuffer(covariancesBuffer);
   m_alloc->destroyBuffer(sphericalHarmonicsBuffer);
+  
+  m_alloc->destroyBuffer(motionBuffer);
+  m_alloc->destroyBuffer(timeBuffer);
 }
 
 ///////////////////
@@ -503,6 +554,68 @@ void SplatSetVk::initDataTextures(SplatSet& splatSet)
     memoryStats.odevCenters = splatCount * 3 * sizeof(float);  // no compression or quantization yet
     memoryStats.devCenters  = centersMapSize.x * centersMapSize.y * 4 * sizeof(float);
   }
+  
+  {
+    const bool hasTime = splatSet.has_time_data;
+    glm::ivec2 mapSize = hasTime ? computeDataTextureSize(3, 3, splatCount) : glm::ivec2(1, 1);
+    std::vector<float> motion(mapSize.x * mapSize.y * 4, 0.0f);
+    
+    glm::ivec2 timeMapSize = hasTime ? computeDataTextureSize(2, 2, splatCount) : glm::ivec2(1, 1);
+    std::vector<float> timeData(timeMapSize.x * timeMapSize.y * 2, 0.0f);
+    
+    if (hasTime) {
+        START_PAR_LOOP(splatCount, i)
+        {
+          motion[i * 4 + 0] = splatSet.motion[i * 3 + 0];
+          motion[i * 4 + 1] = splatSet.motion[i * 3 + 1];
+          motion[i * 4 + 2] = splatSet.motion[i * 3 + 2];
+          
+          timeData[i * 2 + 0] = splatSet.time[i];
+          timeData[i * 2 + 1] = splatSet.time_scale[i];
+        }
+        END_PAR_LOOP()
+    } else {
+        timeData[0] = 0.0f;
+        timeData[1] = 1.0e20f;
+    }
+    
+    initTexture(mapSize.x, mapSize.y, (uint32_t)motion.size() * sizeof(float), (void*)motion.data(),
+                VK_FORMAT_R32G32B32A32_SFLOAT, *m_sampler, motionMap);
+                
+    initTexture(timeMapSize.x, timeMapSize.y, (uint32_t)timeData.size() * sizeof(float), (void*)timeData.data(),
+                VK_FORMAT_R32G32_SFLOAT, *m_sampler, timeMap);
+  }
+
+  // covariances
+  {
+    glm::ivec2 mapSize = computeDataTextureSize(3, 3, splatCount);
+    std::vector<float> motion(mapSize.x * mapSize.y * 4);
+    
+    glm::ivec2 timeMapSize = computeDataTextureSize(2, 2, splatCount);
+    std::vector<float> timeData(timeMapSize.x * timeMapSize.y * 4); // texture is RG32F so we pack into RGBA effectively halving width if using RGBA upload logic, but wait.
+    // simpler to use RGBA32F and waste 2 components for Time? Or RG32F?
+    // initTexture takes VK_FORMAT.
+    
+    START_PAR_LOOP(splatCount, i)
+    {
+      // Motion
+      motion[i * 4 + 0] = splatSet.motion[i * 3 + 0];
+      motion[i * 4 + 1] = splatSet.motion[i * 3 + 1];
+      motion[i * 4 + 2] = splatSet.motion[i * 3 + 2];
+      
+      // Time
+      timeData[i * 4 + 0] = splatSet.time[i];
+      timeData[i * 4 + 1] = splatSet.time_scale[i];
+    }
+    END_PAR_LOOP()
+    
+    initTexture(mapSize.x, mapSize.y, (uint32_t)motion.size() * sizeof(float), (void*)motion.data(),
+                VK_FORMAT_R32G32B32A32_SFLOAT, *m_sampler, motionMap);
+                
+    initTexture(timeMapSize.x, timeMapSize.y, (uint32_t)timeData.size() * sizeof(float), (void*)timeData.data(),
+                VK_FORMAT_R32G32B32A32_SFLOAT, *m_sampler, timeMap);
+  }
+
   // covariances
   {
     glm::ivec2         mapSize = computeDataTextureSize(4, 6, splatCount);
@@ -692,6 +805,9 @@ void SplatSetVk::deinitDataTextures()
 
   deinitTexture(colorsMap);
   deinitTexture(sphericalHarmonicsMap);
+  
+  deinitTexture(motionMap);
+  deinitTexture(timeMap);
 }
 
 void SplatSetVk::initTexture(uint32_t width, uint32_t height, uint32_t bufsize, void* data, VkFormat format, const VkSampler& sampler, nvvk::Image& texture)

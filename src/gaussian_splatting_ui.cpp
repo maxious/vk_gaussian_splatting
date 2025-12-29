@@ -209,13 +209,13 @@ void GaussianSplattingUI::onUIMenu()
     if(ImGui::MenuItem(ICON_MS_FILE_OPEN " Open file", ""))
     {
       prmScene.sceneToLoadFilename = nvgui::windowOpenFileDialog(m_app->getWindowHandle(), "Load splat file",
-                                                                 "All Files|*.ply;*.spz;*.sog|PLY Files|*.ply|SPZ files|*.spz|SOG files|*.sog");
+                                                                 "All Files|*.ply;*.spz;*.sog;*.4dv|PLY Files|*.ply|SPZ files|*.spz|SOG files|*.sog|4DV files|*.4dv");
       prmScene.addSceneToExisting = false;
     }
     if(ImGui::MenuItem(ICON_MS_ADD " Add file", ""))
     {
       prmScene.sceneToLoadFilename = nvgui::windowOpenFileDialog(m_app->getWindowHandle(), "Add splat file",
-                                                                 "All Files|*.ply;*.spz;*.sog|PLY Files|*.ply|SPZ files|*.spz|SOG files|*.sog");
+                                                                 "All Files|*.ply;*.spz;*.sog;*.4dv|PLY Files|*.ply|SPZ files|*.spz|SOG files|*.sog|4DV files|*.4dv");
       prmScene.addSceneToExisting = true;
     }
     if(ImGui::MenuItem(ICON_MS_RESTORE_PAGE " Re Open", "F5", false, !m_radianceFields.empty()))
@@ -388,6 +388,10 @@ void GaussianSplattingUI::onFileDrop(const std::filesystem::path& filename)
   if(extension == ".ply")
     prmScene.sceneToLoadFilename = filename;
   else if(extension == ".spz")
+    prmScene.sceneToLoadFilename = filename;
+  else if(extension == ".sog")
+    prmScene.sceneToLoadFilename = filename;
+  else if(extension == ".4dv")
     prmScene.sceneToLoadFilename = filename;
   else if(extension == ".vkgs")
     prmScene.projectToLoadFilename = filename;
@@ -1258,6 +1262,33 @@ void GaussianSplattingUI::guiDrawRendererProperties()
     m_requestUpdateShaders = true;
 
   PE::end();
+
+  if(m_splatSet.has_time_data)
+  {
+    PE::begin("## 4D Controls");
+    static bool animate = false;
+    static float timeSpeed = 1.0f;
+    PE::Checkbox("Animate", &animate);
+    
+    float tMin = m_splatSet.minTime;
+    float tMax = m_splatSet.maxTime;
+    if (tMin >= tMax) { tMin = 0.0f; tMax = 10.0f; }
+    
+    PE::SliderFloat("Time", &prmFrame.currentTime, tMin, tMax);
+    PE::SliderFloat("Speed", &timeSpeed, 0.1f, 5.0f);
+    
+    // Toggle for temporal culling
+    bool tempCull = (prmFrame.temporalCulling != 0);
+    if(PE::Checkbox("Temporal Culling", &tempCull)) {
+        prmFrame.temporalCulling = tempCull ? 1 : 0;
+    }
+    
+    if(animate) {
+       prmFrame.currentTime += ImGui::GetIO().DeltaTime * timeSpeed;
+       if (prmFrame.currentTime > tMax) prmFrame.currentTime = tMin;
+    }
+    PE::end();
+  }
 
   PE::begin("## SBS Stereo");
 #ifdef WITH_OPENXR

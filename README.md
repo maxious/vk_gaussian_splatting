@@ -32,6 +32,7 @@ This fork adds the following features to the original NVIDIA sample.
 
 ### Additional Format Support
 - **SOG Format** - Import support for the [PlayCanvas SOG format](https://developer.playcanvas.com/user-manual/gaussian-splatting/formats/sog/), a highly compressed format (~15–20× smaller than PLY). Convert PLY files to SOG using the [SplatTransform](https://github.com/playcanvas/splat-transform) tool.
+- **4DV Format** - Import support for `.4dv` files from **FreeTimeGS** [Wang2025], enabling 4D Gaussian Splatting with smooth temporal fading.
 
 ---
 
@@ -212,6 +213,8 @@ The system also provides a means to run automatic benchmarks, which are detailed
 [[Wu2024](https://research.nvidia.com/labs/toronto-ai/3DGUT/)] **3DGUT: Enabling Distorted Cameras and Secondary Rays in Gaussian Splatting**. Wu, Q., Esturo, J.M., Mirzaei, A., Moënne-Loccoz, N., & Gojcic, Z. (2024). ArXiv, abs/2412.12507. CVPR 2025.
 
 [[3DGRUT](https://github.com/nv-tlabs/3dgrut)] This repository provides the official implementations of 3D Gaussian Ray Tracing (3DGRT)[Moënne-Loccoz2024] and 3D Gaussian Unscented Transform (3DGUT)[Wu2024]. 
+
+[[Wang2025](https://arxiv.org/abs/2506.05348)] **FreeTimeGS: Free Gaussian Primitives at Anytime and Anywhere for Dynamic Scene Reconstruction**. Wang, Y., Yang, P., Xu, Z., Sun, J., Zhang, Z., Chen, Y., Bao, H., Peng, S., & Zhou, X. (2025). CVPR 2025. 
 
 ## 3rd-Party Licenses
 

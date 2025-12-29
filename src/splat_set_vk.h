@@ -137,6 +137,9 @@ public:
   nvvk::Image covariancesMap;  // Raster specific
   nvvk::Image colorsMap;
   nvvk::Image sphericalHarmonicsMap;
+  
+  nvvk::Image motionMap;
+  nvvk::Image timeMap;
 
   // Data buffers
 
@@ -146,6 +149,9 @@ public:
   nvvk::Buffer covariancesBuffer;  // Raster specific
   nvvk::Buffer colorsBuffer;
   nvvk::Buffer sphericalHarmonicsBuffer;
+  
+  nvvk::Buffer motionBuffer;
+  nvvk::Buffer timeBuffer;
 
   ////////////////////////
   // Ray tracing specifics

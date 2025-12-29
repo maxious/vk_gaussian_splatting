@@ -100,7 +100,41 @@ VertexOutput main(VertexInput input)
   // Fetch data as early as possible
   const float3x3 cov3Dm      = fetchCovariance(splatIndex);
   float4         splatColor  = fetchColor(splatIndex);
-  const float3   splatCenter = fetchCenter(splatIndex);
+  float3         splatCenter = fetchCenter(splatIndex);
+
+  // Apply 4D Motion
+  float3 motion = fetchMotion(splatIndex);
+  float2 timeData = fetchTime(splatIndex);
+  float t_center = timeData.x;
+  float t_scale = timeData.y; // Duration / Temporal Scale
+
+  // Apply linear motion: P(t) = P0 + V * (t - t0)
+  float dt = frameInfo.currentTime - t_center;
+  
+  if (frameInfo.temporalCulling != 0) {
+      // FreeTimeGS Gaussian opacity decay: sigma(t) = exp(-0.5 * ((t - mu) / s)^2)
+      if (t_scale > 1e-5) {
+          float v = dt / t_scale;
+          float temporalOpacity = exp(-0.5 * v * v);
+          splatColor.a *= temporalOpacity;
+
+          // Cull if opacity is negligible to improve performance
+          if (splatColor.a < 0.004) { // approx 1/255
+              VertexOutput output;
+              output.position = float4(0.0, 0.0, 2.0, 1.0);
+              return output;
+          }
+      } else {
+          // Zero duration: only visible at exact time center
+          if (abs(dt) > 1e-5) {
+              VertexOutput output;
+              output.position = float4(0.0, 0.0, 2.0, 1.0);
+              return output;
+          }
+      }
+  }
+  
+  splatCenter += motion * dt;
 
   const float4 viewCenter = mul(float4(splatCenter, 1.0), modelViewMatrix);
   const float4 clipCenter = mul(viewCenter, projMatrix);
