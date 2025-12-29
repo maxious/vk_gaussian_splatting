@@ -234,8 +234,9 @@ void SplatSetVk::initDataBuffers(SplatSet& splatSet)
         float* timeMapped = (float*)hostBufferTime.mapping;
         START_PAR_LOOP(splatCount, i)
         {
-          timeMapped[i * 2 + 0] = splatSet.time[i];
-          timeMapped[i * 2 + 1] = splatSet.time_scale[i];
+          // JS Order: x = scale, y = center
+          timeMapped[i * 2 + 0] = splatSet.time_scale[i];
+          timeMapped[i * 2 + 1] = splatSet.time[i];
         }
         END_PAR_LOOP()
     } else {
@@ -243,8 +244,8 @@ void SplatSetVk::initDataBuffers(SplatSet& splatSet)
         
         float* timeMapped = (float*)hostBufferTime.mapping;
         for(uint32_t i = 0; i < count; ++i) {
-            timeMapped[i * 2 + 0] = 0.0f;
-            timeMapped[i * 2 + 1] = 1.0e20f;
+            timeMapped[i * 2 + 0] = 1.0e20f; // Scale
+            timeMapped[i * 2 + 1] = 0.0f;     // Center
         }
     }
 
@@ -570,13 +571,14 @@ void SplatSetVk::initDataTextures(SplatSet& splatSet)
           motion[i * 4 + 1] = splatSet.motion[i * 3 + 1];
           motion[i * 4 + 2] = splatSet.motion[i * 3 + 2];
           
-          timeData[i * 2 + 0] = splatSet.time[i];
-          timeData[i * 2 + 1] = splatSet.time_scale[i];
+          // JS Order: x = scale, y = center
+          timeData[i * 2 + 0] = splatSet.time_scale[i];
+          timeData[i * 2 + 1] = splatSet.time[i];
         }
         END_PAR_LOOP()
     } else {
-        timeData[0] = 0.0f;
-        timeData[1] = 1.0e20f;
+        timeData[0] = 1.0e20f; // Scale
+        timeData[1] = 0.0f;     // Center
     }
     
     initTexture(mapSize.x, mapSize.y, (uint32_t)motion.size() * sizeof(float), (void*)motion.data(),
@@ -584,36 +586,6 @@ void SplatSetVk::initDataTextures(SplatSet& splatSet)
                 
     initTexture(timeMapSize.x, timeMapSize.y, (uint32_t)timeData.size() * sizeof(float), (void*)timeData.data(),
                 VK_FORMAT_R32G32_SFLOAT, *m_sampler, timeMap);
-  }
-
-  // covariances
-  {
-    glm::ivec2 mapSize = computeDataTextureSize(3, 3, splatCount);
-    std::vector<float> motion(mapSize.x * mapSize.y * 4);
-    
-    glm::ivec2 timeMapSize = computeDataTextureSize(2, 2, splatCount);
-    std::vector<float> timeData(timeMapSize.x * timeMapSize.y * 4); // texture is RG32F so we pack into RGBA effectively halving width if using RGBA upload logic, but wait.
-    // simpler to use RGBA32F and waste 2 components for Time? Or RG32F?
-    // initTexture takes VK_FORMAT.
-    
-    START_PAR_LOOP(splatCount, i)
-    {
-      // Motion
-      motion[i * 4 + 0] = splatSet.motion[i * 3 + 0];
-      motion[i * 4 + 1] = splatSet.motion[i * 3 + 1];
-      motion[i * 4 + 2] = splatSet.motion[i * 3 + 2];
-      
-      // Time
-      timeData[i * 4 + 0] = splatSet.time[i];
-      timeData[i * 4 + 1] = splatSet.time_scale[i];
-    }
-    END_PAR_LOOP()
-    
-    initTexture(mapSize.x, mapSize.y, (uint32_t)motion.size() * sizeof(float), (void*)motion.data(),
-                VK_FORMAT_R32G32B32A32_SFLOAT, *m_sampler, motionMap);
-                
-    initTexture(timeMapSize.x, timeMapSize.y, (uint32_t)timeData.size() * sizeof(float), (void*)timeData.data(),
-                VK_FORMAT_R32G32B32A32_SFLOAT, *m_sampler, timeMap);
   }
 
   // covariances

@@ -105,13 +105,13 @@ VertexOutput main(VertexInput input)
   // Apply 4D Motion
   float3 motion = fetchMotion(splatIndex);
   float2 timeData = fetchTime(splatIndex);
-  float t_center = timeData.x;
-  float t_scale = timeData.y; // Duration / Temporal Scale
+  float t_scale = timeData.x; // JS Order: x = scale
+  float t_center = timeData.y; // JS Order: y = center
 
   // Apply linear motion: P(t) = P0 + V * (t - t0)
   float dt = frameInfo.currentTime - t_center;
   
-  if (frameInfo.temporalCulling != 0) {
+  if (frameInfo.temporalCulling != 0 && t_center > -5.0) {
       // FreeTimeGS Gaussian opacity decay: sigma(t) = exp(-0.5 * ((t - mu) / s)^2)
       if (t_scale > 1e-5) {
           float v = dt / t_scale;
@@ -134,7 +134,9 @@ VertexOutput main(VertexInput input)
       }
   }
   
-  splatCenter += motion * dt;
+  if (frameInfo.applyMotion != 0) {
+      splatCenter += motion * dt;
+  }
 
   const float4 viewCenter = mul(float4(splatCenter, 1.0), modelViewMatrix);
   const float4 clipCenter = mul(viewCenter, projMatrix);

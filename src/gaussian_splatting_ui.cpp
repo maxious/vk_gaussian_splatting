@@ -1283,6 +1283,12 @@ void GaussianSplattingUI::guiDrawRendererProperties()
         prmFrame.temporalCulling = tempCull ? 1 : 0;
     }
     
+    // Toggle for motion
+    bool appMotion = (prmFrame.applyMotion != 0);
+    if(PE::Checkbox("Apply 4D Motion", &appMotion)) {
+        prmFrame.applyMotion = appMotion ? 1 : 0;
+    }
+    
     if(animate) {
        prmFrame.currentTime += ImGui::GetIO().DeltaTime * timeSpeed;
        if (prmFrame.currentTime > tMax) prmFrame.currentTime = tMin;
@@ -1763,11 +1769,11 @@ void GaussianSplattingUI::guiDrawSplatSetProperties()
                changed |= ImGui::RadioButton("sRGB to Linear", &prmScene.colorSpaceConversion, 1);
                return changed;
              },
-             "Select color space conversion for the next loaded PLY file.\n"
-             "sRGB to Linear is required for ML-SHARP compatibility-exported files."))
-      {
-      }
-      
+              "Select color space conversion for the next loaded PLY file.\n"
+              "sRGB to Linear is required for ML-SHARP compatibility-exported files."))
+       {
+       }
+
       PE::Checkbox("Remove black splats", &prmScene.removeBlackSplats,
                     "If on, splats with (almost) zero color will be discarded during loading.\n"
                     "This can help reduce point count and improve performance without visible quality loss.");

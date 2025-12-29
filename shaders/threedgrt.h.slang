@@ -25,9 +25,20 @@
 #include "threedgs_particles_storage.h.slang"
 
 // fetch the position, scale and rotation
-void fetchParticlePSR(in int splatIndex, out float3 particlePosition, out float3 particleScale, out float3x3 particleInvRotation)
+void fetchParticlePSR(in FrameInfo frameInfo, in int splatIndex, out float3 particlePosition, out float3 particleScale, out float3x3 particleInvRotation)
 {
   particlePosition = fetchCenter(splatIndex);
+  
+  // Apply 4D Motion
+  float3 motion = fetchMotion(splatIndex);
+  float2 timeData = fetchTime(splatIndex);
+  float t_center = timeData.x;
+  float dt = frameInfo.currentTime - t_center;
+  
+  if (frameInfo.applyMotion != 0) {
+      particlePosition += motion * dt;
+  }
+
   particleScale    = exp(fetchScale(splatIndex));
   const float4 wxyzQuat  = normalize(fetchRotation(splatIndex));
   // vec4toQuat converts to scalar (w) last internal
@@ -127,15 +138,30 @@ bool particleProcessHit(in FrameInfo frameInfo,
   float3 particleScale;
   float3x3 particleInvRotation;
 
-  fetchParticlePSR(splatId, particlePosition, particleScale, particleInvRotation);
+  fetchParticlePSR(frameInfo, splatId, particlePosition, particleScale, particleInvRotation);
 
   float3 particleRayOrigin;
   float3 particleRayDirection;
   particleCannonicalRay(modelRayOrigin, modelRayDirection, particlePosition, particleScale, particleInvRotation,
                         particleRayOrigin, particleRayDirection);
 
-  const float4  color           = fetchColor(splatId);
-  const float particleDensity = color.w;
+  float4  color           = fetchColor(splatId);
+  float particleDensity = color.w;
+
+  // Apply Temporal Opacity modulation
+  float2 timeData = fetchTime(splatId);
+  float t_center = timeData.x;
+  float t_scale = timeData.y;
+  float dt = frameInfo.currentTime - t_center;
+
+  if (frameInfo.temporalCulling != 0) {
+      if (t_scale > 1e-5) {
+          float v = dt / t_scale;
+          particleDensity *= exp(-0.5 * v * v);
+      } else {
+          if (abs(dt) > 1e-5) particleDensity = 0.0;
+      }
+  }
 
   const double  minParticleAlpha         = 1.0f / 255.0f;
   const int32_t particleKernelDegree     = KERNEL_DEGREE;
@@ -186,7 +212,23 @@ bool particleProcessHitGut(in FrameInfo frameInfo,
   particleCannonicalRay(modelRayOrigin, modelRayDirection, particlePosition, particleScale, particleInvRotation,
                         particleRayOrigin, particleRayDirection);
 
-  const float   particleDensity          = splatColor.w;
+  float   particleDensity          = splatColor.w;
+
+  // Apply Temporal Opacity modulation
+  float2 timeData = fetchTime(splatId);
+  float t_center = timeData.x;
+  float t_scale = timeData.y;
+  float dt = frameInfo.currentTime - t_center;
+
+  if (frameInfo.temporalCulling != 0) {
+      if (t_scale > 1e-5) {
+          float v = dt / t_scale;
+          particleDensity *= exp(-0.5 * v * v);
+      } else {
+          if (abs(dt) > 1e-5) particleDensity = 0.0;
+      }
+  }
+
   const double  minParticleAlpha         = 1.0f / 255.0f;
   const int32_t particleKernelDegree     = KERNEL_DEGREE;
   const float   minParticleKernelDensity = KERNEL_MIN_RESPONSE;

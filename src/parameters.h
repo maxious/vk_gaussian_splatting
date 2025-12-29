@@ -46,7 +46,7 @@ struct SceneParameters
 
   // Color space conversion mode for loaded PLY files
   // 0 = None (assume sRGB, standard for most 3DGS)
-  // 1 = sRGB to Linear (for ML-SHARP compatibility-exported files, undo the sRGB conversion)
+  // 1 = sRGB to Linear (for ML-SHARP compatibility-exported files, undo sRGB conversion)
   int colorSpaceConversion = 0;
   // If true, splats with (almost) black color will be removed during load
   bool removeBlackSplats = false;

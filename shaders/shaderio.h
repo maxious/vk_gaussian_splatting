@@ -170,6 +170,7 @@ struct FrameInfo
   float currentTime DEFAULT(0.0f);
 
   int temporalCulling DEFAULT(1); // 1 = enabled, 0 = disabled
+  int applyMotion     DEFAULT(1); // 1 = enabled, 0 = disabled (experimental)
 
   float fovRad                 DEFAULT(0.009f);  // Field of view in radians for fisheye camera
   float inverseFocalAdjustment DEFAULT(1.0f);

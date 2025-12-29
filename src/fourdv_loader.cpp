@@ -315,7 +315,7 @@ bool FourDvLoader::load(const std::filesystem::path& filename, SplatSet& output,
     uint32_t t_center_bits = (vert.packed_time >> 11) & 0x3FF; // 10 bits
     
     output.time[i]       = unpackLerp(chunk.min_time, chunk.max_time, t_center_bits, 10);
-    output.time_scale[i] = unpackLerp(chunk.min_time_scale, chunk.max_time_scale, t_scale_bits, 11);
+    output.time_scale[i] = std::exp(unpackLerp(chunk.min_time_scale, chunk.max_time_scale, t_scale_bits, 11));
 
     // --- SH Rest ---
     if(shFound)
@@ -344,10 +344,7 @@ bool FourDvLoader::load(const std::filesystem::path& filename, SplatSet& output,
         progressCallback(float(i) / float(numSplats));
     }
   }
-  
-  // Coordinate system conversion: RDF to RUB (standard internal format)
-  // output.convertCoordinates(spz::CoordinateSystem::RDF, spz::CoordinateSystem::RUB);
-  
+   
   return true;
 }
 

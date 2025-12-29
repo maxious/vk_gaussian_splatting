@@ -22,6 +22,7 @@
 #include "threedgrt.h.slang"
 
 // clang-format off
+[[vk::binding(BINDING_FRAME_INFO_UBO, 0)]] ConstantBuffer<FrameInfo> frameInfo;
 [[vk::push_constant]] ConstantBuffer<PushConstantRay> pcRay;
 // clang-format on
 
@@ -37,7 +38,29 @@ bool particleDensityHitCustom(in float3   rayOrigin,
   float3 particleScale;
   float3x3 particleInvRotation;
 
-  fetchParticlePSR(particleId, particlePosition, particleScale, particleInvRotation);
+  fetchParticlePSR(frameInfo, particleId, particlePosition, particleScale, particleInvRotation);
+
+  // Apply temporal culling in intersection test
+  float2 timeData = fetchTime(particleId);
+  float t_scale = timeData.x; // JS Order: x = scale
+  float t_center = timeData.y; // JS Order: y = center
+  float dt = frameInfo.currentTime - t_center;
+
+  if (frameInfo.temporalCulling != 0 && t_center > -5.0) {
+      if (t_scale > 1e-5) {
+          float v = dt / t_scale;
+          float temporalOpacity = exp(-0.5 * v * v);
+          if (temporalOpacity < 0.004) {
+              hitDistance = 0.0;
+              return false; // Cull if faded out
+          }
+      } else {
+          if (abs(dt) > 1e-5) {
+              hitDistance = 0.0;
+              return false;
+          }
+      }
+  }
 
   float3 canonicalRayOrigin;
   float3 canonicalRayDirection;

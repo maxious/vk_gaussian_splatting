@@ -243,6 +243,16 @@ struct SplatSet
       rotation[i + 2] *= c.flipQ[1];
       rotation[i + 3] *= c.flipQ[2];
     }
+    
+    // Convert motion vectors
+    if(has_time_data) {
+        for(size_t i = 0; i < motion.size(); i += 3) {
+            motion[i + 0] *= c.flipP[0];
+            motion[i + 1] *= c.flipP[1];
+            motion[i + 2] *= c.flipP[2];
+        }
+    }
+    
     // Rotate spherical harmonics by inverting coefficients that reference the y and z axes, for
     // each RGB channel. See spherical_harmonics_kernel_impl.h for spherical harmonics formulas.
     const size_t numCoeffs         = f_rest.size() / 3;
