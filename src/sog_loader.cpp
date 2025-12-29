@@ -23,8 +23,10 @@
 #include <cmath>
 #include <algorithm>
 #include <unordered_map>
+#include <future>
 
 #include <nvutils/logger.hpp>
+#include <nvutils/parallel_work.hpp>
 #include <tinygltf/json.hpp>
 
 // WebP decoder
@@ -372,25 +374,37 @@ bool SogLoader::parseMeta(const std::vector<uint8_t>& jsonData, SogMeta& meta)
 
 bool SogLoader::decodeWebP(const std::vector<uint8_t>& webpData, WebPImage& output)
 {
-  int width = 0, height = 0;
-
-  // Get image dimensions first
-  if(!WebPGetInfo(webpData.data(), webpData.size(), &width, &height))
+  WebPDecoderConfig config;
+  if(!WebPInitDecoderConfig(&config))
   {
-    LOGE("Failed to get WebP image info\n");
+    LOGE("Failed to initialize WebP decoder config\n");
     return false;
   }
 
-  output.width  = static_cast<uint32_t>(width);
-  output.height = static_cast<uint32_t>(height);
-  output.rgba.resize(width * height * 4);
-
-  // Decode to RGBA
-  uint8_t* result = WebPDecodeRGBAInto(webpData.data(), webpData.size(), output.rgba.data(),
-                                       output.rgba.size(), width * 4);
-  if(!result)
+  if(WebPGetFeatures(webpData.data(), webpData.size(), &config.input) != VP8_STATUS_OK)
   {
-    LOGE("Failed to decode WebP image\n");
+    LOGE("Failed to get WebP image features\n");
+    return false;
+  }
+
+  output.width  = static_cast<uint32_t>(config.input.width);
+  output.height = static_cast<uint32_t>(config.input.height);
+  output.rgba.resize(output.width * output.height * 4);
+
+  config.output.colorspace        = MODE_RGBA;
+  config.output.u.RGBA.rgba       = output.rgba.data();
+  config.output.u.RGBA.stride     = output.width * 4;
+  config.output.u.RGBA.size       = output.rgba.size();
+  config.output.is_external_memory = 1;
+
+  config.options.use_threads = 1;
+
+  VP8StatusCode status = WebPDecode(webpData.data(), webpData.size(), &config);
+  WebPFreeDecBuffer(&config.output);
+
+  if(status != VP8_STATUS_OK)
+  {
+    LOGE("Failed to decode WebP image (status %d)\n", status);
     return false;
   }
 
@@ -409,163 +423,102 @@ void SogLoader::decodePositions(const WebPImage& meansL, const WebPImage& meansU
   const float maxY = meta.means.maxs[1];
   const float maxZ = meta.means.maxs[2];
 
-  for(uint32_t i = 0; i < count; i++)
-  {
-    const uint32_t offset = i * 4;
-
-    // Combine low and high bytes for 16-bit values
-    uint16_t xVal = meansL.rgba[offset + 0] | (static_cast<uint16_t>(meansU.rgba[offset + 0]) << 8);
-    uint16_t yVal = meansL.rgba[offset + 1] | (static_cast<uint16_t>(meansU.rgba[offset + 1]) << 8);
-    uint16_t zVal = meansL.rgba[offset + 2] | (static_cast<uint16_t>(meansU.rgba[offset + 2]) << 8);
-
-    // Normalize to [0, 1]
-    float xNorm = static_cast<float>(xVal) / 65535.0f;
-    float yNorm = static_cast<float>(yVal) / 65535.0f;
-    float zNorm = static_cast<float>(zVal) / 65535.0f;
-
-    // Scale to bounding box
-    float xScaled = minX + xNorm * (maxX - minX);
-    float yScaled = minY + yNorm * (maxY - minY);
-    float zScaled = minZ + zNorm * (maxZ - minZ);
-
-    // Inverse log transform to recover original positions
-    // SOG uses Y-up (RUB) coordinate system, same as what we convert to internally
-    output.positions[i * 3 + 0] = invLogTransform(xScaled);
-    output.positions[i * 3 + 1] = invLogTransform(yScaled);
-    output.positions[i * 3 + 2] = invLogTransform(zScaled);
-  }
+  nvutils::parallel_ranges_pooled<1024>(count, [&](uint64_t start, uint64_t end, uint32_t threadIdx) {
+    for(uint64_t i = start; i < end; i++)
+    {
+      const uint32_t offset = static_cast<uint32_t>(i * 4);
+      uint16_t xVal = meansL.rgba[offset + 0] | (static_cast<uint16_t>(meansU.rgba[offset + 0]) << 8);
+      uint16_t yVal = meansL.rgba[offset + 1] | (static_cast<uint16_t>(meansU.rgba[offset + 1]) << 8);
+      uint16_t zVal = meansL.rgba[offset + 2] | (static_cast<uint16_t>(meansU.rgba[offset + 2]) << 8);
+      float xNorm = static_cast<float>(xVal) / 65535.0f;
+      float yNorm = static_cast<float>(yVal) / 65535.0f;
+      float zNorm = static_cast<float>(zVal) / 65535.0f;
+      float xScaled = minX + xNorm * (maxX - minX);
+      float yScaled = minY + yNorm * (maxY - minY);
+      float zScaled = minZ + zNorm * (maxZ - minZ);
+      output.positions[i * 3 + 0] = invLogTransform(xScaled);
+      output.positions[i * 3 + 1] = invLogTransform(yScaled);
+      output.positions[i * 3 + 2] = invLogTransform(zScaled);
+    }
+  });
 }
 
-// Quaternion decoding based on PlayCanvas engine implementation:
-// https://github.com/playcanvas/engine/blob/main/src/scene/gsplat/gsplat-sogs-data.js#L83-L96
 void SogLoader::decodeQuaternions(const WebPImage& quats, uint32_t count, SplatSet& output)
 {
   output.rotation.resize(count * 4);
   const float sqrt2 = std::sqrt(2.0f);
 
-  for(uint32_t i = 0; i < count; i++)
-  {
-    const uint32_t offset = i * 4;
-
-    uint8_t px  = quats.rgba[offset + 0];
-    uint8_t py  = quats.rgba[offset + 1];
-    uint8_t pz  = quats.rgba[offset + 2];
-    uint8_t tag = quats.rgba[offset + 3];
-
-    // Tag must be 252-255, indicating which component was largest
-    if(tag < 252)
+  nvutils::parallel_ranges_pooled<1024>(count, [&](uint64_t start, uint64_t end, uint32_t threadIdx) {
+    for(uint64_t i = start; i < end; i++)
     {
-      // Invalid tag - use identity quaternion
-      output.rotation[i * 4 + 0] = 1.0f;  // w
-      output.rotation[i * 4 + 1] = 0.0f;  // x
-      output.rotation[i * 4 + 2] = 0.0f;  // y
-      output.rotation[i * 4 + 3] = 0.0f;  // z
-      continue;
+      const uint32_t offset = static_cast<uint32_t>(i * 4);
+      uint8_t px  = quats.rgba[offset + 0];
+      uint8_t py  = quats.rgba[offset + 1];
+      uint8_t pz  = quats.rgba[offset + 2];
+      uint8_t tag = quats.rgba[offset + 3];
+      if(tag < 252) {
+        output.rotation[i * 4 + 0] = 1.0f;
+        output.rotation[i * 4 + 1] = 0.0f;
+        output.rotation[i * 4 + 2] = 0.0f;
+        output.rotation[i * 4 + 3] = 0.0f;
+        continue;
+      }
+      int mode = tag - 252;
+      float a = ((static_cast<float>(px) / 255.0f) - 0.5f) * sqrt2;
+      float b = ((static_cast<float>(py) / 255.0f) - 0.5f) * sqrt2;
+      float c = ((static_cast<float>(pz) / 255.0f) - 0.5f) * sqrt2;
+      float d = std::sqrt(std::max(0.0f, 1.0f - (a * a + b * b + c * c)));
+      float x, y, z, w;
+      switch(mode) {
+        case 0: x = a; y = b; z = c; w = d; break;
+        case 1: x = d; y = b; z = c; w = a; break;
+        case 2: x = b; y = d; z = c; w = a; break;
+        case 3: x = b; y = c; z = d; w = a; break;
+        default: x = 0.0f; y = 0.0f; z = 0.0f; w = 1.0f; break;
+      }
+      output.rotation[i * 4 + 0] = w;
+      output.rotation[i * 4 + 1] = x;
+      output.rotation[i * 4 + 2] = y;
+      output.rotation[i * 4 + 3] = z;
     }
-
-    int mode = tag - 252;  // 0=w was max, 1=x was max, 2=y was max, 3=z was max
-
-    // Map from [0, 255] to [-√2/2, √2/2] range
-    // PlayCanvas uses: (byte / 255 - 0.5) * sqrt2, which is equivalent to ((byte / 255) * 2 - 1) / sqrt2
-    float a = ((static_cast<float>(px) / 255.0f) - 0.5f) * sqrt2;
-    float b = ((static_cast<float>(py) / 255.0f) - 0.5f) * sqrt2;
-    float c = ((static_cast<float>(pz) / 255.0f) - 0.5f) * sqrt2;
-
-    // Reconstruct the max component using unit quaternion constraint
-    float d = std::sqrt(std::max(0.0f, 1.0f - (a * a + b * b + c * c)));
-
-    // PlayCanvas quaternion order is (x, y, z, w)
-    // Mode determines which component was omitted (the largest):
-    //   mode 0: w was max -> quat = (a, b, c, d)  i.e., x=a, y=b, z=c, w=d
-    //   mode 1: x was max -> quat = (d, b, c, a)  i.e., x=d, y=b, z=c, w=a
-    //   mode 2: y was max -> quat = (b, d, c, a)  i.e., x=b, y=d, z=c, w=a
-    //   mode 3: z was max -> quat = (b, c, d, a)  i.e., x=b, y=c, z=d, w=a
-    float x, y, z, w;
-    switch(mode)
-    {
-      case 0:  // w was max
-        x = a;
-        y = b;
-        z = c;
-        w = d;
-        break;
-      case 1:  // x was max
-        x = d;
-        y = b;
-        z = c;
-        w = a;
-        break;
-      case 2:  // y was max
-        x = b;
-        y = d;
-        z = c;
-        w = a;
-        break;
-      case 3:  // z was max
-        x = b;
-        y = c;
-        z = d;
-        w = a;
-        break;
-      default:
-        x = 0.0f;
-        y = 0.0f;
-        z = 0.0f;
-        w = 1.0f;
-        break;
-    }
-
-    // Output quaternion in INRIA format: (w, x, y, z)
-    output.rotation[i * 4 + 0] = w;
-    output.rotation[i * 4 + 1] = x;
-    output.rotation[i * 4 + 2] = y;
-    output.rotation[i * 4 + 3] = z;
-  }
+  });
 }
 
 void SogLoader::decodeScales(const WebPImage& scales, const std::vector<float>& codebook, uint32_t count, SplatSet& output)
 {
   output.scale.resize(count * 3);
-
-  for(uint32_t i = 0; i < count; i++)
-  {
-    const uint32_t offset = i * 4;
-
-    // Each channel is an index into the codebook
-    uint8_t xIdx = scales.rgba[offset + 0];
-    uint8_t yIdx = scales.rgba[offset + 1];
-    uint8_t zIdx = scales.rgba[offset + 2];
-
-    // Scales are stored in log-space in SOG (already log-transformed)
-    output.scale[i * 3 + 0] = codebook[xIdx];
-    output.scale[i * 3 + 1] = codebook[yIdx];
-    output.scale[i * 3 + 2] = codebook[zIdx];
-  }
+  nvutils::parallel_ranges_pooled<1024>(count, [&](uint64_t start, uint64_t end, uint32_t threadIdx) {
+    for(uint64_t i = start; i < end; i++)
+    {
+      const uint32_t offset = static_cast<uint32_t>(i * 4);
+      uint8_t xIdx = scales.rgba[offset + 0];
+      uint8_t yIdx = scales.rgba[offset + 1];
+      uint8_t zIdx = scales.rgba[offset + 2];
+      output.scale[i * 3 + 0] = codebook[xIdx];
+      output.scale[i * 3 + 1] = codebook[yIdx];
+      output.scale[i * 3 + 2] = codebook[zIdx];
+    }
+  });
 }
 
 void SogLoader::decodeSh0(const WebPImage& sh0, const std::vector<float>& codebook, uint32_t count, SplatSet& output)
 {
   output.f_dc.resize(count * 3);
   output.opacity.resize(count);
-
-  for(uint32_t i = 0; i < count; i++)
-  {
-    const uint32_t offset = i * 4;
-
-    // RGB channels are indices into the codebook
-    uint8_t rIdx    = sh0.rgba[offset + 0];
-    uint8_t gIdx    = sh0.rgba[offset + 1];
-    uint8_t bIdx    = sh0.rgba[offset + 2];
-    uint8_t opacity = sh0.rgba[offset + 3];
-
-    // Look up DC color from codebook
-    output.f_dc[i * 3 + 0] = codebook[rIdx];
-    output.f_dc[i * 3 + 1] = codebook[gIdx];
-    output.f_dc[i * 3 + 2] = codebook[bIdx];
-
-    // Decode opacity (stored as sigmoid-transformed value)
-    output.opacity[i] = sigmoidInv(static_cast<float>(opacity) / 255.0f);
-  }
+  nvutils::parallel_ranges_pooled<1024>(count, [&](uint64_t start, uint64_t end, uint32_t threadIdx) {
+    for(uint64_t i = start; i < end; i++)
+    {
+      const uint32_t offset = static_cast<uint32_t>(i * 4);
+      uint8_t rIdx    = sh0.rgba[offset + 0];
+      uint8_t gIdx    = sh0.rgba[offset + 1];
+      uint8_t bIdx    = sh0.rgba[offset + 2];
+      uint8_t opacity = sh0.rgba[offset + 3];
+      output.f_dc[i * 3 + 0] = codebook[rIdx];
+      output.f_dc[i * 3 + 1] = codebook[gIdx];
+      output.f_dc[i * 3 + 2] = codebook[bIdx];
+      output.opacity[i] = sigmoidInv(static_cast<float>(opacity) / 255.0f);
+    }
+  });
 }
 
 void SogLoader::decodeShN(const WebPImage& centroids, const WebPImage& labels, const ShNInfo& shN, uint32_t count, SplatSet& output)
@@ -583,42 +536,44 @@ void SogLoader::decodeShN(const WebPImage& centroids, const WebPImage& labels, c
 
   const uint32_t centroidsWidth = centroids.width;
 
-  for(uint32_t i = 0; i < count; i++)
-  {
-    const uint32_t labelOffset = i * 4;
-
-    // Get 16-bit palette index from labels texture
-    uint16_t paletteIdx = labels.rgba[labelOffset + 0] | (static_cast<uint16_t>(labels.rgba[labelOffset + 1]) << 8);
-
-    if(paletteIdx >= shN.count)
+  nvutils::parallel_ranges_pooled<512>(count, [&](uint64_t start, uint64_t end, uint32_t threadIdx) {
+    for(uint64_t i = start; i < end; i++)
     {
-      // Invalid index - use zero coefficients
-      for(uint32_t j = 0; j < shCoeffs * 3; j++)
+      const uint32_t labelOffset = static_cast<uint32_t>(i * 4);
+
+      // Get 16-bit palette index from labels texture
+      uint16_t paletteIdx = labels.rgba[labelOffset + 0] | (static_cast<uint16_t>(labels.rgba[labelOffset + 1]) << 8);
+
+      if(paletteIdx >= shN.count)
       {
-        output.f_rest[i * shCoeffs * 3 + j] = 0.0f;
+        // Invalid index - use zero coefficients
+        for(uint32_t j = 0; j < shCoeffs * 3; j++)
+        {
+          output.f_rest[i * shCoeffs * 3 + j] = 0.0f;
+        }
+        continue;
       }
-      continue;
+
+      // For each SH coefficient
+      for(uint32_t j = 0; j < shCoeffs; j++)
+      {
+        // Calculate centroid pixel location
+        uint32_t cx              = (paletteIdx % 64) * shCoeffs + j;
+        uint32_t cy              = paletteIdx / 64;
+        uint32_t centroidOffset  = (cy * centroidsWidth + cx) * 4;
+
+        // Extract RGB from centroid and map through codebook
+        uint8_t rIdx = centroids.rgba[centroidOffset + 0];
+        uint8_t gIdx = centroids.rgba[centroidOffset + 1];
+        uint8_t bIdx = centroids.rgba[centroidOffset + 2];
+
+        // Store in INRIA layout (grouped by channel)
+        output.f_rest[i * shCoeffs * 3 + j]                   = shN.codebook[rIdx];
+        output.f_rest[i * shCoeffs * 3 + shCoeffs + j]        = shN.codebook[gIdx];
+        output.f_rest[i * shCoeffs * 3 + shCoeffs * 2 + j]    = shN.codebook[bIdx];
+      }
     }
-
-    // For each SH coefficient
-    for(uint32_t j = 0; j < shCoeffs; j++)
-    {
-      // Calculate centroid pixel location
-      uint32_t cx              = (paletteIdx % 64) * shCoeffs + j;
-      uint32_t cy              = paletteIdx / 64;
-      uint32_t centroidOffset  = (cy * centroidsWidth + cx) * 4;
-
-      // Extract RGB from centroid and map through codebook
-      uint8_t rIdx = centroids.rgba[centroidOffset + 0];
-      uint8_t gIdx = centroids.rgba[centroidOffset + 1];
-      uint8_t bIdx = centroids.rgba[centroidOffset + 2];
-
-      // Store in INRIA layout (grouped by channel)
-      output.f_rest[i * shCoeffs * 3 + j]                   = shN.codebook[rIdx];
-      output.f_rest[i * shCoeffs * 3 + shCoeffs + j]        = shN.codebook[gIdx];
-      output.f_rest[i * shCoeffs * 3 + shCoeffs * 2 + j]    = shN.codebook[bIdx];
-    }
-  }
+  });
 }
 
 bool SogLoader::loadWithReader(const SogMeta& meta, FileReader reader, SplatSet& output, std::function<void(float)> progressCallback)
@@ -630,103 +585,116 @@ bool SogLoader::loadWithReader(const SogMeta& meta, FileReader reader, SplatSet&
     return false;
   }
 
-  float progress = 0.1f;
   if(progressCallback)
-    progressCallback(progress);
+    progressCallback(0.1f);
 
-  // Load and decode means_l and means_u
-  WebPImage meansL, meansU;
+  std::future<WebPImage> meansL_fut, meansU_fut, quats_fut, scales_fut, sh0_fut, centroids_fut, labels_fut;
+
   if(meta.means.files.size() >= 2)
   {
-    auto meansLData = reader(meta.means.files[0]);
-    auto meansUData = reader(meta.means.files[1]);
-    if(meansLData.empty() || meansUData.empty())
-    {
-      LOGE("Failed to read means WebP files\n");
-      return false;
-    }
-    if(!decodeWebP(meansLData, meansL) || !decodeWebP(meansUData, meansU))
-    {
-      return false;
-    }
-    decodePositions(meansL, meansU, meta, output);
+    meansL_fut = std::async(std::launch::async, [&]() {
+      WebPImage img;
+      decodeWebP(reader(meta.means.files[0]), img);
+      return img;
+    });
+    meansU_fut = std::async(std::launch::async, [&]() {
+      WebPImage img;
+      decodeWebP(reader(meta.means.files[1]), img);
+      return img;
+    });
   }
-  progress = 0.3f;
-  if(progressCallback)
-    progressCallback(progress);
 
-  // Load and decode quats
   if(!meta.quats.files.empty())
   {
-    auto      quatsData = reader(meta.quats.files[0]);
-    WebPImage quatsImg;
-    if(quatsData.empty() || !decodeWebP(quatsData, quatsImg))
-    {
-      LOGE("Failed to read quats WebP file\n");
-      return false;
-    }
-    decodeQuaternions(quatsImg, count, output);
+    quats_fut = std::async(std::launch::async, [&]() {
+      WebPImage img;
+      decodeWebP(reader(meta.quats.files[0]), img);
+      return img;
+    });
   }
-  progress = 0.5f;
-  if(progressCallback)
-    progressCallback(progress);
 
-  // Load and decode scales
   if(!meta.scales.files.empty() && !meta.scales.codebook.empty())
   {
-    auto      scalesData = reader(meta.scales.files[0]);
-    WebPImage scalesImg;
-    if(scalesData.empty() || !decodeWebP(scalesData, scalesImg))
-    {
-      LOGE("Failed to read scales WebP file\n");
-      return false;
-    }
-    decodeScales(scalesImg, meta.scales.codebook, count, output);
+    scales_fut = std::async(std::launch::async, [&]() {
+      WebPImage img;
+      decodeWebP(reader(meta.scales.files[0]), img);
+      return img;
+    });
   }
-  progress = 0.7f;
-  if(progressCallback)
-    progressCallback(progress);
 
-  // Load and decode sh0 (base color + opacity)
   if(!meta.sh0.files.empty() && !meta.sh0.codebook.empty())
   {
-    auto      sh0Data = reader(meta.sh0.files[0]);
-    WebPImage sh0Img;
-    if(sh0Data.empty() || !decodeWebP(sh0Data, sh0Img))
-    {
-      LOGE("Failed to read sh0 WebP file\n");
-      return false;
-    }
-    decodeSh0(sh0Img, meta.sh0.codebook, count, output);
+    sh0_fut = std::async(std::launch::async, [&]() {
+      WebPImage img;
+      decodeWebP(reader(meta.sh0.files[0]), img);
+      return img;
+    });
   }
-  progress = 0.85f;
-  if(progressCallback)
-    progressCallback(progress);
 
-  // Load and decode higher-order SH (optional)
   if(meta.shN.bands > 0 && meta.shN.files.size() >= 2 && !meta.shN.codebook.empty())
   {
-    auto      centroidsData = reader(meta.shN.files[0]);
-    auto      labelsData    = reader(meta.shN.files[1]);
-    WebPImage centroidsImg, labelsImg;
-    if(!centroidsData.empty() && !labelsData.empty() && decodeWebP(centroidsData, centroidsImg)
-       && decodeWebP(labelsData, labelsImg))
-    {
-      decodeShN(centroidsImg, labelsImg, meta.shN, count, output);
-    }
+    centroids_fut = std::async(std::launch::async, [&]() {
+      WebPImage img;
+      decodeWebP(reader(meta.shN.files[0]), img);
+      return img;
+    });
+    labels_fut = std::async(std::launch::async, [&]() {
+      WebPImage img;
+      decodeWebP(reader(meta.shN.files[1]), img);
+      return img;
+    });
   }
 
-  progress = 1.0f;
+  if(meansL_fut.valid() && meansU_fut.valid())
+  {
+    WebPImage mL = meansL_fut.get();
+    WebPImage mU = meansU_fut.get();
+    if(!mL.rgba.empty() && !mU.rgba.empty())
+      decodePositions(mL, mU, meta, output);
+  }
   if(progressCallback)
-    progressCallback(progress);
+    progressCallback(0.3f);
 
-  // SOG format claims RUB (x: right, y: up, z: back) but typical 3DGS training
-  // produces data with OpenGL-style coordinates. After testing, we need to
-  // flip Y and Z to match our internal RUB coordinate system.
-  // This is equivalent to converting from RDF (right-down-forward) to RUB.
+  if(quats_fut.valid())
+  {
+    WebPImage img = quats_fut.get();
+    if(!img.rgba.empty())
+      decodeQuaternions(img, count, output);
+  }
+  if(progressCallback)
+    progressCallback(0.5f);
+
+  if(scales_fut.valid())
+  {
+    WebPImage img = scales_fut.get();
+    if(!img.rgba.empty())
+      decodeScales(img, meta.scales.codebook, count, output);
+  }
+  if(progressCallback)
+    progressCallback(0.7f);
+
+  if(sh0_fut.valid())
+  {
+    WebPImage img = sh0_fut.get();
+    if(!img.rgba.empty())
+      decodeSh0(img, meta.sh0.codebook, count, output);
+  }
+  if(progressCallback)
+    progressCallback(0.85f);
+
+  if(centroids_fut.valid() && labels_fut.valid())
+  {
+    WebPImage centroids = centroids_fut.get();
+    WebPImage labels    = labels_fut.get();
+    if(!centroids.rgba.empty() && !labels.rgba.empty())
+      decodeShN(centroids, labels, meta.shN, count, output);
+  }
+
+  if(progressCallback)
+    progressCallback(1.0f);
+
   output.convertCoordinates(spz::CoordinateSystem::RDF, spz::CoordinateSystem::RUB);
-
-  LOGI("Loaded SOG file: %u splats\n", count);
+  LOGI("Loaded SOG file: %u splats (parallelized)\n", count);
   return true;
 }
 

@@ -27,6 +27,7 @@
 
 // 3rd party ply library
 #include "miniply.h"
+#include "splat_loader_fast.h"
 // 3rd party spz library
 #include "load-spz.h"
 
@@ -206,6 +207,19 @@ bool SplatLoaderAsync::innerLoad(std::filesystem::path filename, SplatSet& outpu
     LOGI("File loaded in %lldms\n", loadTime);
     //
     return cloud.numPoints != 0;
+  }
+
+  if(hasExtension(filename, ".ply") && SplatLoaderFast::canLoad(filename))
+  {
+    bool success = SplatLoaderFast::load(filename, output, [this](float progress) { setProgress(progress); });
+    if(success)
+    {
+      output.convertCoordinates(spz::CoordinateSystem::RDF, spz::CoordinateSystem::RUB);
+      auto      endTime  = std::chrono::high_resolution_clock::now();
+      long long loadTime = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
+      LOGI("PLY file loaded in %lldms (fast loader)\n", loadTime);
+      return true;
+    }
   }
 
   // We use miniply to load .ply files (binary or utf8)
