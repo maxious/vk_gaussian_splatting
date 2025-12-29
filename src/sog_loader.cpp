@@ -346,7 +346,24 @@ bool SogLoader::parseMeta(const std::vector<uint8_t>& jsonData, SogMeta& meta)
     {
       auto& sh0 = j["sh0"];
       if(sh0.contains("codebook"))
+      {
         meta.sh0.codebook = sh0["codebook"].get<std::vector<float>>();
+
+        // Convert SOG Gamma-space DC coefficients to Linear-space DC coefficients
+        // SOG stores DC as: C_srgb = 0.5 + SH_C0 * coeff
+        // We want: C_linear = 0.5 + SH_C0 * new_coeff
+        static const float SH_C0 = 0.28209479177387814f;
+        for(float& val : meta.sh0.codebook)
+        {
+          float srgb = std::clamp(0.5f + SH_C0 * val, 0.0f, 1.0f);
+          float linear;
+          if(srgb <= 0.04045f)
+            linear = srgb / 12.92f;
+          else
+            linear = std::pow((srgb + 0.055f) / 1.055f, 2.4f);
+          val = (linear - 0.5f) / SH_C0;
+        }
+      }
       if(sh0.contains("files"))
         meta.sh0.files = sh0["files"].get<std::vector<std::string>>();
     }
@@ -358,7 +375,9 @@ bool SogLoader::parseMeta(const std::vector<uint8_t>& jsonData, SogMeta& meta)
       meta.shN.count = shN.value("count", 0u);
       meta.shN.bands = shN.value("bands", 0u);
       if(shN.contains("codebook"))
+      {
         meta.shN.codebook = shN["codebook"].get<std::vector<float>>();
+      }
       if(shN.contains("files"))
         meta.shN.files = shN["files"].get<std::vector<std::string>>();
     }
@@ -695,7 +714,7 @@ bool SogLoader::loadWithReader(const SogMeta& meta, FileReader reader, SplatSet&
     progressCallback(1.0f);
 
   output.convertCoordinates(spz::CoordinateSystem::RDF, spz::CoordinateSystem::RUB);
-  LOGI("Loaded SOG file: %u splats (parallelized, gamma-space DC)\n", count);
+  LOGI("Loaded SOG file: %u splats (parallelized, linearized DC)\n", count);
   return true;
 }
 

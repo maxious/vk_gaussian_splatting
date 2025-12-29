@@ -615,16 +615,28 @@ void GaussianSplattingUI::onUIRender()
       }
       break;
       case SplatLoaderAsync::State::STATE_LOADED: {
+        const std::string ext = m_pendingLoadFilename.extension().string();
+        const bool        isSog = (ext == ".sog" || m_pendingLoadFilename.filename() == "meta.json");
+
         // Apply color space conversion if requested (for ML-SHARP files)
-        if(prmScene.colorSpaceConversion == 1)
+        if(prmScene.colorSpaceConversion == 1 || isSog)
         {
-          LOGI("Converting color space: sRGB -> linearRGB (for ML-SHARP compatibility files)\n");
-          m_splatSetPending.convertColorSpace(true);  // sRGB to linear
+          if(!isSog)
+          {
+            LOGI("Converting color space: sRGB -> linearRGB (for ML-SHARP compatibility files)\n");
+            m_splatSetPending.convertColorSpace(true);  // sRGB to linear
+          }
+          else
+          {
+            LOGI("SOG file loaded (linearized)\n");
+          }
 
           // Auto-enable linear-to-sRGB post-processing for correct display
-          // Since we're now working with linear RGB data, we need gamma correction for output
-          prmFrame.linearToSrgb = 1;
-          LOGI("Auto-enabled Linear to sRGB output for ML-SHARP content\n");
+          if(prmFrame.linearToSrgb == 0)
+          {
+            prmFrame.linearToSrgb = 1;
+            LOGI("Auto-enabled Linear to sRGB output for linearized content\n");
+          }
         }
 
         // Remove black splats if requested
