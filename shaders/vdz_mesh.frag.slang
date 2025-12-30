@@ -50,10 +50,18 @@ FragmentOutput main(FragmentInput input)
   
   float d = color.r;
   
-  // Normalize visualization range (adjust as needed, e.g. 0 to 5 meters)
-  float v = clamp(d / 5.0, 0.0, 1.0);
+  // Debug: Black for 0.0 (invalid/empty)
+  if (d < 0.0001) {
+      output.color = float4(0, 0, 0, 1);
+      return output;
+  }
+
+  // Normalize visualization range (0.5m to 1.5m which matches the test files)
+  float minD = 0.5;
+  float maxD = 1.5;
+  float v = clamp((d - minD) / (maxD - minD), 0.0, 1.0);
   
-  // Simple heatmap (Blue -> Green -> Red)
+  // Turbo-like heatmap (Blue -> Green -> Red)
   float3 heatmap;
   if (v < 0.5)
       heatmap = lerp(float3(0,0,1), float3(0,1,0), v * 2.0);

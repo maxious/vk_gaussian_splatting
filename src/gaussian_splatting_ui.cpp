@@ -739,6 +739,9 @@ void GaussianSplattingUI::onUIRender()
         // Auto-switch to depth visualization mode
         prmRender.visualize = VISUALIZE_VDZ_MESH;
 
+        // Sync render parameter to frame parameter immediately to ensure renderer picks it up
+        prmFrame.visualize = prmRender.visualize;
+
         prmFrame.vdzZScale = 1.0f;
         prmFrame.vdzZBias = 0.0f;
         prmFrame.vdzZGamma = 1.0f;
@@ -757,7 +760,9 @@ void GaussianSplattingUI::onUIRender()
         // Auto-switch to depth visualization mode
         prmRender.visualize = VISUALIZE_VDZ_MESH;
 
-        // Set default scaling parameters based on loaded frame
+        // Sync render parameter to frame parameter immediately to ensure renderer picks it up
+        prmFrame.visualize = prmRender.visualize;
+
         prmFrame.vdzZScale = 1.0f;
         prmFrame.vdzZBias = 0.0f;
         prmFrame.vdzZGamma = 1.0f;
@@ -765,26 +770,6 @@ void GaussianSplattingUI::onUIRender()
         
         m_requestUpdateShaders = true;
         m_requestUpdateSplatData = true; 
-        LOGI("Switched to VDZ depth visualization mode (zMax: %.2f)\n", prmFrame.vdzZMaxClip);
-      }
-      if(m_depthManager)
-      {
-        VkCommandBuffer cmd = m_app->createTempCmdBuffer();
-        m_depthManager->uploadDepthFrame(depthFrame, cmd);
-        m_app->submitAndWaitTempCmdBuffer(cmd);
-        
-        // Auto-switch to depth visualization mode
-        prmRender.visualize = VISUALIZE_VDZ_MESH;
-
-        // Set default scaling parameters based on loaded frame
-        prmFrame.vdzZScale = 1.0f;
-        prmFrame.vdzZBias = 0.0f;
-        prmFrame.vdzZGamma = 1.0f;
-        prmFrame.vdzZMaxClip = depthFrame.zMax > 0.0f ? depthFrame.zMax : 10.0f;
-        
-        // Force update of shaders and descriptors to bind the new depth texture
-        m_requestUpdateShaders = true;
-        m_requestUpdateSplatData = true; // Ensure data update as well just in case
         LOGI("Switched to VDZ depth visualization mode (zMax: %.2f)\n", prmFrame.vdzZMaxClip);
       }
     }
