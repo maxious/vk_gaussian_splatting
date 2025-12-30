@@ -75,13 +75,23 @@ public:
 
     struct ClientStats {
         float rttMs;
+        float jitterMs;
         size_t pendingRequests;
         float fps;
         uint64_t totalFrames;
         uint64_t droppedFrames;
+        
+        // Backend telemetry (inference, decode, pack times in ms)
+        float inferTimeMs;
+        float decodeTimeMs;
+        float packTimeMs;
+        float queueWaitTimeMs;
     };
     
     ClientStats getStats() const;
+    
+    // Fetch backend telemetry for performance insights
+    bool fetchSessionTelemetry();
     
     float getFps() const { return m_currentSession.fps; }
 
@@ -103,6 +113,9 @@ private:
     DepthBuffer             m_depthBuffer;
     DepthFrameCallback      m_depthCallback;
     StatusCallback          m_statusCallback;
+    
+    // Cached telemetry data from backend
+    ClientStats              m_stats{0};
 };
 
 } // namespace vk_gaussian_splatting

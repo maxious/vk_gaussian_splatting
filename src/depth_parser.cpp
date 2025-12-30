@@ -10,6 +10,8 @@ bool parseDepthFrame(const std::vector<uint8_t>& buffer, DepthFrame& outFrame) {
         return false;
     }
 
+    
+
     DepthHeader header;
     std::memcpy(&header, buffer.data(), HEADER_SIZE);
 
@@ -56,6 +58,18 @@ bool parseDepthFrame(const std::vector<uint8_t>& buffer, DepthFrame& outFrame) {
         const size_t dataSize = buffer.size() - HEADER_SIZE;
         const uint16_t* rawData = reinterpret_cast<const uint16_t*>(buffer.data() + HEADER_SIZE);
         samples.assign(rawData, rawData + dataSize / sizeof(uint16_t));
+    }
+
+    // Validate scale is reasonable (allow 0.0 for initial frames, but not negative)
+    if (header.scale < 0.0f || header.scale > 10.0f) {
+        LOGW("Invalid scale %.8f in depth frame - rejecting\n", header.scale);
+        return false;
+    }
+    
+    // Sanity check for timestamp - video timestamps should be reasonable (0 to 1 hour)
+    if (header.timestampMs > 3600000) {
+        LOGW("Suspicious timestamp %u ms in depth frame - rejecting\n", header.timestampMs);
+        return false;
     }
 
     outFrame.timestampMs = header.timestampMs;

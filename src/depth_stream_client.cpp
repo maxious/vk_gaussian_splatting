@@ -141,8 +141,8 @@ void DepthStreamClient::onDepthFrame(const ix::WebSocketMessagePtr& msg) {
 
                     // Log every 30th frame for debugging
                     if (frameCount % 30 == 0) {
-                        LOGI("Depth frame #%d received: %dx%d @ %llu ms (scale=%.4f, bias=%.4f)\n",
-                             frameCount, frame.width, frame.height, frame.timestampMs, frame.scale, frame.bias);
+LOGI("Depth frame #%d received: %dx%d @ %u ms (scale=%.4f, bias=%.4f)\n",
+                     frameCount, frame.width, frame.height, frame.timestampMs, frame.scale, frame.bias);
                     }
 
                     m_depthBuffer.addFrame(frame);
@@ -193,8 +193,10 @@ void DepthStreamClient::update(double currentTimeMs, float videoFps) {
     const double stepMs = 1000.0 / fps;
     const double bufferWindowMs = 3000.0;
 
-    float rtt = m_depthBuffer.getRTT();
-    double minLeadMs = std::min(3000.0, std::max(100.0, static_cast<double>(rtt) + 100.0));
+float rtt = m_depthBuffer.getRTT();
+    float jitter = m_depthBuffer.getJitter();
+    // Better lead time calculation with jitter compensation (like web app)
+    double minLeadMs = std::min(3000.0, std::max(100.0, static_cast<double>(rtt + jitter + 100.0)));
 
     double startMs = std::max(0.0, currentTimeMs + minLeadMs);
     uint64_t alignedStartMs = static_cast<uint64_t>(std::ceil(startMs / stepMs) * stepMs);
@@ -205,8 +207,15 @@ void DepthStreamClient::update(double currentTimeMs, float videoFps) {
         m_depthBuffer.prefetch(t);
     }
 
-    // Cleanup old frames (keep 2 seconds history)
+// Cleanup old frames (keep 2 seconds history)
     m_depthBuffer.cleanup(static_cast<uint64_t>(std::max(0.0, currentTimeMs - 2000.0)));
+    
+    // Periodically fetch backend telemetry (every 2 seconds)
+    static double lastTelemetryFetch = 0.0;
+    if (currentTimeMs - lastTelemetryFetch > 2000.0) {
+        fetchSessionTelemetry();
+        lastTelemetryFetch = currentTimeMs;
+    }
 }
 
 bool DepthStreamClient::sendHttpPostMultipart(const std::string& endpoint, const std::filesystem::path& videoPath, std::string& response) {
@@ -270,8 +279,47 @@ bool DepthStreamClient::sendHttpGet(const std::string& endpoint, std::string& re
         return false;
     }
     
-    response = res->body;
+response = res->body;
     return true;
+}
+
+bool DepthStreamClient::fetchSessionTelemetry() {
+    if (!m_connected.load()) {
+        return false;
+    }
+    
+    std::string endpoint = "/api/sessions/" + m_currentSession.sessionId + "/telemetry";
+    std::string response;
+    
+    if (!sendHttpGet(endpoint, response)) {
+        return false;
+    }
+    
+    try {
+        nlohmann::json telemetry = nlohmann::json::parse(response);
+        
+        // Parse telemetry data (matching web app structure)
+        if (telemetry.contains("avg_infer_ms")) {
+            m_stats.inferTimeMs = telemetry["avg_infer_ms"];
+        }
+        if (telemetry.contains("avg_decode_ms")) {
+            m_stats.decodeTimeMs = telemetry["avg_decode_ms"];
+        }
+        if (telemetry.contains("avg_pack_ms")) {
+            m_stats.packTimeMs = telemetry["avg_pack_ms"];
+        }
+        if (telemetry.contains("avg_queue_wait_ms")) {
+            m_stats.queueWaitTimeMs = telemetry["avg_queue_wait_ms"];
+        }
+        
+        LOGD("Fetched telemetry: infer=%.1fms, decode=%.1fms, pack=%.1fms, queue=%.1fms\n",
+              m_stats.inferTimeMs, m_stats.decodeTimeMs, m_stats.packTimeMs, m_stats.queueWaitTimeMs);
+              
+        return true;
+    } catch (const std::exception& e) {
+        LOGE("Failed to parse telemetry: %s\n", e.what());
+        return false;
+    }
 }
 
 bool DepthStreamClient::testConnection() {
@@ -315,11 +363,19 @@ bool DepthStreamClient::sendHttpDelete(const std::string& endpoint) {
 DepthStreamClient::ClientStats DepthStreamClient::getStats() const {
     ClientStats stats;
     stats.rttMs = m_depthBuffer.getRTT();
+    stats.jitterMs = m_depthBuffer.getJitter();
     stats.pendingRequests = m_depthBuffer.getPendingCount();
     // Simple FPS calculation could be added here or in DepthBuffer
     stats.fps = 0.0f; 
     stats.totalFrames = 0; 
     stats.droppedFrames = 0; 
+    
+    // Include telemetry data if available
+    stats.inferTimeMs = m_stats.inferTimeMs;
+    stats.decodeTimeMs = m_stats.decodeTimeMs;
+    stats.packTimeMs = m_stats.packTimeMs;
+    stats.queueWaitTimeMs = m_stats.queueWaitTimeMs;
+    
     return stats;
 }
 

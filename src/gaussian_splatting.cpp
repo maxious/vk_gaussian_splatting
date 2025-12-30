@@ -418,7 +418,7 @@ void GaussianSplatting::updateDepthRendering(VkCommandBuffer cmd)
 
             // Log every 30th frame for debugging
             if(frameCounter % 30 == 0) {
-                LOGI("Depth frame #%d uploaded: %dx%d @ %llu ms (req: %llu ms)\n",
+                LOGI("Depth frame #%d uploaded: %dx%d @ %u ms (req: %llu ms)\n",
                      frameCounter, frame.width, frame.height,
                      frame.timestampMs, timestampMs);
             }

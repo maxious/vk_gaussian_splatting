@@ -45,6 +45,14 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     float2 uv = float2(pixel) / frameInfo.viewport;
     float depthValue = depthTexture.Sample(depthSampler, uv);
     
+    // Apply gamma correction
+    depthValue = max(depthValue, 0.0);
+    if(frameInfo.vdzZGamma != 1.0)
+      depthValue = pow(depthValue, frameInfo.vdzZGamma);
+
+    // Apply scaling and bias
+    depthValue = depthValue * frameInfo.vdzZScale + frameInfo.vdzZBias;
+    
     // Clamp depth for visualization (normalize to displayable range)
     depthValue = clamp(depthValue, 0.0, 1.0);
     

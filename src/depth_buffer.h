@@ -29,6 +29,7 @@ public:
 
     size_t getPendingCount() const { return m_pendingFrames.size(); }
     float getRTT() const { return m_rtt; }
+    float getJitter() const { return m_jitter; }
 
 private:
     struct PendingFrame {
@@ -51,4 +52,8 @@ private:
 
     uint64_t m_lastTimestamp{0};
     float m_rtt{0.0f};
+    
+    // Jitter measurement and EMA filtering for better synchronization
+    float m_jitter{0.0f};
+    const float RTT_EMA_ALPHA = 0.1f;  // EMA smoothing factor
 };

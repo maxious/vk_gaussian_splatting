@@ -18,8 +18,13 @@ void DepthBuffer::addFrame(const DepthFrame& frame) {
     if (it != m_pendingFrames.end()) {
         float rtt = static_cast<float>(now - it->sentTime);
 
-        const float alpha = 0.1f;
-        m_rtt = m_rtt * (1.0f - alpha) + rtt * alpha;
+        // Calculate jitter as deviation from current EMA
+        float jitter = std::abs(rtt - m_rtt);
+        
+        // Apply EMA filtering to both RTT and jitter
+        const float EMA_ALPHA = 0.1f;
+        m_rtt = m_rtt * (1.0f - EMA_ALPHA) + rtt * EMA_ALPHA;
+        m_jitter = m_jitter * (1.0f - EMA_ALPHA) + jitter * EMA_ALPHA;
 
         m_pendingFrames.erase(it);
     }
