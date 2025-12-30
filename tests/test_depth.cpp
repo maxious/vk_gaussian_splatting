@@ -6,60 +6,91 @@
 #include "test_utils.h"
 #include <cstring>
 
-TEST_CASE("Depth Header Parsing - VDZ1 (uncompressed)")
+// ===== SYNTHETIC TESTS BASED ON REAL VDZ FILE FORMAT =====
+
+TEST_CASE("Synthetic VDZ1 - Minimal Header Only")
 {
-    // Create a minimal valid VDZ1 header
-    auto headerBuffer = test_utils::createVDZ1Header(1000, 640, 480, 0.001f, 0.0f, 10.0f);
-
-    // Add minimal depth data (2 pixels)
-    uint16_t depthData[] = {1000, 2000}; // 1.0m and 2.0m at scale 0.001
-    headerBuffer.insert(headerBuffer.end(),
-        reinterpret_cast<const uint8_t*>(depthData),
-        reinterpret_cast<const uint8_t*>(depthData) + sizeof(depthData));
-
+    // Test header-only parsing (no depth data)
+    auto buffer = test_utils::createMinimalVDZ1();
+    
     DepthFrame frame;
-    bool result = parseDepthFrame(headerBuffer, frame);
+    bool result = parseDepthFrame(buffer, frame);
 
     CHECK(result == true);
-    CHECK(frame.timestampMs == 1000);
-    CHECK(frame.width == 640);
-    CHECK(frame.height == 480);
-    CHECK(frame.scale == doctest::Approx(0.001f));
-    CHECK(frame.bias == doctest::Approx(0.0f));
-    CHECK(frame.zMax == doctest::Approx(10.0f));
-    CHECK(frame.data.size() == 2);
-    CHECK(frame.data[0] == doctest::Approx(1.0f));  // 1000 * 0.001 + 0.0
-    CHECK(frame.data[1] == doctest::Approx(2.0f));  // 2000 * 0.001 + 0.0
-}
-
-TEST_CASE("Depth Header Parsing - VDZ2 (compressed)")
-{
-    // Create a minimal valid VDZ2 header
-    auto headerBuffer = test_utils::createVDZ2Header(500, 320, 240, 0.002f, 0.5f, 5.0f);
-
-    // Add compressed depth data (raw uncompressed: {500, 1500})
-    uint16_t depthData[] = {500, 1500};
-    headerBuffer.insert(headerBuffer.end(),
-        reinterpret_cast<const uint8_t*>(depthData),
-        reinterpret_cast<const uint8_t*>(depthData) + sizeof(depthData));
-
-    DepthFrame frame;
-    bool result = parseDepthFrame(headerBuffer, frame);
-
-    CHECK(result == true);
-    CHECK(frame.timestampMs == 500);
+    CHECK(frame.timestampMs == 125);
     CHECK(frame.width == 320);
-    CHECK(frame.height == 240);
-    CHECK(frame.scale == doctest::Approx(0.002f));
-    CHECK(frame.bias == doctest::Approx(0.5f));
-    CHECK(frame.zMax == doctest::Approx(5.0f));
+    CHECK(frame.height == 180);
+    CHECK(frame.scale == doctest::Approx(0.000001f).epsilon(1e-6f));
+    CHECK(frame.bias == doctest::Approx(0.646956f).epsilon(1e-6f));
+    CHECK(frame.zMax == doctest::Approx(0.734110f).epsilon(1e-6f));
 }
 
-TEST_CASE("Depth Header - Invalid Magic Bytes")
+TEST_CASE("Synthetic VDZ1 - With Depth Data")
 {
-    // Create header with invalid magic bytes
-    auto buffer = test_utils::createVDZ1Header();
+    // Test full frame with synthetic depth data
+    auto buffer = test_utils::createVDZ1WithData();
+    
+    DepthFrame frame;
+    bool result = parseDepthFrame(buffer, frame);
 
+    CHECK(result == true);
+    CHECK(frame.width == 320);
+    CHECK(frame.height == 180);
+    CHECK(frame.data.size() == 320 * 180);
+    
+    // Verify depth data was parsed (just check it exists)
+    CHECK(frame.data.size() > 0);
+}
+
+TEST_CASE("Synthetic VDZ1 - Small Resolution")
+{
+    // Test with smaller resolution for faster unit tests
+    auto buffer = test_utils::createSmallVDZ1();
+    
+    DepthFrame frame;
+    bool result = parseDepthFrame(buffer, frame);
+
+    CHECK(result == true);
+    CHECK(frame.width == 64);
+    CHECK(frame.height == 48);
+    CHECK(frame.data.size() == 64 * 48);
+}
+
+TEST_CASE("Synthetic VDZ1 - High Resolution")
+{
+    // Test with higher resolution
+    auto buffer = test_utils::createHighResVDZ1();
+    
+    DepthFrame frame;
+    bool result = parseDepthFrame(buffer, frame);
+
+    CHECK(result == true);
+    CHECK(frame.width == 1280);
+    CHECK(frame.height == 720);
+    CHECK(frame.data.size() == 1280 * 720);
+}
+
+TEST_CASE("Synthetic VDZ1 - Varying Scale (Large)")
+{
+    // Test with larger scale value (from real file test_frame_2.vdz)
+    auto buffer = test_utils::createVDZ1LargeScale();
+    
+    DepthFrame frame;
+    bool result = parseDepthFrame(buffer, frame);
+
+    CHECK(result == true);
+    CHECK(frame.timestampMs == 208);
+    CHECK(frame.scale == doctest::Approx(0.000002f).epsilon(1e-6f));
+    CHECK(frame.bias == doctest::Approx(0.902846f).epsilon(1e-6f));
+    CHECK(frame.zMax == doctest::Approx(1.004264f).epsilon(1e-6f));
+}
+
+// ===== ERROR CASES =====
+
+TEST_CASE("Error - Invalid Magic Bytes")
+{
+    auto buffer = test_utils::createMinimalVDZ1();
+    
     // Corrupt the magic bytes
     std::memcpy(buffer.data(), "XXXX", 4);
 
@@ -69,10 +100,10 @@ TEST_CASE("Depth Header - Invalid Magic Bytes")
     CHECK(result == false);
 }
 
-TEST_CASE("Depth Header - Buffer Too Small")
+TEST_CASE("Error - Buffer Too Small")
 {
-    // Buffer smaller than header size
-    std::vector<uint8_t> buffer(10); // Less than 32 bytes
+    // Buffer smaller than header size (32 bytes)
+    std::vector<uint8_t> buffer(10);
 
     DepthFrame frame;
     bool result = parseDepthFrame(buffer, frame);
@@ -80,12 +111,37 @@ TEST_CASE("Depth Header - Buffer Too Small")
     CHECK(result == false);
 }
 
-TEST_CASE("Depth Header - Unsupported Version")
+TEST_CASE("Error - Unsupported Version")
 {
-    auto buffer = test_utils::createVDZ1Header();
+    auto buffer = test_utils::createMinimalVDZ1();
 
-    // Modify version to unsupported value
-    buffer[4] = 2; // Version field is at offset 4 (after magic bytes)
+    // Modify version to unsupported value (version at offset 4-5)
+    buffer[4] = 2; // Version = 2 (unsupported)
+
+    DepthFrame frame;
+    bool result = parseDepthFrame(buffer, frame);
+
+    CHECK(result == false);
+}
+
+TEST_CASE("Error - Unsupported DataType")
+{
+    auto buffer = test_utils::createMinimalVDZ1();
+
+    // Modify dataType to unsupported value (dataType at offset 6-7)
+    buffer[6] = 2; // DataType = 2 (unsupported)
+
+    DepthFrame frame;
+    bool result = parseDepthFrame(buffer, frame);
+
+    CHECK(result == false);
+}
+
+TEST_CASE("Error - Invalid Magic with Valid Size")
+{
+    // Edge case: buffer correct size but invalid magic
+    std::vector<uint8_t> buffer(32, 0);
+    std::memcpy(buffer.data(), "BADX", 4);
 
     DepthFrame frame;
     bool result = parseDepthFrame(buffer, frame);

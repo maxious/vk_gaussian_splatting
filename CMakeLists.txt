@@ -292,44 +292,6 @@ if(ENABLE_DLSS_RR AND NGX_FOUND)
   target_link_libraries(${PROJECT_NAME} PRIVATE ngx)
 endif()
 
-# Linking with other libraries
-# Link libraries and include directories
-target_link_libraries(${PROJECT_NAME} PRIVATE
-  nvpro2::nvapp
-  nvpro2::nvgui
-  nvpro2::nvvkglsl
-  nvpro2::nvslang
-  nvpro2::nvshaders_host
-  nvpro2::nvutils
-  nvpro2::nvvk
-  nvpro2::nvgpu_monitor
-  vk_radix_sort
-  spz::spz
-  meshoptimizer
-  webp
-  zlib
-)
-
-target_include_directories(${PROJECT_NAME} PRIVATE ${libwebp_SOURCE_DIR}/src)
-
-# Network libraries linkage for ComfyUI and Depth Streaming
-if(ENABLE_COMFYUI OR ENABLE_DEPTH_STREAMING)
-  if(ENABLE_COMFYUI)
-    target_compile_definitions(${PROJECT_NAME} PRIVATE WITH_COMFYUI)
-  endif()
-  if(ENABLE_DEPTH_STREAMING)
-    target_compile_definitions(${PROJECT_NAME} PRIVATE WITH_DEPTH_STREAMING)
-  endif()
-  target_link_libraries(${PROJECT_NAME} PRIVATE ixwebsocket)
-  target_include_directories(${PROJECT_NAME} PRIVATE ${ixwebsocket_SOURCE_DIR})
-endif()
-
-# DLSS-RR linkage
-if(ENABLE_DLSS_RR AND NGX_FOUND)
-  target_compile_definitions(${PROJECT_NAME} PRIVATE WITH_DLSS_RR)
-  target_link_libraries(${PROJECT_NAME} PRIVATE ngx)
-endif()
-
 # OpenXR linkage
 if(ENABLE_OPENXR AND OpenXR_FOUND)
   target_compile_definitions(${PROJECT_NAME} PRIVATE WITH_OPENXR XR_USE_PLATFORM_WIN32 XR_USE_GRAPHICS_API_VULKAN)
