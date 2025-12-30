@@ -19,6 +19,7 @@
 
 #include "video_decoder.h"
 #include <nvutils/logger.hpp>
+#include <cstring>
 
 extern "C" {
 #include <libavcodec/avcodec.h>

@@ -582,6 +582,13 @@ protected:
 
 #ifdef WITH_VIDEO_DECODER
   std::unique_ptr<VideoDecoder> m_videoDecoder;
+  
+  struct VideoTexture {
+    nvvk::Image image;
+    VkImageView view = VK_NULL_HANDLE;
+    uint32_t width = 0;
+    uint32_t height = 0;
+  } m_videoTexture;
 #endif
 
   ///////////////////////////////

@@ -139,6 +139,11 @@ private:
      */
     void cleanupFFmpeg();
 
+    /**
+     * @brief Process a decoded frame and add to queue
+     */
+    void processFrame();
+
     // FFmpeg contexts
     AVFormatContext* m_formatContext;
     AVCodecContext* m_codecContext;

@@ -30,6 +30,7 @@
 #include "utilities.h"
 
 #include <nvutils/logger.hpp>
+#include <nvvk/barriers.hpp>
 
 #define GLM_ENABLE_SWIZZLE
 #include <glm/gtc/packing.hpp>  // Required for half-float operations
@@ -382,13 +383,121 @@ void GaussianSplatting::updateDepthRendering(VkCommandBuffer cmd)
   // Handle video decoder case
   if(m_videoDecoder)
   {
-    // TODO: Synchronize video frames with depth frames based on timestamps
+    // Synchronize video frames with depth frames based on timestamps
     // For now, just get the next available frame
     DecodedFrame videoFrame;
     if(m_videoDecoder->getNextFrame(videoFrame))
     {
-      // TODO: Upload video frame to texture
-      // This would require creating a video texture and uploading the RGBA data
+      if (videoFrame.width > 0 && videoFrame.height > 0)
+      {
+          bool updateDescriptor = false;
+
+          // Check if texture needs (re)creation
+          if(m_videoTexture.width != videoFrame.width || m_videoTexture.height != videoFrame.height)
+          {
+              // Destroy old
+              if(m_videoTexture.view) { vkDestroyImageView(m_device, m_videoTexture.view, nullptr); m_videoTexture.view = VK_NULL_HANDLE; }
+              if(m_videoTexture.image.image) { m_alloc.destroyImage(m_videoTexture.image); }
+
+              // Create new
+              VkImageCreateInfo info = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+              info.imageType = VK_IMAGE_TYPE_2D;
+              info.format = VK_FORMAT_R8G8B8A8_UNORM;
+              info.extent = {static_cast<uint32_t>(videoFrame.width), static_cast<uint32_t>(videoFrame.height), 1};
+              info.mipLevels = 1;
+              info.arrayLayers = 1;
+              info.samples = VK_SAMPLE_COUNT_1_BIT;
+              info.tiling = VK_IMAGE_TILING_OPTIMAL;
+              info.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+              info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+              info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+              
+              m_alloc.createImage(m_videoTexture.image, info);
+
+              VkImageViewCreateInfo viewInfo = {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+              viewInfo.image = m_videoTexture.image.image;
+              viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+              viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+              viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+              viewInfo.subresourceRange.baseMipLevel = 0;
+              viewInfo.subresourceRange.levelCount = 1;
+              viewInfo.subresourceRange.baseArrayLayer = 0;
+              viewInfo.subresourceRange.layerCount = 1;
+              
+              vkCreateImageView(m_device, &viewInfo, nullptr, &m_videoTexture.view);
+              
+              m_videoTexture.width = videoFrame.width;
+              m_videoTexture.height = videoFrame.height;
+              
+              updateDescriptor = true;
+
+              // Transition to TRANSFER_DST
+              VkImageMemoryBarrier barrier = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+              barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+              barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+              barrier.srcAccessMask = 0;
+              barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+              barrier.image = m_videoTexture.image.image;
+              barrier.subresourceRange = viewInfo.subresourceRange;
+              
+              vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 
+                  0, 0, nullptr, 0, nullptr, 1, &barrier);
+          }
+          else
+          {
+             // Transition to TRANSFER_DST for update
+              VkImageMemoryBarrier barrier = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+              barrier.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+              barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+              barrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+              barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+              barrier.image = m_videoTexture.image.image;
+              barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+              
+              vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 
+                  0, 0, nullptr, 0, nullptr, 1, &barrier);
+          }
+
+          // Upload using StagingUploader
+          size_t bufferSize = videoFrame.data.size();
+          m_uploader.appendImage(m_videoTexture.image, bufferSize, videoFrame.data.data(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+          m_uploader.cmdUploadAppended(cmd);
+               
+          // Transition to SHADER_READ_ONLY
+          {
+              VkImageMemoryBarrier barrier = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+              barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+              barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+              barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+              barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+              barrier.image = m_videoTexture.image.image;
+              barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+              
+              vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 
+                  0, 0, nullptr, 0, nullptr, 1, &barrier);
+          }
+          
+          if(updateDescriptor && m_descriptorSet != VK_NULL_HANDLE)
+          {
+              // Update descriptor set
+              VkDescriptorImageInfo imageInfo{};
+              imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+              imageInfo.imageView = m_videoTexture.view;
+              imageInfo.sampler = m_sampler;
+
+              VkWriteDescriptorSet write{};
+              write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+              write.dstSet = m_descriptorSet;
+              write.dstBinding = BINDING_VDZ_VIDEO_TEXTURE;
+              write.dstArrayElement = 0;
+              write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+              write.descriptorCount = 1;
+              write.pImageInfo = &imageInfo;
+
+              vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
+          }
+      }
+      
       LOGD("Got video frame: %dx%d @ %.3f s\n", videoFrame.width, videoFrame.height, videoFrame.timestamp);
     }
 
