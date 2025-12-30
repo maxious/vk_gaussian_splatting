@@ -8,7 +8,7 @@
 
 namespace vk_gaussian_splatting {
 
-#define BACKEND_HOST "127.0.0.1"
+#define BACKEND_HOST "192.168.1.200"
 #define BACKEND_PORT 8000
 
 DepthStreamClient::DepthStreamClient() {
@@ -74,6 +74,7 @@ bool DepthStreamClient::connectWebSocket(const std::string& sessionId) {
     try {
         std::string uri = "ws://" + std::string(BACKEND_HOST) + ":" + std::to_string(BACKEND_PORT) + "/api/sessions/" + sessionId + "/stream";
         
+        LOGI("Connecting depth WebSocket: %s\n", uri.c_str());
         m_webSocket.setUrl(uri);
         m_webSocket.start();
         return true;
@@ -96,16 +97,18 @@ void DepthStreamClient::disconnectWebSocket() {
 void DepthStreamClient::onDepthFrame(const ix::WebSocketMessagePtr& msg) {
     if (msg->type == ix::WebSocketMessageType::Open) {
         m_connected.store(true);
-        LOGI("Depth WebSocket connected\n");
+        LOGI("Depth WebSocket connected successfully\n");
         if (m_statusCallback) m_statusCallback(true);
     }
     else if (msg->type == ix::WebSocketMessageType::Close) {
         m_connected.store(false);
-        LOGI("Depth WebSocket closed\n");
+        LOGI("Depth WebSocket closed (code: %d, reason: %s)\n", 
+               msg->closeInfo.code, msg->closeInfo.reason.c_str());
         if (m_statusCallback) m_statusCallback(false);
     }
     else if (msg->type == ix::WebSocketMessageType::Error) {
-        LOGE("Depth WebSocket error: %s\n", msg->errorInfo.reason.c_str());
+        LOGE("Depth WebSocket error: %s (retries: %d)\n", 
+               msg->errorInfo.reason.c_str(), msg->errorInfo.retries);
         if (m_statusCallback) m_statusCallback(false);
     }
     else if (msg->type == ix::WebSocketMessageType::Message) {
@@ -117,6 +120,9 @@ void DepthStreamClient::onDepthFrame(const ix::WebSocketMessagePtr& msg) {
                 DepthFrame frame;
 
                 if (parseDepthFrame(buffer, frame)) {
+                    LOGD("Received depth frame: %dx%d, timestamp=%llu, scale=%.4f, bias=%.4f\n",
+                           frame.width, frame.height, frame.timestampMs, frame.scale, frame.bias);
+                    
                     m_depthBuffer.addFrame(frame);
                     if (m_depthCallback) m_depthCallback(frame);
                 }
@@ -135,6 +141,7 @@ void DepthStreamClient::onDepthFrame(const ix::WebSocketMessagePtr& msg) {
 
 bool DepthStreamClient::requestDepth(uint64_t timestampMs) {
     if (!m_connected.load()) {
+        LOGD("Cannot request depth - WebSocket not connected\n");
         return false;
     }
 
@@ -144,7 +151,8 @@ bool DepthStreamClient::requestDepth(uint64_t timestampMs) {
 
         std::string msg = request.dump();
         m_webSocket.send(msg);
-
+        
+        LOGD("Sent depth request for timestamp: %llu\n", timestampMs);
         return true;
     } catch (const std::exception& e) {
         LOGE("Failed to send depth request: %s\n", e.what());
@@ -239,6 +247,17 @@ bool DepthStreamClient::sendHttpDelete(const std::string& endpoint) {
     }
     
     return true;
+}
+
+DepthStreamClient::ClientStats DepthStreamClient::getStats() const {
+    ClientStats stats;
+    stats.rttMs = m_depthBuffer.getRTT();
+    stats.pendingRequests = m_depthBuffer.getPendingCount();
+    // Simple FPS calculation could be added here or in DepthBuffer
+    stats.fps = 0.0f; 
+    stats.totalFrames = 0; 
+    stats.droppedFrames = 0; 
+    return stats;
 }
 
 } // namespace vk_gaussian_splatting

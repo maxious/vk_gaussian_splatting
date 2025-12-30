@@ -77,6 +77,7 @@ bool ComfyUIClient::connect(const std::string& host, uint16_t port)
     try
     {
         std::string uri = "ws://" + host + ":" + std::to_string(port) + "/ws?clientId=" + m_clientId;
+        LOGI("ComfyUI: Attempting connection to %s\n", uri.c_str());
         m_webSocket.setUrl(uri);
         m_webSocket.start();
         return true;
@@ -121,7 +122,10 @@ void ComfyUIClient::onMessage(const ix::WebSocketMessagePtr& msg)
         std::lock_guard<std::mutex> lock(m_mutex);
         m_lastError = msg->errorInfo.reason;
         m_state.store(State::Error);
-        LOGE("ComfyUI: %s\n", msg->errorInfo.reason.c_str());
+        LOGE("ComfyUI: Connection Error: %s (HTTP: %d, Retries: %d)\n", 
+             msg->errorInfo.reason.c_str(), 
+             msg->errorInfo.http_status, 
+             msg->errorInfo.retries);
     }
     else if (msg->type == ix::WebSocketMessageType::Message)
     {
@@ -339,10 +343,14 @@ bool ComfyUIClient::queueWorkflow(const std::filesystem::path& workflowPath,
             return false;
         }
 
+        std::string body = response;
         auto bodyStart = response.find("\r\n\r\n");
         if (bodyStart != std::string::npos)
         {
-            std::string body = response.substr(bodyStart + 4);
+            body = response.substr(bodyStart + 4);
+        }
+
+        try {
             auto responseJson = nlohmann::json::parse(body);
 
             if (responseJson.contains("prompt_id"))
@@ -363,9 +371,33 @@ bool ComfyUIClient::queueWorkflow(const std::filesystem::path& workflowPath,
             else if (responseJson.contains("error"))
             {
                 std::lock_guard<std::mutex> lock(m_mutex);
-                m_lastError = responseJson["error"].get<std::string>();
+                auto err = responseJson["error"];
+                if (err.is_string()) m_lastError = err.get<std::string>();
+                else if (err.contains("message")) {
+                   m_lastError = err["message"].get<std::string>();
+                   // Append detailed node errors if available
+                   if (responseJson.contains("node_errors")) {
+                       auto nodeErrors = responseJson["node_errors"];
+                       if (!nodeErrors.empty()) {
+                           m_lastError += "\nDetails: ";
+                           for (auto& [key, val] : nodeErrors.items()) {
+                               if (val.contains("class_type")) {
+                                   m_lastError += "\nNode " + key + " (" + val["class_type"].get<std::string>() + "): ";
+                               }
+                               if (val.contains("errors")) {
+                                   for (const auto& e : val["errors"]) {
+                                        if (e.contains("message")) m_lastError += e["message"].get<std::string>() + "; ";
+                                   }
+                               }
+                           }
+                       }
+                   }
+                }
+                else m_lastError = "Unknown error from server";
+                LOGE("ComfyUI: Error queuing workflow: %s\n", m_lastError.c_str());
                 return false;
             }
+        } catch (...) {
         }
 
         std::lock_guard<std::mutex> lock(m_mutex);

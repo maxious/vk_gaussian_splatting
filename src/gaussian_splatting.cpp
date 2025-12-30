@@ -299,6 +299,63 @@ bool GaussianSplatting::initAll()
   return true;
 }
 
+void GaussianSplatting::enableDepthRendering(const std::string& videoPath)
+{
+  if(!m_depthClient)
+  {
+    m_depthClient = std::make_unique<DepthStreamClient>();
+    m_depthClient->setDepthCallback([this](const DepthFrame& frame) {
+      // Frame is already added to buffer by client
+      // We will pick it up in updateDepthRendering on the main thread
+    });
+  }
+
+  if(!m_depthManager)
+  {
+    m_depthManager = std::make_unique<DepthTextureManager>();
+    // Initialize with device objects
+    m_depthManager->initialize(m_device, m_app->getPhysicalDevice(), m_app->getQueue(0).queue, &m_alloc);
+  }
+
+  // Upload video
+  DepthStreamClient::SessionInfo session;
+  if(!m_depthClient->uploadVideo(videoPath, session))
+  {
+    LOGE("Failed to upload video\n");
+    return;
+  }
+
+  // Connect WebSocket
+  if(!m_depthClient->connectWebSocket(session.sessionId))
+  {
+    LOGE("Failed to connect depth stream\n");
+    return;
+  }
+
+  m_enableDepthRendering = true;
+  LOGI("Depth rendering enabled for session: %s\n", session.sessionId.c_str());
+}
+
+void GaussianSplatting::updateDepthRendering(VkCommandBuffer cmd)
+{
+  if(!m_enableDepthRendering || !m_depthClient)
+  {
+    return;
+  }
+
+  // Request depth for current time
+  uint64_t timestampMs = static_cast<uint64_t>(prmFrame.currentTime * 1000.0f);
+  
+  DepthFrame frame;
+  if(m_depthClient->getFrame(timestampMs, frame)) {
+      if(m_depthManager) {
+          m_depthManager->uploadDepthFrame(frame, cmd);
+      }
+  }
+
+  m_depthStats = m_depthClient->getStats();
+}
+
 void GaussianSplatting::deinitScene()
 {
   m_splatSet.clear();

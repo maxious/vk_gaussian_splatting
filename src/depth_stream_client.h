@@ -67,6 +67,16 @@ public:
     void setDepthCallback(DepthFrameCallback callback) { m_depthCallback = callback; }
     void setStatusCallback(StatusCallback callback) { m_statusCallback = callback; }
 
+    struct ClientStats {
+        float rttMs;
+        size_t pendingRequests;
+        float fps;
+        uint64_t totalFrames;
+        uint64_t droppedFrames;
+    };
+    
+    ClientStats getStats() const;
+
 private:
     void onDepthFrame(const ix::WebSocketMessagePtr& msg);
     

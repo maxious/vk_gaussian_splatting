@@ -286,16 +286,19 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
 #endif
     }
 
-    // Perform post processings if needed (for RTX pipeline)
-    // Run post-process for temporal accumulation or linear-to-sRGB conversion
-    if((prmRtx.temporalSampling && prmFrame.frameSampleId > 0) || prmFrame.linearToSrgb != 0)
-    {
-      postProcess(cmd);
-    }
+  // Perform post processings if needed
+  // Run post-process for temporal accumulation or linear-to-sRGB conversion
+  if((prmRtx.temporalSampling && prmFrame.frameSampleId > 0) || prmFrame.linearToSrgb != 0)
+  {
+    postProcess(cmd);
+  }
 
-    readBackIndirectParametersIfNeeded(cmd);
+  updateDepthRendering(cmd);
 
-    updateRenderingMemoryStatistics(cmd, splatCount);
+  readBackIndirectParametersIfNeeded(cmd);
+
+  updateRenderingMemoryStatistics(cmd, splatCount);
+
 
     // Attention: early return
     return;
@@ -699,9 +702,14 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
     postProcess(cmd);
   }
 
+  // Update depth streaming if enabled
+  // This will request new frames from the backend and upload received ones
+  updateDepthRendering(cmd);
+
   readBackIndirectParametersIfNeeded(cmd);
 
   updateRenderingMemoryStatistics(cmd, splatCount);
+
 
 #ifdef WITH_OPENXR
   // Finalize XR frame

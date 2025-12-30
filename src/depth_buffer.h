@@ -20,6 +20,7 @@ public:
     bool getFrame(uint64_t targetMs, DepthFrame& outFrame);
 
     size_t getPendingCount() const { return m_pendingFrames.size(); }
+    float getRTT() const { return m_rtt; }
 
 private:
     struct PendingFrame {

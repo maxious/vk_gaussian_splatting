@@ -113,7 +113,7 @@ namespace vk_gaussian_splatting {
 
 
 
-class GaussianSplatting
+class GaussianSplatting : public nvapp::IAppElement
 {
 public:
   // Benchmarking, print extended info
@@ -139,21 +139,21 @@ public:
 protected:
   GaussianSplatting(nvutils::ProfilerManager* profilerManager, nvutils::ParameterRegistry* parameterRegistry);
 
-  ~GaussianSplatting();
+  virtual ~GaussianSplatting();
 
-  void onAttach(nvapp::Application* app);
+  virtual void onAttach(nvapp::Application* app);
 
-  void onDetach();
+  virtual void onDetach();
 
-  void onResize(VkCommandBuffer cmd, const VkExtent2D& size);
+  virtual void onResize(VkCommandBuffer cmd, const VkExtent2D& size);
 
-  void onPreRender();
+  virtual void onPreRender();
 
   // reset frame counter for temporal accumulated multi-sampling
   // will cause a restart of the frame construction
   inline void resetFrameCounter() { prmFrame.frameSampleId = -1; }
 
-  void onRender(VkCommandBuffer cmd);
+  virtual void onRender(VkCommandBuffer cmd);
 
   // reset the rendering settings that can
   // be modified by the user interface
@@ -563,6 +563,8 @@ protected:
   bool m_enableDepthRendering = false;
   float m_depthScale = 1.0f;
   float m_depthBias = 0.0f;
+  
+  DepthStreamClient::ClientStats m_depthStats{};
 
   ///////////////////////////////
   // Post processing

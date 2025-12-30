@@ -114,9 +114,13 @@
 #include <tinygltf/json.hpp>
 using nlohmann::json;
 
+#include "perf_stats.h"
+
+#include "perf_stats.h"
+
 namespace vk_gaussian_splatting {
 
-class GaussianSplattingUI : public GaussianSplatting, public nvapp::IAppElement
+class GaussianSplattingUI : public GaussianSplatting
 {
 public:  // Methods specializing IAppElement
   GaussianSplattingUI(nvutils::ProfilerManager* profilerManager, nvutils::ParameterRegistry* parameterRegistry, bool* benchmarkEnabled);
@@ -133,11 +137,11 @@ public:  // Methods specializing IAppElement
 
   void onRender(VkCommandBuffer cmd) override;
 
-  void onUIRender() override;
+  void onUIRender();
 
-  void onUIMenu() override;
+  void onUIMenu();
 
-  void onFileDrop(const std::filesystem::path& filename) override;
+  void onFileDrop(const std::filesystem::path& filename);
 
   // handle recent files save/load at imgui level
   void guiRegisterIniFileHandlers();
@@ -149,6 +153,7 @@ private:
   void guiDrawLightTree();
   void guiDrawRadianceFieldsTree();
   void guiDrawObjectTree();
+  void guiDrawDepthStreamTree();
 
   void guiDrawVideoExportWindow();
   void startVideoRender();
@@ -162,6 +167,8 @@ private:
   void guiDrawCameraProperties();
   void guiDrawNavigationProperties();
   void guiDrawLightProperties();
+  void guiDrawDepthStreamProperties();
+  void guiDrawPerformancePanel();
 
   void guiDrawRendererStatisticsWindow();
 
@@ -181,6 +188,7 @@ private:
 private:
   // hide/show ui elements
   bool                                                  m_showUI = true;
+  PerfStats                                             m_perfStats;
   std::shared_ptr<nvapp::ElementProfiler::ViewSettings> m_profilerViewSettings;
 
   // benchmark mode (enabled by command line), loadings will be synchronous and vsync off
@@ -227,9 +235,11 @@ private:
     GUI_LIGHT,
     GUI_SPLATSET,
     GUI_MESH,
+    GUI_DEPTH_STREAM,
   } m_selectedAsset = GUI_RENDERER;
 
-  bool        m_objListUpdated = false;
+  bool m_showDepthPerformance{false};
+  bool m_objListUpdated = false;
   const float TREE_INDENT      = 16.0f;
   
   // Radiance field deletion request
@@ -268,7 +278,7 @@ private:
   bool                           m_showComfyUIWindow = true;
   char                           m_comfyPrompt[4096] = "a cute cat sitting on a table, photorealistic, 8k";
   char                           m_comfyNegativePrompt[2048] = "ugly, low quality, blurry";
-  char                           m_comfyHost[256] = "127.0.0.1";
+  char                           m_comfyHost[256] = "192.168.1.200";
   int                            m_comfyPort = 8188;
   std::filesystem::path          m_comfyWorkflowPath = "S:\\ComfyUI\\user\\default\\workflows\\z_image_turbo_3d.json";
   std::string                    m_comfyStatusMessage;

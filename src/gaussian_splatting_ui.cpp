@@ -36,6 +36,7 @@
 #include <GLFW/glfw3.h>
 
 #include "gaussian_splatting_ui.h"
+#include <imgui/imgui_internal.h>
 
 namespace vk_gaussian_splatting {
 
@@ -287,6 +288,7 @@ void GaussianSplattingUI::onUIMenu()
     ImGui::MenuItem(ICON_MS_SPACE_DASHBOARD " ShowUI", "", &m_showUI);
     ImGui::Separator();
     ImGui::MenuItem(ICON_MS_VIDEOCAM " Video Export...", "", &m_showVideoExportWindow);
+    ImGui::MenuItem(ICON_MS_QUERY_STATS " Depth Performance", "", &m_showDepthPerformance);
 #ifdef WITH_COMFYUI
     ImGui::Separator();
     ImGui::MenuItem(ICON_MS_AUTO_AWESOME " ComfyUI Generator", "", &m_showComfyUIWindow);
@@ -729,6 +731,11 @@ void GaussianSplattingUI::onUIRender()
     guiDrawVideoExportWindow();
   }
 
+  if(m_showDepthPerformance)
+  {
+    guiDrawPerformancePanel();
+  }
+
 #ifdef WITH_COMFYUI
   if (m_showComfyUIWindow)
   {
@@ -752,6 +759,8 @@ void GaussianSplattingUI::guiDrawAssetsWindow()
     guiDrawRadianceFieldsTree();
 
     guiDrawObjectTree();
+
+    guiDrawDepthStreamTree();
   }
   ImGui::End();
 
@@ -1125,6 +1134,26 @@ void GaussianSplattingUI::guiDrawObjectTree()
   }
 }
 
+void GaussianSplattingUI::guiDrawDepthStreamTree()
+{
+  const ImGuiTreeNodeFlags base_flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick;
+
+  ImGuiTreeNodeFlags node_flags = base_flags;
+  if(m_selectedAsset == GUI_DEPTH_STREAM)
+    node_flags |= ImGuiTreeNodeFlags_Selected;
+
+  bool node_open = ImGui::TreeNodeEx(ICON_MS_STREAM " Depth Streaming", node_flags);
+  if(ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
+  {
+    m_selectedAsset     = GUI_DEPTH_STREAM;
+    m_selectedItemIndex = -1;
+  }
+  if(node_open)
+  {
+    ImGui::TreePop();
+  }
+}
+
 void GaussianSplattingUI::guiDrawPropertiesWindow()
 {
   if(ImGui::Begin("Properties"))
@@ -1177,6 +1206,9 @@ void GaussianSplattingUI::guiDrawPropertiesWindow()
             guiDrawLightProperties();
           }
         }
+        break;
+      case GUI_DEPTH_STREAM:
+        guiDrawDepthStreamProperties();
         break;
       default:
         // display nothing
@@ -2094,9 +2126,8 @@ void GaussianSplattingUI::guiDrawRendererStatisticsWindow()
 
 void GaussianSplattingUI::guiDrawMemoryStatisticsWindow()
 {
-  ImGuiTableFlags commonFlags = ImGuiTreeNodeFlags_SpanFullWidth | ImGuiTreeNodeFlags_SpanAllColumns;
-  ImGuiTableFlags itemFlags   = commonFlags | ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
-  ImGuiTableFlags totalFlags  = commonFlags | ImGuiTreeNodeFlags_DefaultOpen;
+  ImGuiTableFlags itemFlags   = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+  ImGuiTableFlags totalFlags  = ImGuiTreeNodeFlags_DefaultOpen;
 
   if(ImGui::Begin("Memory Statistics"))
   {
@@ -3581,5 +3612,141 @@ void GaussianSplattingUI::saveFrameAsync(VkImage srcImage, VkExtent2D size, cons
 
   m_asyncFrameSaver.queueFrame(pixelData.data(), size.width, size.height, isHDR, path);
 }
+
+void GaussianSplattingUI::guiDrawDepthStreamProperties()
+{
+  namespace PE = nvgui::PropertyEditor;
+
+  if(ImGui::CollapsingHeader("Depth Streaming", ImGuiTreeNodeFlags_DefaultOpen))
+  {
+    PE::begin("##Depth Streaming");
+
+    // Connection settings
+    static char hostBuffer[256] = "192.168.1.200";
+    PE::entry("Host", [&]() {
+      return ImGui::InputText("##Host", hostBuffer, sizeof(hostBuffer));
+    });
+
+    static int port = 8000;
+    PE::entry("Port", [&]() {
+      return ImGui::InputInt("##Port", &port, 1, 100, ImGuiInputTextFlags_CharsDecimal);
+    });
+
+    // Video file selection (only after connection)
+    static std::filesystem::path videoPath;
+    static char videoPathBuffer[512] = "";
+    static bool backendConnected = false;  // Track backend connection status
+
+    if(backendConnected)
+    {
+      PE::entry("Video File", [&]() {
+        bool changed = ImGui::InputText("##VideoPath", videoPathBuffer, sizeof(videoPathBuffer));
+        ImGui::SameLine();
+        if(ImGui::Button("Browse..."))
+        {
+          auto path = nvgui::windowOpenFileDialog(m_app->getWindowHandle(), "Select depth video file",
+                                                  "Video Files|*.mp4;*.avi;*.mov;*.mkv|All Files|*.*");
+          if(!path.empty())
+          {
+            videoPath = path;
+            strncpy_s(videoPathBuffer, sizeof(videoPathBuffer), videoPath.string().c_str(), _TRUNCATE);
+            changed = true;
+          }
+        }
+        return changed;
+      });
+
+      // Upload/Connect button
+      PE::entry("Upload Video", [&]() {
+        if(m_enableDepthRendering)
+        {
+          if(ImGui::Button("Disconnect"))
+          {
+            m_enableDepthRendering = false;
+            backendConnected = false;
+            // TODO: Implement proper disconnect and session cleanup
+          }
+        }
+        else
+        {
+          if(ImGui::Button("Upload & Start") && !videoPath.empty())
+          {
+            // TODO: Implement video upload to backend and session creation
+            // This would call the backend API to upload video and get session ID
+            // Then connect WebSocket and start depth streaming
+          }
+        }
+        return false;
+      });
+    }
+    else
+    {
+      // Connect button
+      PE::entry("Connect", [&]() {
+        if(ImGui::Button("Connect to Backend"))
+        {
+          // TODO: Implement connection test to backend at host:port
+          // This should ping the VideoDepthViewer3D backend API
+          // For now, just simulate connection
+          backendConnected = true;
+        }
+        return false;
+      });
+    }
+
+    if(m_enableDepthRendering)
+    {
+      PE::entry("Depth Scale", [&]() {
+        return ImGui::DragFloat("##Scale", &m_depthScale, 0.01f, 0.1f, 10.0f);
+      });
+
+      PE::entry("Depth Bias", [&]() {
+        return ImGui::DragFloat("##Bias", &m_depthBias, 0.01f, -5.0f, 5.0f);
+      });
+    }
+
+    PE::end();
+  }
+}
+
+void GaussianSplattingUI::guiDrawPerformancePanel()
+{
+    if (ImGui::Begin("Performance Telemetry")) {
+        auto metrics = m_perfStats.getAllMetrics();
+        
+        if (ImGui::BeginTable("Metrics", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+            ImGui::TableSetupColumn("Name");
+            ImGui::TableSetupColumn("Current");
+            ImGui::TableSetupColumn("Avg");
+            ImGui::TableSetupColumn("Min/Max");
+            ImGui::TableHeadersRow();
+
+            for (const auto& [name, metric] : metrics) {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("%s", name.c_str());
+                
+                ImGui::TableNextColumn();
+                ImGui::Text("%.2f", metric.current);
+                
+                ImGui::TableNextColumn();
+                ImGui::Text("%.2f", metric.avg);
+                
+                ImGui::TableNextColumn();
+                ImGui::Text("%.2f / %.2f", metric.min, metric.max);
+            }
+            ImGui::EndTable();
+        }
+        
+        for (const auto& [name, metric] : metrics) {
+            if (!metric.historyForPlotting.empty()) {
+                std::vector<float> values(metric.historyForPlotting.begin(), metric.historyForPlotting.end());
+                ImGui::PlotLines(name.c_str(), values.data(), (int)values.size(), 0, nullptr, FLT_MAX, FLT_MAX, ImVec2(0, 50));
+            }
+        }
+    }
+    ImGui::End();
+}
+
 
 }  // namespace vk_gaussian_splatting
