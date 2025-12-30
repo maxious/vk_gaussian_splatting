@@ -126,7 +126,7 @@ public:
                                    std::vector<std::string>& outDeviceExtensions);
 #endif
 
-    void enableDepthRendering(const std::string& videoPath);
+    void enableDepthRendering(const std::string& host, int port, const std::string& videoPath);
     void updateDepthRendering(VkCommandBuffer cmd);
 
   public:

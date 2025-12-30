@@ -8,10 +8,11 @@
 
 namespace vk_gaussian_splatting {
 
-#define BACKEND_HOST "192.168.1.200"
-#define BACKEND_PORT 8000
 
-DepthStreamClient::DepthStreamClient() {
+
+DepthStreamClient::DepthStreamClient(const std::string& backendHost, int backendPort)
+    : m_backendHost(backendHost), m_backendPort(backendPort)
+{
     ix::initNetSystem();
     m_depthBuffer.setClient(this);
 
@@ -72,7 +73,7 @@ bool DepthStreamClient::connectWebSocket(const std::string& sessionId) {
     }
 
     try {
-        std::string uri = "ws://" + std::string(BACKEND_HOST) + ":" + std::to_string(BACKEND_PORT) + "/api/sessions/" + sessionId + "/stream";
+        std::string uri = "ws://" + m_backendHost + ":" + std::to_string(m_backendPort) + "/api/sessions/" + sessionId + "/stream";
         
         LOGI("Connecting depth WebSocket: %s\n", uri.c_str());
         m_webSocket.setUrl(uri);
@@ -190,7 +191,7 @@ bool DepthStreamClient::sendHttpPostMultipart(const std::string& endpoint, const
     std::string body = body_stream.str();
     args->extraHeaders["Content-Type"] = "multipart/form-data; boundary=" + boundary;
     
-    std::string url = "http://" + std::string(BACKEND_HOST) + ":" + std::to_string(BACKEND_PORT) + endpoint;
+    std::string url = "http://" + m_backendHost + ":" + std::to_string(m_backendPort) + endpoint;
     auto res = httpClient.post(url, body, args);
     
     if (res->errorCode != ix::HttpErrorCode::Ok) {
@@ -212,7 +213,7 @@ bool DepthStreamClient::sendHttpGet(const std::string& endpoint, std::string& re
     ix::HttpClient httpClient;
     auto args = std::make_shared<ix::HttpRequestArgs>();
     
-    std::string url = "http://" + std::string(BACKEND_HOST) + ":" + std::to_string(BACKEND_PORT) + endpoint;
+    std::string url = "http://" + m_backendHost + ":" + std::to_string(m_backendPort) + endpoint;
     auto res = httpClient.get(url, args);
     
     if (res->errorCode != ix::HttpErrorCode::Ok) {
@@ -229,23 +230,41 @@ bool DepthStreamClient::sendHttpGet(const std::string& endpoint, std::string& re
     return true;
 }
 
+bool DepthStreamClient::testConnection() {
+    ix::HttpClient httpClient;
+    auto args = std::make_shared<ix::HttpRequestArgs>();
+
+    // Try to access the sessions endpoint to test connectivity
+    std::string url = "http://" + m_backendHost + ":" + std::to_string(m_backendPort) + "/api/sessions";
+    auto res = httpClient.get(url, args);
+
+    if (res->errorCode != ix::HttpErrorCode::Ok) {
+        LOGE("Backend connection test failed: %s\n", res->errorMsg.c_str());
+        return false;
+    }
+
+    // Any response (even 405 Method Not Allowed) indicates the backend is reachable
+    LOGI("Backend connection test successful (status: %d)\n", res->statusCode);
+    return true;
+}
+
 bool DepthStreamClient::sendHttpDelete(const std::string& endpoint) {
     ix::HttpClient httpClient;
     auto args = std::make_shared<ix::HttpRequestArgs>();
-    
-    std::string url = "http://" + std::string(BACKEND_HOST) + ":" + std::to_string(BACKEND_PORT) + endpoint;
+
+    std::string url = "http://" + m_backendHost + ":" + std::to_string(m_backendPort) + endpoint;
     auto res = httpClient.Delete(url, args);
-    
+
     if (res->errorCode != ix::HttpErrorCode::Ok) {
         LOGE("HTTP error: %s\n", res->errorMsg.c_str());
         return false;
     }
-    
+
     if (res->statusCode != 200 && res->statusCode != 204) {
         LOGE("HTTP error %d deleting session\n", res->statusCode);
         return false;
     }
-    
+
     return true;
 }
 

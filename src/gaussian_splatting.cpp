@@ -299,15 +299,20 @@ bool GaussianSplatting::initAll()
   return true;
 }
 
-void GaussianSplatting::enableDepthRendering(const std::string& videoPath)
+void GaussianSplatting::enableDepthRendering(const std::string& host, int port, const std::string& videoPath)
 {
   if(!m_depthClient)
   {
     m_depthClient = std::make_unique<DepthStreamClient>();
+    m_depthClient->setBackendAddress(host, port);
     m_depthClient->setDepthCallback([this](const DepthFrame& frame) {
       // Frame is already added to buffer by client
       // We will pick it up in updateDepthRendering on the main thread
     });
+  }
+  else
+  {
+    m_depthClient->setBackendAddress(host, port);
   }
 
   if(!m_depthManager)

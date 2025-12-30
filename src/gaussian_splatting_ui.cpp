@@ -3671,9 +3671,7 @@ void GaussianSplattingUI::guiDrawDepthStreamProperties()
         {
           if(ImGui::Button("Upload & Start") && !videoPath.empty())
           {
-            // TODO: Implement video upload to backend and session creation
-            // This would call the backend API to upload video and get session ID
-            // Then connect WebSocket and start depth streaming
+            enableDepthRendering(hostBuffer, port, videoPath.string());
           }
         }
         return false;
@@ -3685,10 +3683,11 @@ void GaussianSplattingUI::guiDrawDepthStreamProperties()
       PE::entry("Connect", [&]() {
         if(ImGui::Button("Connect to Backend"))
         {
-          // TODO: Implement connection test to backend at host:port
-          // This should ping the VideoDepthViewer3D backend API
-          // For now, just simulate connection
-          backendConnected = true;
+          if (!m_depthClient) {
+            m_depthClient = std::make_unique<DepthStreamClient>();
+          }
+          m_depthClient->setBackendAddress(hostBuffer, port);
+          backendConnected = m_depthClient->testConnection();
         }
         return false;
       });
