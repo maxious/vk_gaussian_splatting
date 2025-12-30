@@ -3632,28 +3632,41 @@ void GaussianSplattingUI::guiDrawDepthStreamProperties()
       return ImGui::InputInt("##Port", &port, 1, 100, ImGuiInputTextFlags_CharsDecimal);
     });
 
-    // Video file selection (only after connection)
     static std::filesystem::path videoPath;
-    static char videoPathBuffer[512] = "";
-    static bool backendConnected = false;  // Track backend connection status
+    static bool backendConnected = false;
+    static bool connectionAttempted = false;
+    static bool connectionFailed = false;
+
+    if(connectionAttempted)
+    {
+      if(backendConnected)
+      {
+        ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "✓ Connected to backend");
+      }
+      else if(connectionFailed)
+      {
+        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "✗ Failed to connect to backend");
+      }
+    }
 
     if(backendConnected)
     {
+
       PE::entry("Video File", [&]() {
-        bool changed = ImGui::InputText("##VideoPath", videoPathBuffer, sizeof(videoPathBuffer));
-        ImGui::SameLine();
-        if(ImGui::Button("Browse..."))
+        std::string displayText = videoPath.empty() ? "No file selected" : videoPath.filename().string();
+        ImGui::Text("%s", displayText.c_str());
+
+        if(ImGui::Button("Select Video File..."))
         {
           auto path = nvgui::windowOpenFileDialog(m_app->getWindowHandle(), "Select depth video file",
                                                   "Video Files|*.mp4;*.avi;*.mov;*.mkv|All Files|*.*");
           if(!path.empty())
           {
             videoPath = path;
-            strncpy_s(videoPathBuffer, sizeof(videoPathBuffer), videoPath.string().c_str(), _TRUNCATE);
-            changed = true;
+            return true;
           }
         }
-        return changed;
+        return false;
       });
 
       // Upload/Connect button
@@ -3687,7 +3700,9 @@ void GaussianSplattingUI::guiDrawDepthStreamProperties()
             m_depthClient = std::make_unique<DepthStreamClient>();
           }
           m_depthClient->setBackendAddress(hostBuffer, port);
+          connectionAttempted = true;
           backendConnected = m_depthClient->testConnection();
+          connectionFailed = !backendConnected;
         }
         return false;
       });
