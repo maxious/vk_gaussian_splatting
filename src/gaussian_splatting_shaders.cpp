@@ -127,6 +127,9 @@ bool GaussianSplatting::initShaders(void)
   success &= compileSlangShader("threedgrt_raytrace.rint.slang", m_shaders.rtxRintShader);
   // Post processings
   success &= compileSlangShader("post.comp.slang", m_shaders.postComputeShader);
+  // VDZ depth mesh
+  success &= compileSlangShader("vdz_mesh.vert.slang", m_shaders.vdzMeshVertexShader);
+  success &= compileSlangShader("vdz_mesh.frag.slang", m_shaders.vdzMeshFragmentShader);
 
   if(!success)
     return (m_shaders.valid = false);

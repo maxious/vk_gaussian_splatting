@@ -143,6 +143,9 @@ void GaussianSplatting::onAttach(nvapp::Application* app)
   m_meshSetVk.init(m_app, &m_alloc, &m_uploader, &m_accelStructProps);
   m_cameraSet.init(cameraManip.get());
 
+  // Initialize VDZ depth mesh for 2.5D depth visualization
+  m_vdzMesh.initialize(m_device, &m_alloc, 128, 72);
+
   // Log HDR support status
   {
     // Use global accessor instead of m_app->getSwapchain().getColorSpace()
@@ -176,6 +179,7 @@ void GaussianSplatting::onDetach()
   // release application wide related resources
   m_splatSetVk.deinit();
   m_meshSetVk.deinit();
+  m_vdzMesh.cleanup();
   m_profilerGpuTimer.deinit();
   m_profilerManager->destroyTimeline(m_profilerTimeline);
   m_profilerTimeline = nullptr;

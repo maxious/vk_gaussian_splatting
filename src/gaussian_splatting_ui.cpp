@@ -100,6 +100,8 @@ void GaussianSplattingUI::onAttach(nvapp::Application* app)
   m_ui.enumAdd(GUI_VISUALIZE, VISUALIZE_CLOCK, "Clock cycles");
   m_ui.enumAdd(GUI_VISUALIZE, VISUALIZE_DEPTH, "Splats depth");
   m_ui.enumAdd(GUI_VISUALIZE, VISUALIZE_RAYHITS, "Ray Hit Count");
+  m_ui.enumAdd(GUI_VISUALIZE, VISUALIZE_VDZ_DEPTH, "VDZ Depth (grayscale)");
+  m_ui.enumAdd(GUI_VISUALIZE, VISUALIZE_VDZ_MESH, "VDZ Depth Mesh (2.5D)");
 
   m_ui.enumAdd(GUI_SORTING, SORTING_GPU_SYNC_RADIX, "GPU radix sort");
   m_ui.enumAdd(GUI_SORTING, SORTING_CPU_ASYNC_MULTI, "CPU async std multi");
@@ -728,6 +730,10 @@ void GaussianSplattingUI::onUIRender()
         VkCommandBuffer cmd = m_app->createTempCmdBuffer();
         m_depthManager->uploadDepthFrame(depthFrame, cmd);
         m_app->submitAndWaitTempCmdBuffer(cmd);
+        
+        // Auto-switch to depth visualization mode
+        prmRender.visualize = VISUALIZE_VDZ_DEPTH;
+        LOGI("Switched to VDZ depth visualization mode\n");
       }
     }
     else
@@ -1276,6 +1282,7 @@ void GaussianSplattingUI::guiDrawRendererProperties()
          "Visualize", [&]() { return m_ui.enumCombobox(GUI_VISUALIZE, "##ID", &prmRender.visualize); }, "Selects the visualization mode"))
   {
     m_requestUpdateShaders = true;
+    prmFrame.visualize = prmRender.visualize;
   }
   ImGui::BeginDisabled(prmRender.visualize == 0);
   if(PE::DragFloat("Multiplier", (float*)&prmFrame.multiplier, 1.0F, 0.0F, 1000.0F))
@@ -1284,6 +1291,25 @@ void GaussianSplattingUI::guiDrawRendererProperties()
   ImGui::EndDisabled();
 
   PE::end();
+
+  // VDZ Depth Mesh controls (shown when VDZ mesh mode is selected)
+  if(prmRender.visualize == VISUALIZE_VDZ_MESH)
+  {
+    PE::begin("## VDZ Depth Mesh");
+    PE::SliderFloat("Z Scale", &prmFrame.vdzZScale, 0.0f, 10.0f, "%.2f", 0,
+                    "Depth scale multiplier - controls how depth values affect vertex displacement");
+    PE::SliderFloat("Z Bias", &prmFrame.vdzZBias, -5.0f, 5.0f, "%.2f", 0,
+                    "Global Z offset added after scaling");
+    PE::SliderFloat("Z Gamma", &prmFrame.vdzZGamma, 0.1f, 5.0f, "%.2f", 0,
+                    "Gamma correction for depth (depth = pow(depth, gamma))");
+    PE::SliderFloat("Z Max Clip", &prmFrame.vdzZMaxClip, 0.0f, 10.0f, "%.2f", 0,
+                    "Maximum depth clipping threshold");
+    PE::SliderFloat("Plane Scale", &prmFrame.vdzPlaneScale, 0.1f, 10.0f, "%.2f", 0,
+                    "Scale of the view-aligned plane");
+    PE::SliderFloat("Aspect Ratio", &prmFrame.vdzAspect, 0.5f, 3.0f, "%.3f", 0,
+                    "Aspect ratio (width/height) of the depth texture");
+    PE::end();
+  }
 
   PE::begin("## Common settings");
   if(PE::Checkbox("Wireframe", &prmRender.wireframe, "Show particle bounds in wireframe "))

@@ -47,6 +47,8 @@
 #define VISUALIZE_CLOCK 1
 #define VISUALIZE_DEPTH 2
 #define VISUALIZE_RAYHITS 3
+#define VISUALIZE_VDZ_DEPTH 4  // Display loaded VDZ depth frames (grayscale overlay)
+#define VISUALIZE_VDZ_MESH 5   // Render depth-displaced 2.5D mesh from VDZ data
 
 // type of frustum culling
 #define FRUSTUM_CULLING_NONE 0
@@ -102,6 +104,10 @@
 #define BINDING_MOTION_BUFFER 23
 #define BINDING_TIME_BUFFER 24
 
+// VDZ depth mesh rendering textures (for VISUALIZE_VDZ_MESH mode)
+#define BINDING_VDZ_VIDEO_TEXTURE 25
+#define BINDING_VDZ_DEPTH_TEXTURE 26
+
 // bindings for set 1 of RTX
 #define RTX_BINDING_OUTIMAGE 0        // Ray tracer output image
 #define RTX_BINDING_TLAS_SPLATS 1     // Top-level acceleration structure for splats
@@ -125,6 +131,7 @@
 // bindings for set 0 of Post Process (0 is reserved for BINDING_FRAME_INFO_UBO)
 #define POST_BINDING_MAIN_IMAGE 1  // the image that is presented
 #define POST_BINDING_AUX1_IMAGE 2  // optional aux image to be accumulated (for example)
+#define POST_BINDING_DEPTH_TEXTURE 3  // VDZ depth texture for visualization
 
 
 
@@ -229,6 +236,16 @@ struct FrameInfo
   // Per-eye sensor pose for 3DGUT projection (extracted from viewMatrixArray)
   float4   viewQuatArray[2];                // Rotation quaternions for eye 0 and eye 1
   float3   viewTransArray[2];               // Translation vectors for eye 0 and eye 1
+
+  // VDZ depth mesh rendering parameters (for VISUALIZE_VDZ_MESH mode)
+  float vdzZScale     DEFAULT(1.0f);   // Depth scale multiplier
+  float vdzZBias      DEFAULT(0.0f);   // Global Z offset (added after scaling)
+  float vdzZGamma     DEFAULT(1.0f);   // Gamma correction for depth (pow(depth, gamma))
+  float vdzZMaxClip   DEFAULT(1.0f);   // Maximum depth clipping threshold
+  float vdzPlaneScale DEFAULT(1.0f);   // Scale of the view plane
+  float vdzAspect     DEFAULT(1.777f); // Aspect ratio (width/height) of depth texture
+  int32_t visualize   DEFAULT(0);      // Current visualization mode
+  int32_t _pad0       DEFAULT(0);      // Padding for alignment
 };
 
 // Push constant for raster

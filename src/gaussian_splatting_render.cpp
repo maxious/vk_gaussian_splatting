@@ -676,6 +676,12 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
         drawSplatPrimitives(cmd, splatCount);
       }
 
+      // Render VDZ depth mesh if in VDZ mesh visualization mode
+      if(prmFrame.visualize == VISUALIZE_VDZ_MESH)
+      {
+        drawVdzMesh(cmd);
+      }
+
       vkCmdEndRendering(cmd);
 
       nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getColorImage(colorBufferId),

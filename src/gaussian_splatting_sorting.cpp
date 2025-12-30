@@ -254,6 +254,28 @@ void GaussianSplatting::drawMeshPrimitives(VkCommandBuffer cmd)
   }
 }
 
+void GaussianSplatting::drawVdzMesh(VkCommandBuffer cmd)
+{
+  NVVK_DBG_SCOPE(cmd);
+
+  if(m_vdzMesh.getIndexCount() == 0 || m_graphicsPipelineVdzMesh == VK_NULL_HANDLE)
+    return;
+
+  VkDeviceSize offset{0};
+
+  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipelineVdzMesh);
+  vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_descriptorSet, 0, nullptr);
+
+  vkCmdPushConstants(cmd, m_pipelineLayout,
+                     VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_MESH_BIT_EXT | VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                     0, sizeof(shaderio::PushConstant), &m_pcRaster);
+
+  VkBuffer vertexBuffer = m_vdzMesh.getVertexBuffer();
+  vkCmdBindVertexBuffers(cmd, 0, 1, &vertexBuffer, &offset);
+  vkCmdBindIndexBuffer(cmd, m_vdzMesh.getIndexBuffer(), 0, VK_INDEX_TYPE_UINT32);
+  vkCmdDrawIndexed(cmd, m_vdzMesh.getIndexCount(), 1, 0, 0, 0);
+}
+
 void GaussianSplatting::collectReadBackValuesIfNeeded(void)
 {
   if(m_indirectReadbackHost.buffer != VK_NULL_HANDLE && prmRaster.sortingMethod == SORTING_GPU_SYNC_RADIX && m_canCollectReadback)

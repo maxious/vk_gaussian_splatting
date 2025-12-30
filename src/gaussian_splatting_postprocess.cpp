@@ -28,6 +28,7 @@ void GaussianSplatting::initDescriptorSetPostProcessing()
   m_descriptorBindingsPostProcess.addBinding(BINDING_FRAME_INFO_UBO, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT);
   m_descriptorBindingsPostProcess.addBinding(POST_BINDING_MAIN_IMAGE, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT);
   m_descriptorBindingsPostProcess.addBinding(POST_BINDING_AUX1_IMAGE, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT);
+  m_descriptorBindingsPostProcess.addBinding(POST_BINDING_DEPTH_TEXTURE, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT);
   NVVK_CHECK(m_descriptorBindingsPostProcess.createDescriptorSetLayout(m_device, 0, &m_descriptorSetLayoutPostProcess));
   NVVK_DBG_NAME(m_descriptorSetLayoutPostProcess);
 
@@ -76,6 +77,18 @@ void GaussianSplatting::initDescriptorSetPostProcessing()
                         m_gBuffers.getColorImageView(COLOR_MAIN), VK_IMAGE_LAYOUT_GENERAL);
   writeContainer.append(m_descriptorBindingsPostProcess.getWriteSet(POST_BINDING_AUX1_IMAGE, m_descriptorSetPostProcess),
                         m_gBuffers.getColorImageView(COLOR_AUX1), VK_IMAGE_LAYOUT_GENERAL);
+  
+  // Bind depth texture (if available)
+  if(m_depthManager)
+  {
+    const auto& depthTexture = m_depthManager->getCurrentTexture();
+    if(depthTexture.image.descriptor.imageView)
+    {
+      writeContainer.append(m_descriptorBindingsPostProcess.getWriteSet(POST_BINDING_DEPTH_TEXTURE, m_descriptorSetPostProcess),
+                            depthTexture.image.descriptor.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, m_sampler);
+    }
+  }
+  
   vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writeContainer.size()), writeContainer.data(), 0, nullptr);
 }
 
@@ -89,6 +102,18 @@ void GaussianSplatting::updateDescriptorSetPostProcessing()
                           m_gBuffers.getColorImageView(COLOR_MAIN), VK_IMAGE_LAYOUT_GENERAL);
     writeContainer.append(m_descriptorBindingsPostProcess.getWriteSet(POST_BINDING_AUX1_IMAGE, m_descriptorSetPostProcess),
                           m_gBuffers.getColorImageView(COLOR_AUX1), VK_IMAGE_LAYOUT_GENERAL);
+    
+    // Update depth texture binding (if available)
+    if(m_depthManager)
+    {
+      const auto& depthTexture = m_depthManager->getCurrentTexture();
+      if(depthTexture.image.descriptor.imageView)
+      {
+        writeContainer.append(m_descriptorBindingsPostProcess.getWriteSet(POST_BINDING_DEPTH_TEXTURE, m_descriptorSetPostProcess),
+                              depthTexture.image.descriptor.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, m_sampler);
+      }
+    }
+    
     vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writeContainer.size()), writeContainer.data(), 0, nullptr);
   }
 }

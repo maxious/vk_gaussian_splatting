@@ -23,6 +23,8 @@
 [[vk::binding(BINDING_FRAME_INFO_UBO, 0)]]  ConstantBuffer<FrameInfo> frameInfo;
 [[vk::binding(POST_BINDING_MAIN_IMAGE, 0)]] RWTexture2D<float4>       mainColorImage;
 [[vk::binding(POST_BINDING_AUX1_IMAGE, 0)]] RWTexture2D<float4>       aux1ColorImage;
+[[vk::binding(POST_BINDING_DEPTH_TEXTURE, 0)]] Texture2D<float>      depthTexture;
+[[vk::binding(POST_BINDING_DEPTH_TEXTURE, 0)]] SamplerState           depthSampler;
 // clang-format on
 
 [numthreads(32, 32, 1)]
@@ -36,12 +38,31 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 
   float4 finalColor = mainColorImage[pixel];
 
-  // Do temporal accumulation if enabled (frameSampleId > 0 means we have previous samples)
-  if (frameInfo.frameSampleId > 0)
+  // Visualize VDZ depth texture if requested
+  if (frameInfo.visualize == VISUALIZE_VDZ_DEPTH)
   {
-    const float  a         = 1.0F / float(frameInfo.frameSampleId + 1);
-    const float4 aux1Color = aux1ColorImage[pixel];
-    finalColor = lerp(finalColor, aux1Color, a);
+    // Sample depth texture with normalized coordinates
+    float2 uv = float2(pixel) / frameInfo.viewport;
+    float depthValue = depthTexture.Sample(depthSampler, uv);
+    
+    // Clamp depth for visualization (normalize to displayable range)
+    depthValue = clamp(depthValue, 0.0, 1.0);
+    
+    // Apply a simple grayscale visualization
+    finalColor = float4(float3(depthValue), 1.0);
+  }
+  else
+  {
+    // Do temporal accumulation if enabled (frameSampleId > 0 means we have previous samples)
+    if (frameInfo.frameSampleId > 0)
+    {
+      const float  a         = 1.0F / float(frameInfo.frameSampleId + 1);
+      const float4 aux1Color = aux1ColorImage[pixel];
+      finalColor = lerp(finalColor, aux1Color, a);
+    }
+
+    // Linear to sRGB conversion for ML-SHARP linearRGB Gaussians
+    // SHARP outputs linearRGB colors that need gamma correction for proper display
   }
 
   // Linear to sRGB conversion for ML-SHARP linearRGB Gaussians

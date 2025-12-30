@@ -98,6 +98,7 @@
 #include "splat_sorter_async.h"
 #include "mesh_set_vk.h"
 #include "light_set_vk.h"
+#include "vdz_mesh.h"
 #include "camera_set.h"
 
 #ifdef WITH_OPENXR
@@ -243,6 +244,8 @@ private:
 
   void drawMeshPrimitives(VkCommandBuffer cmd);
 
+  void drawVdzMesh(VkCommandBuffer cmd);
+
   // for statistics display in the UI
   // copy form m_indirectReadbackHost updated at previous frame to m_indirectReadback
   void collectReadBackValuesIfNeeded(void);
@@ -303,6 +306,8 @@ protected:
   SplatSetVk m_splatSetVk = {};
   // Set of meshes in VRAM
   MeshSetVk m_meshSetVk = {};
+  // VDZ depth-displaced mesh for depth visualization
+  VdzMesh m_vdzMesh = {};
   // Set of lights in RAM and VRAM
   LightSetVk m_lightSet = {};
   // Set of cameras in RAM
@@ -470,6 +475,9 @@ protected:
     VkShaderModule rtxRintShader{};    // Interrsection
     // Post processings
     VkShaderModule postComputeShader{};
+    // VDZ depth mesh rendering
+    VkShaderModule vdzMeshVertexShader{};
+    VkShaderModule vdzMeshFragmentShader{};
 
     // Utility storage to process shaders in loop
     std::vector<VkShaderModule*> modules{};
@@ -484,6 +492,8 @@ protected:
   VkPipeline m_graphicsPipeline3dgutMesh = VK_NULL_HANDLE;  // The graphic pipeline to rasterize 3DGUT splats using mesh shaders
   // 3D Meshes Pipelines
   VkPipeline m_graphicsPipelineMesh = VK_NULL_HANDLE;  // The graphic pipeline to rasterize meshes
+  // VDZ depth mesh pipeline
+  VkPipeline m_graphicsPipelineVdzMesh = VK_NULL_HANDLE;
 #ifdef WITH_OPENXR
   // Multiview variants of raster pipelines (viewMask = 0x3 for stereo)
   VkPipeline m_graphicsPipelineGsVertMultiview = VK_NULL_HANDLE;

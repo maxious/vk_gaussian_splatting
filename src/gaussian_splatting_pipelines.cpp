@@ -59,6 +59,10 @@ void GaussianSplatting::initPipelines()
   bindings.addBinding(BINDING_MESH_DESCRIPTORS, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
   bindings.addBinding(BINDING_LIGHT_SET, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
 
+  // VDZ depth mesh textures
+  bindings.addBinding(BINDING_VDZ_VIDEO_TEXTURE, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT);
+  bindings.addBinding(BINDING_VDZ_DEPTH_TEXTURE, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_VERTEX_BIT);
+
   //
   const VkPushConstantRange pcRanges = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT
                                             | VK_SHADER_STAGE_MESH_BIT_EXT | VK_SHADER_STAGE_COMPUTE_BIT,
@@ -145,6 +149,19 @@ void GaussianSplatting::initPipelines()
   if(m_lightSet.size())
   {
     writeContainer.append(bindings.getWriteSet(BINDING_LIGHT_SET, m_descriptorSet), m_lightSet.lightsBuffer);
+  }
+
+  // VDZ depth mesh textures
+  if(m_depthManager)
+  {
+    const auto& depthTexture = m_depthManager->getCurrentTexture();
+    if(depthTexture.image.descriptor.imageView)
+    {
+      writeContainer.append(bindings.getWriteSet(BINDING_VDZ_DEPTH_TEXTURE, m_descriptorSet),
+                            depthTexture.image.descriptor.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, m_sampler);
+      writeContainer.append(bindings.getWriteSet(BINDING_VDZ_VIDEO_TEXTURE, m_descriptorSet),
+                            depthTexture.image.descriptor.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, m_sampler);
+    }
   }
 
   // write
@@ -366,6 +383,43 @@ void GaussianSplatting::initPipelines()
     creator.createGraphicsPipeline(m_device, nullptr, pipelineState, &m_graphicsPipelineMesh);
     NVVK_DBG_NAME(m_graphicsPipelineMesh);
   }
+
+  // Create the VDZ depth mesh rasterization pipeline
+  {
+    nvvk::GraphicsPipelineState pipelineState;
+    pipelineState.rasterizationState.cullMode = VK_CULL_MODE_NONE;
+
+    // No blending for VDZ mesh
+    pipelineState.colorBlendEnables[0] = VK_FALSE;
+
+    // No depth testing for camera-attached mesh
+    pipelineState.depthStencilState.depthWriteEnable = VK_FALSE;
+    pipelineState.depthStencilState.depthTestEnable  = VK_FALSE;
+
+    // VDZ mesh vertex layout: position (vec3) + uv (vec2)
+    pipelineState.vertexBindings   = {{.binding = 0,
+                                       .stride  = sizeof(float) * 3 + sizeof(float) * 2,
+                                       .divisor = 1}};
+    pipelineState.vertexAttributes = {{.location = 0,
+                                       .binding  = 0,
+                                       .format   = VK_FORMAT_R32G32B32_SFLOAT,
+                                       .offset   = 0},
+                                      {.location = 1,
+                                       .binding  = 0,
+                                       .format   = VK_FORMAT_R32G32_SFLOAT,
+                                       .offset   = sizeof(float) * 3}};
+
+    nvvk::GraphicsPipelineCreator creator;
+    creator.pipelineInfo.layout                  = m_pipelineLayout;
+    creator.colorFormats                         = {m_colorFormat};
+    creator.renderingState.depthAttachmentFormat = m_depthFormat;
+
+    creator.addShader(VK_SHADER_STAGE_VERTEX_BIT, "main", m_shaders.vdzMeshVertexShader);
+    creator.addShader(VK_SHADER_STAGE_FRAGMENT_BIT, "main", m_shaders.vdzMeshFragmentShader);
+
+    creator.createGraphicsPipeline(m_device, nullptr, pipelineState, &m_graphicsPipelineVdzMesh);
+    NVVK_DBG_NAME(m_graphicsPipelineVdzMesh);
+  }
 }
 
 // include RTX one
@@ -378,6 +432,7 @@ void GaussianSplatting::deinitPipelines()
   TEST_DESTROY_AND_RESET(m_graphicsPipelineGsMesh, vkDestroyPipeline(m_device, m_graphicsPipelineGsMesh, nullptr));
   TEST_DESTROY_AND_RESET(m_graphicsPipeline3dgutMesh, vkDestroyPipeline(m_device, m_graphicsPipeline3dgutMesh, nullptr));
   TEST_DESTROY_AND_RESET(m_graphicsPipelineMesh, vkDestroyPipeline(m_device, m_graphicsPipelineMesh, nullptr));
+  TEST_DESTROY_AND_RESET(m_graphicsPipelineVdzMesh, vkDestroyPipeline(m_device, m_graphicsPipelineVdzMesh, nullptr));
   TEST_DESTROY_AND_RESET(m_computePipelineGsDistCull, vkDestroyPipeline(m_device, m_computePipelineGsDistCull, nullptr));
 #ifdef WITH_OPENXR
   TEST_DESTROY_AND_RESET(m_graphicsPipelineGsVertMultiview, vkDestroyPipeline(m_device, m_graphicsPipelineGsVertMultiview, nullptr));
