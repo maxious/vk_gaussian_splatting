@@ -28,13 +28,14 @@
 void fetchParticlePSR(in FrameInfo frameInfo, in int splatIndex, out float3 particlePosition, out float3 particleScale, out float3x3 particleInvRotation)
 {
   particlePosition = fetchCenter(splatIndex);
-  
+
   // Apply 4D Motion
   float3 motion = fetchMotion(splatIndex);
   float2 timeData = fetchTime(splatIndex);
-  float t_center = timeData.x;
+  float t_scale = timeData.x; // JS Order: x = scale
+  float t_center = timeData.y; // JS Order: y = center
   float dt = frameInfo.currentTime - t_center;
-  
+
   if (frameInfo.applyMotion != 0) {
       particlePosition += motion * dt;
   }
@@ -150,8 +151,8 @@ bool particleProcessHit(in FrameInfo frameInfo,
 
   // Apply Temporal Opacity modulation
   float2 timeData = fetchTime(splatId);
-  float t_center = timeData.x;
-  float t_scale = timeData.y;
+  float t_scale = timeData.x; // JS Order: x = scale
+  float t_center = timeData.y; // JS Order: y = center
   float dt = frameInfo.currentTime - t_center;
 
   if (frameInfo.temporalCulling != 0) {
@@ -216,8 +217,8 @@ bool particleProcessHitGut(in FrameInfo frameInfo,
 
   // Apply Temporal Opacity modulation
   float2 timeData = fetchTime(splatId);
-  float t_center = timeData.x;
-  float t_scale = timeData.y;
+  float t_scale = timeData.x; // JS Order: x = scale
+  float t_center = timeData.y; // JS Order: y = center
   float dt = frameInfo.currentTime - t_center;
 
   if (frameInfo.temporalCulling != 0) {
