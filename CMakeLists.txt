@@ -199,6 +199,21 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/spz)
 set_property(TARGET spz PROPERTY FOLDER "ThirdParty")
 
 #####################################################################################
+# FFmpeg support for video decoding
+#
+option(ENABLE_VIDEO_DECODER "Enable FFmpeg-based video decoder for VDZ support" ON)
+
+if(ENABLE_VIDEO_DECODER)
+  find_package(FFmpeg QUIET)
+  if(FFmpeg_FOUND)
+    message(STATUS "FFmpeg found - enabling video decoder support")
+    add_definitions(-DWITH_VIDEO_DECODER)
+  else()
+    message(STATUS "FFmpeg not found - video decoder will be disabled. Install FFmpeg DLLs and set FFMPEG_DIR environment variable.")
+  endif()
+endif()
+
+#####################################################################################
 # Source files for this project
 #
 # Note: GLOB is used here, so if you add new files, you must re-run CMake or touch this file.
@@ -211,7 +226,12 @@ endif()
 
 # Exclude Depth Streaming files if disabled
 if (NOT ENABLE_DEPTH_STREAMING)
-    list(FILTER SOURCE_FILES EXCLUDE REGEX "depth_(stream_client|parser|buffer|to_vk)\\.cpp$")
+     list(FILTER SOURCE_FILES EXCLUDE REGEX "depth_(stream_client|parser|buffer|to_vk)\\.cpp$")
+endif()
+
+# Exclude Video Decoder files if disabled
+if (NOT ENABLE_VIDEO_DECODER OR NOT FFmpeg_FOUND)
+     list(FILTER SOURCE_FILES EXCLUDE REGEX "video_decoder\\.cpp$")
 endif()
 
 # Note: src/nvvk_swapchain_override.cpp implements the HDR support for the swapchain,
@@ -290,6 +310,12 @@ endif()
 if(ENABLE_DLSS_RR AND NGX_FOUND)
   target_compile_definitions(${PROJECT_NAME} PRIVATE WITH_DLSS_RR)
   target_link_libraries(${PROJECT_NAME} PRIVATE ngx)
+endif()
+
+# FFmpeg linkage for video decoder
+if(ENABLE_VIDEO_DECODER AND FFmpeg_FOUND)
+  target_include_directories(${PROJECT_NAME} PRIVATE ${FFmpeg_INCLUDE_DIRS})
+  target_link_libraries(${PROJECT_NAME} PRIVATE ${FFmpeg_LIBRARIES})
 endif()
 
 # OpenXR linkage

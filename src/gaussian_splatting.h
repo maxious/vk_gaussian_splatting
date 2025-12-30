@@ -22,6 +22,9 @@
 
 #include "depth_stream_client.h"
 #include "depth_to_vk.h"
+#ifdef WITH_VIDEO_DECODER
+#include "video_decoder.h"
+#endif
 
 #include <iostream>
 
@@ -573,8 +576,13 @@ protected:
   bool m_enableDepthRendering = false;
   float m_depthScale = 1.0f;
   float m_depthBias = 0.0f;
-  
+
   DepthStreamClient::ClientStats m_depthStats{};
+  int m_depthFrameCounter = 0;  // For selective debug logging
+
+#ifdef WITH_VIDEO_DECODER
+  std::unique_ptr<VideoDecoder> m_videoDecoder;
+#endif
 
   ///////////////////////////////
   // Post processing

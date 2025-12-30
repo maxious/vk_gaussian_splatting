@@ -2,8 +2,11 @@
 #include "depth_stream_client.h"
 #include <nvutils/logger.hpp>
 #include <algorithm>
+#include <mutex>
 
 void DepthBuffer::addFrame(const DepthFrame& frame) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+
     m_receivedFrames[frame.timestampMs] = frame;
 
     double now = getCurrentTimeMs();
@@ -22,7 +25,9 @@ void DepthBuffer::addFrame(const DepthFrame& frame) {
     }
 }
 
-void DepthBuffer::ensureFrame(uint64_t targetMs) {
+void DepthBuffer::prefetch(uint64_t targetMs) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+
     if (m_receivedFrames.find(targetMs) != m_receivedFrames.end()) {
         return;
     }
@@ -51,6 +56,8 @@ void DepthBuffer::ensureFrame(uint64_t targetMs) {
 }
 
 void DepthBuffer::cleanup(uint64_t oldThresholdMs) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+
     for (auto it = m_receivedFrames.begin(); it != m_receivedFrames.end();) {
         if (it->first < oldThresholdMs) {
             it = m_receivedFrames.erase(it);
@@ -61,13 +68,16 @@ void DepthBuffer::cleanup(uint64_t oldThresholdMs) {
 }
 
 bool DepthBuffer::getFrame(uint64_t targetMs, DepthFrame& outFrame) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+
     auto cacheIt = m_receivedFrames.find(targetMs);
     if (cacheIt != m_receivedFrames.end()) {
         outFrame = cacheIt->second;
         return true;
     }
 
-    ensureFrame(targetMs);
-    
+    // Note: prefetch() will acquire its own lock, but that's OK since it's recursive
+    prefetch(targetMs);
+
     return false;
 }

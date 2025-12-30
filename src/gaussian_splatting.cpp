@@ -187,6 +187,9 @@ void GaussianSplatting::onDetach()
     m_depthManager.reset();
   }
   m_depthClient.reset();
+#ifdef WITH_VIDEO_DECODER
+  m_videoDecoder.reset();
+#endif
 
   m_profilerGpuTimer.deinit();
   m_profilerManager->destroyTimeline(m_profilerTimeline);
@@ -334,6 +337,20 @@ void GaussianSplatting::enableDepthRendering(const std::string& host, int port, 
     m_depthManager->initialize(m_device, m_app->getPhysicalDevice(), m_app->getQueue(0).queue, &m_alloc);
   }
 
+#ifdef WITH_VIDEO_DECODER
+  // Initialize video decoder for local VDZ+video playback
+  m_videoDecoder = std::make_unique<VideoDecoder>();
+  if(!m_videoDecoder->open(videoPath))
+  {
+    LOGE("Failed to open video file for decoding: %s\n", videoPath.c_str());
+    m_videoDecoder.reset();
+  }
+  else
+  {
+    m_videoDecoder->startDecoding();
+    LOGI("Video decoder initialized for file: %s\n", videoPath.c_str());
+  }
+#else
   // Upload video
   DepthStreamClient::SessionInfo session;
   if(!m_depthClient->uploadVideo(videoPath, session))
@@ -348,31 +365,68 @@ void GaussianSplatting::enableDepthRendering(const std::string& host, int port, 
     LOGE("Failed to connect depth stream\n");
     return;
   }
+#endif
 
   m_enableDepthRendering = true;
-  LOGI("Depth rendering enabled for session: %s\n", session.sessionId.c_str());
+  LOGI("Depth rendering enabled for session: %s\n", videoPath.c_str());
 }
 
 void GaussianSplatting::updateDepthRendering(VkCommandBuffer cmd)
 {
-  if(!m_enableDepthRendering || !m_depthClient)
+  if(!m_enableDepthRendering)
   {
     return;
   }
 
-  // Request depth for current time
-  uint64_t timestampMs = static_cast<uint64_t>(prmFrame.currentTime * 1000.0f);
-  
-  m_depthClient->update(prmFrame.currentTime * 1000.0f, m_depthClient->getFps());
+#ifdef WITH_VIDEO_DECODER
+  // Handle video decoder case
+  if(m_videoDecoder)
+  {
+    // TODO: Synchronize video frames with depth frames based on timestamps
+    // For now, just get the next available frame
+    DecodedFrame videoFrame;
+    if(m_videoDecoder->getNextFrame(videoFrame))
+    {
+      // TODO: Upload video frame to texture
+      // This would require creating a video texture and uploading the RGBA data
+      LOGD("Got video frame: %dx%d @ %.3f s\n", videoFrame.width, videoFrame.height, videoFrame.timestamp);
+    }
 
-  DepthFrame frame;
-  if(m_depthClient->getFrame(timestampMs, frame)) {
-      if(m_depthManager) {
-          m_depthManager->uploadDepthFrame(frame, cmd);
-      }
+    // TODO: Get corresponding depth frame and synchronize timestamps
+    // For now, depth frames are handled separately (from VDZ files)
   }
+  else
+#endif
+  {
+    // Handle streaming case
+    if(!m_depthClient)
+    {
+      return;
+    }
 
-  m_depthStats = m_depthClient->getStats();
+    // Request depth for current time
+    uint64_t timestampMs = static_cast<uint64_t>(prmFrame.currentTime * 1000.0f);
+
+    m_depthClient->update(prmFrame.currentTime * 1000.0f, m_depthClient->getFps());
+
+    static int frameCounter = 0;  // For selective debug logging
+    DepthFrame frame;
+    if(m_depthClient->getFrame(timestampMs, frame)) {
+        if(m_depthManager) {
+            m_depthManager->uploadDepthFrame(frame, cmd);
+            frameCounter++;
+
+            // Log every 30th frame for debugging
+            if(frameCounter % 30 == 0) {
+                LOGI("Depth frame #%d uploaded: %dx%d @ %llu ms (req: %llu ms)\n",
+                     frameCounter, frame.width, frame.height,
+                     frame.timestampMs, timestampMs);
+            }
+        }
+    }
+
+    m_depthStats = m_depthClient->getStats();
+  }
 }
 
 void GaussianSplatting::deinitScene()

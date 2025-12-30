@@ -85,16 +85,19 @@ void DepthTextureManager::createTexture(uint32_t width, uint32_t height, DepthTe
 
 void DepthTextureManager::uploadDepthFrame(const DepthFrame& frame, VkCommandBuffer cmd) {
     DepthTexture* texture = findOrCreateTexture(frame.width, frame.height);
-    if (!texture) return;
+    if (!texture) {
+        LOGE("Failed to find/create texture for depth frame %dx%d\n", frame.width, frame.height);
+        return;
+    }
 
     size_t bufferSize = frame.data.size() * sizeof(float);
-    
-    m_stagingAllocator->appendImage(texture->image, 
+
+    m_stagingAllocator->appendImage(texture->image,
                                   bufferSize,
                                   frame.data.data(),
-                                  static_cast<VkImageLayout>(vk::ImageLayout::eShaderReadOnlyOptimal)); 
+                                  static_cast<VkImageLayout>(vk::ImageLayout::eShaderReadOnlyOptimal));
 
     m_stagingAllocator->cmdUploadAppended(cmd);
-    
+
     texture->lastUsedMs = frame.timestampMs;
 }

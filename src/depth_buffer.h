@@ -4,6 +4,7 @@
 #include <deque>
 #include <map>
 #include <chrono>
+#include <mutex>
 
 namespace vk_gaussian_splatting {
     class DepthStreamClient;
@@ -16,10 +17,13 @@ public:
     void setClient(vk_gaussian_splatting::DepthStreamClient* client) { m_client = client; }
     void addFrame(const DepthFrame& frame);
 
-    // Get best frame for current timestamp
+    // Get best frame for current timestamp. Returns true if frame is available.
+    // If not cached, triggers a prefetch request and returns false.
     bool getFrame(uint64_t targetMs, DepthFrame& outFrame);
     
-    void ensureFrame(uint64_t targetMs);
+    // Request a frame to be fetched ahead of time (for lookahead buffering).
+    // Does nothing if already cached or pending.
+    void prefetch(uint64_t targetMs);
 
     void cleanup(uint64_t oldThresholdMs);
 
@@ -41,6 +45,7 @@ private:
     std::deque<PendingFrame> m_pendingFrames;
     std::map<uint64_t, DepthFrame> m_receivedFrames;  // Cache for re-requests
     size_t m_maxPending;
+    mutable std::recursive_mutex m_mutex;  // Recursive mutex for prefetch calling from getFrame
 
     vk_gaussian_splatting::DepthStreamClient* m_client{nullptr};
 

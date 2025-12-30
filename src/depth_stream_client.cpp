@@ -6,6 +6,11 @@
 
 #include <ixwebsocket/IXNetSystem.h>
 
+// Workaround for potential mutex issues
+// See: https://developercommunity.visualstudio.com/t/5e013719/8n9t9qf/
+#define _HAS_EXCEPTIONS 0
+#include <mutex>
+
 namespace vk_gaussian_splatting {
 
 
@@ -131,9 +136,15 @@ void DepthStreamClient::onDepthFrame(const ix::WebSocketMessagePtr& msg) {
                 DepthFrame frame;
 
                 if (parseDepthFrame(buffer, frame)) {
-                    LOGD("Received depth frame: %dx%d, timestamp=%llu, scale=%.4f, bias=%.4f\n",
-                           frame.width, frame.height, frame.timestampMs, frame.scale, frame.bias);
-                    
+                    static int frameCount = 0;
+                    frameCount++;
+
+                    // Log every 30th frame for debugging
+                    if (frameCount % 30 == 0) {
+                        LOGI("Depth frame #%d received: %dx%d @ %llu ms (scale=%.4f, bias=%.4f)\n",
+                             frameCount, frame.width, frame.height, frame.timestampMs, frame.scale, frame.bias);
+                    }
+
                     m_depthBuffer.addFrame(frame);
                     if (m_depthCallback) m_depthCallback(frame);
                 }
@@ -191,7 +202,7 @@ void DepthStreamClient::update(double currentTimeMs, float videoFps) {
 
     // Iterate through the lookahead window and request missing frames
     for (uint64_t t = alignedStartMs; t < endMs; t += static_cast<uint64_t>(stepMs)) {
-        m_depthBuffer.ensureFrame(t);
+        m_depthBuffer.prefetch(t);
     }
 
     // Cleanup old frames (keep 2 seconds history)
