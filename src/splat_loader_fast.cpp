@@ -199,14 +199,19 @@ bool SplatLoaderFast::load(const std::filesystem::path& filename, SplatSet& outp
   const size_t stride    = layout.vertexStride;
 
   LOGI("PLY: %zu vertices, stride=%zu bytes, headerSize=%zu\n", count, stride, headerSize);
-  LOGI("PLY offsets: x=%zu y=%zu z=%zu opacity=%zu\n", layout.xOffset, layout.yOffset, layout.zOffset, layout.opacityOffset);
-  LOGI("PLY offsets: t=%zu t_scale=%zu motion=%zu/%zu/%zu\n", 
+  LOGD("PLY offsets: x=%zu y=%zu z=%zu opacity=%zu\n", layout.xOffset, layout.yOffset, layout.zOffset, layout.opacityOffset);
+  LOGD("PLY offsets: t=%zu t_scale=%zu motion=%zu/%zu/%zu\n", 
        layout.timeOffset, layout.timeScaleOffset, 
        layout.motionOffset[0], layout.motionOffset[1], layout.motionOffset[2]);
   
   size_t expectedDataSize = count * stride;
   size_t actualDataSize = mapping.size() - headerSize;
-  LOGI("PLY data: expected=%zu actual=%zu\n", expectedDataSize, actualDataSize);
+  LOGD("PLY data: expected=%zu actual=%zu\n", expectedDataSize, actualDataSize);
+  
+  int totalExtractions = 3 + 1 + 3 + 3 + 4 + layout.restCount;
+  if(layout.timeOffset != static_cast<size_t>(-1)) totalExtractions += 5;
+  LOGI("PLY: %d extractions, %d SH coeffs%s\n", totalExtractions, layout.restCount,
+       layout.timeOffset != static_cast<size_t>(-1) ? ", temporal data" : "");
   
   if(actualDataSize < expectedDataSize)
   {
@@ -253,34 +258,53 @@ bool SplatLoaderFast::load(const std::filesystem::path& filename, SplatSet& outp
     });
   };
 
+  int currentExtraction = 0;
+  
+  auto reportProgress = [&]() {
+    if(progressCallback)
+    {
+      currentExtraction++;
+      progressCallback(float(currentExtraction) / float(totalExtractions));
+    }
+  };
+
   extract_float(layout.xOffset, output.positions.data() + 0, 3);
+  reportProgress();
   extract_float(layout.yOffset, output.positions.data() + 1, 3);
+  reportProgress();
   extract_float(layout.zOffset, output.positions.data() + 2, 3);
-  if(progressCallback) progressCallback(0.2f);
+  reportProgress();
 
   extract_float(layout.opacityOffset, output.opacity.data(), 1);
-  if(progressCallback) progressCallback(0.3f);
+  reportProgress();
 
   extract_float(layout.dcOffset[0], output.f_dc.data() + 0, 3);
+  reportProgress();
   extract_float(layout.dcOffset[1], output.f_dc.data() + 1, 3);
+  reportProgress();
   extract_float(layout.dcOffset[2], output.f_dc.data() + 2, 3);
-  if(progressCallback) progressCallback(0.4f);
+  reportProgress();
 
   extract_float(layout.scaleOffset[0], output.scale.data() + 0, 3);
+  reportProgress();
   extract_float(layout.scaleOffset[1], output.scale.data() + 1, 3);
+  reportProgress();
   extract_float(layout.scaleOffset[2], output.scale.data() + 2, 3);
-  if(progressCallback) progressCallback(0.5f);
+  reportProgress();
 
   extract_float(layout.rotOffset[0], output.rotation.data() + 0, 4);
+  reportProgress();
   extract_float(layout.rotOffset[1], output.rotation.data() + 1, 4);
+  reportProgress();
   extract_float(layout.rotOffset[2], output.rotation.data() + 2, 4);
+  reportProgress();
   extract_float(layout.rotOffset[3], output.rotation.data() + 3, 4);
-  if(progressCallback) progressCallback(0.6f);
+  reportProgress();
 
   for(int j = 0; j < layout.restCount; ++j)
   {
     extract_float(layout.restOffset[j], output.f_rest.data() + j, layout.restCount);
-    if(progressCallback && (j % 5 == 0)) progressCallback(0.6f + 0.3f * (float(j) / layout.restCount));
+    reportProgress();
   }
 
   if(layout.timeOffset != static_cast<size_t>(-1))
@@ -290,17 +314,20 @@ bool SplatLoaderFast::load(const std::filesystem::path& filename, SplatSet& outp
     output.time.resize(count);
     output.time_scale.resize(count);
     extract_float(layout.motionOffset[0], output.motion.data() + 0, 3);
+    reportProgress();
     extract_float(layout.motionOffset[1], output.motion.data() + 1, 3);
+    reportProgress();
     extract_float(layout.motionOffset[2], output.motion.data() + 2, 3);
+    reportProgress();
     extract_float(layout.timeOffset, output.time.data(), 1);
+    reportProgress();
     extract_float(layout.timeScaleOffset, output.time_scale.data(), 1);
+    reportProgress();
     
     for(size_t i = 0; i < count; ++i)
     {
       output.time_scale[i] = std::exp(output.time_scale[i]);
     }
-    
-    if(progressCallback) progressCallback(0.95f);
   }
 
   if(progressCallback) progressCallback(1.0f);
