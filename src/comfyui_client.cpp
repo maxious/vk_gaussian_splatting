@@ -28,33 +28,19 @@
 
 #include <nvutils/logger.hpp>
 
-#ifdef _WIN32
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#pragma comment(lib, "ws2_32.lib")
-#else
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <unistd.h>
-#include <netdb.h>
-#endif
+#include <ixwebsocket/IXNetSystem.h>
 
 namespace vk_gaussian_splatting {
 
 ComfyUIClient::ComfyUIClient()
 {
+    ix::initNetSystem();
     m_clientId = generateClientId();
-
-    m_client.clear_access_channels(websocketpp::log::alevel::all);
-    m_client.clear_error_channels(websocketpp::log::elevel::all);
-
-    m_client.init_asio();
-
-    m_client.set_message_handler([this](auto hdl, auto msg) { onMessage(hdl, msg); });
-    m_client.set_open_handler([this](auto hdl) { onOpen(hdl); });
-    m_client.set_close_handler([this](auto hdl) { onClose(hdl); });
-    m_client.set_fail_handler([this](auto hdl) { onFail(hdl); });
+    
+    // IXWebSocket configuration
+    m_webSocket.setOnMessageCallback([this](const ix::WebSocketMessagePtr& msg) {
+        onMessage(msg);
+    });
 }
 
 ComfyUIClient::~ComfyUIClient()
@@ -91,22 +77,8 @@ bool ComfyUIClient::connect(const std::string& host, uint16_t port)
     try
     {
         std::string uri = "ws://" + host + ":" + std::to_string(port) + "/ws?clientId=" + m_clientId;
-
-        websocketpp::lib::error_code ec;
-        auto con = m_client.get_connection(uri, ec);
-
-        if (ec)
-        {
-            std::lock_guard<std::mutex> lock(m_mutex);
-            m_lastError = "Connection error: " + ec.message();
-            m_state.store(State::Error);
-            return false;
-        }
-
-        m_client.connect(con);
-
-        m_ioThread = std::thread(&ComfyUIClient::ioThreadFunc, this);
-
+        m_webSocket.setUrl(uri);
+        m_webSocket.start();
         return true;
     }
     catch (const std::exception& e)
@@ -124,259 +96,140 @@ void ComfyUIClient::disconnect()
 
     if (m_state.load() == State::Connected || m_state.load() == State::Running)
     {
-        try
-        {
-            m_client.close(m_connectionHdl, websocketpp::close::status::normal, "Client disconnecting");
-        }
-        catch (...) {}
-    }
-
-    m_client.stop();
-
-    if (m_ioThread.joinable())
-    {
-        m_ioThread.join();
+        m_webSocket.stop();
     }
 
     m_state.store(State::Disconnected);
 }
 
-void ComfyUIClient::ioThreadFunc()
+void ComfyUIClient::onMessage(const ix::WebSocketMessagePtr& msg)
 {
-    try
+    if (msg->type == ix::WebSocketMessageType::Open)
     {
-        m_client.run();
+        m_state.store(State::Connected);
+        LOGI("ComfyUI: WebSocket connected\n");
     }
-    catch (const std::exception& e)
+    else if (msg->type == ix::WebSocketMessageType::Close)
     {
         std::lock_guard<std::mutex> lock(m_mutex);
-        m_lastError = std::string("IO thread exception: ") + e.what();
+        m_lastError = "Connection closed - " + msg->closeInfo.reason;
+        m_state.store(State::Disconnected);
+        LOGI("ComfyUI: WebSocket closed (%s)\n", msg->closeInfo.reason.c_str());
+    }
+    else if (msg->type == ix::WebSocketMessageType::Error)
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_lastError = msg->errorInfo.reason;
         m_state.store(State::Error);
+        LOGE("ComfyUI: %s\n", msg->errorInfo.reason.c_str());
     }
-}
-
-void ComfyUIClient::onOpen(websocketpp::connection_hdl hdl)
-{
-    m_connectionHdl = hdl;
-    m_state.store(State::Connected);
-    LOGI("ComfyUI: WebSocket connected\n");
-}
-
-void ComfyUIClient::onClose(websocketpp::connection_hdl hdl)
-{
-    std::string reason;
-    try
+    else if (msg->type == ix::WebSocketMessageType::Message)
     {
-        auto con = m_client.get_con_from_hdl(hdl);
-        auto code = con->get_remote_close_code();
-        auto closeReason = con->get_remote_close_reason();
-        reason = "Code " + std::to_string(code);
-        if (!closeReason.empty())
+        try
         {
-            reason += ": " + closeReason;
-        }
-    }
-    catch (...) { reason = "Unknown reason"; }
+            auto data = nlohmann::json::parse(msg->str);
+            std::string msgType = data.value("type", "");
 
-    std::lock_guard<std::mutex> lock(m_mutex);
-    m_lastError = "Connection closed - " + reason;
-    m_state.store(State::Disconnected);
-    LOGI("ComfyUI: WebSocket closed (%s)\n", reason.c_str());
-}
-
-void ComfyUIClient::onFail(websocketpp::connection_hdl hdl)
-{
-    std::string errorDetail;
-    try
-    {
-        auto con = m_client.get_con_from_hdl(hdl);
-        auto ec = con->get_ec();
-        auto httpStatus = con->get_response_code();
-        auto uri = con->get_uri()->str();
-
-        if (ec)
-        {
-            errorDetail = ec.message();
-            if (ec == websocketpp::error::make_error_code(websocketpp::error::value::invalid_uri))
-                errorDetail += " (invalid URI format)";
-            else if (ec.value() == 111)  // Connection refused
-                errorDetail = "Connection refused - is ComfyUI running at " + uri + "?";
-            else if (ec.value() == 110)  // Connection timed out
-                errorDetail = "Connection timed out - check if " + uri + " is reachable";
-            else if (ec.value() == 113)  // No route to host
-                errorDetail = "No route to host - check network connection";
-        }
-        else if (httpStatus != 0)
-        {
-            errorDetail = "HTTP error " + std::to_string(httpStatus);
-            if (httpStatus == 404)
-                errorDetail += " - ComfyUI websocket endpoint not found";
-            else if (httpStatus == 403)
-                errorDetail += " - Access forbidden";
-            else if (httpStatus == 503)
-                errorDetail += " - ComfyUI service unavailable";
-        }
-        else
-        {
-            errorDetail = "Unknown connection failure to " + uri;
-        }
-    }
-    catch (...)
-    {
-        errorDetail = "Connection failed (unable to get details)";
-    }
-
-    std::lock_guard<std::mutex> lock(m_mutex);
-    m_lastError = errorDetail;
-    m_state.store(State::Error);
-    LOGE("ComfyUI: %s\n", errorDetail.c_str());
-}
-
-void ComfyUIClient::onMessage(websocketpp::connection_hdl hdl, WsClient::message_ptr msg)
-{
-    try
-    {
-        auto payload = msg->get_payload();
-        auto data = nlohmann::json::parse(payload);
-
-        std::string msgType = data.value("type", "");
-
-        if (msgType == "progress")
-        {
-            auto progressData = data["data"];
-            int current = progressData.value("value", 0);
-            int total = progressData.value("max", 1);
-
-            m_progressCurrent.store(current);
-            m_progressTotal.store(total);
-
-            if (m_progressCallback)
+            if (msgType == "progress")
             {
-                m_progressCallback(current, total, "");
-            }
-        }
-        else if (msgType == "executing")
-        {
-            auto execData = data["data"];
-            std::string nodeId = execData.value("node", "");
+                auto progressData = data["data"];
+                int current = progressData.value("value", 0);
+                int total = progressData.value("max", 1);
 
-            if (nodeId.empty())
-            {
-                std::string promptId = execData.value("prompt_id", "");
-                if (promptId == m_currentPromptId)
+                m_progressCurrent.store(current);
+                m_progressTotal.store(total);
+
+                if (m_progressCallback)
                 {
-                    m_state.store(State::Completed);
+                    m_progressCallback(current, total, "");
+                }
+            }
+            else if (msgType == "executing")
+            {
+                auto execData = data["data"];
+                std::string nodeId = execData.value("node", "");
 
-                    WorkflowResult result;
-                    result.success = true;
+                if (nodeId.empty())
+                {
+                    std::string promptId = execData.value("prompt_id", "");
+                    if (promptId == m_currentPromptId)
                     {
-                        std::lock_guard<std::mutex> lock(m_mutex);
-                        result.plyPath = m_outputPlyPath;
-                    }
+                        m_state.store(State::Completed);
 
-                    {
-                        std::lock_guard<std::mutex> lock(m_mutex);
-                        m_pendingResults.push(result);
+                        WorkflowResult result;
+                        result.success = true;
+                        {
+                            std::lock_guard<std::mutex> lock(m_mutex);
+                            result.plyPath = m_outputPlyPath;
+                        }
+
+                        {
+                            std::lock_guard<std::mutex> lock(m_mutex);
+                            m_pendingResults.push(result);
+                        }
                     }
                 }
             }
-        }
-        else if (msgType == "executed")
-        {
-            auto execData = data["data"];
-            if (execData.contains("output"))
+            else if (msgType == "executed")
             {
-                auto output = execData["output"];
-                if (output.contains("ply_path"))
+                auto execData = data["data"];
+                if (execData.contains("output"))
                 {
-                    std::lock_guard<std::mutex> lock(m_mutex);
-                    m_outputPlyPath = output["ply_path"].get<std::string>();
-                    LOGI("ComfyUI: PLY output path: %s\n", m_outputPlyPath.c_str());
+                    auto output = execData["output"];
+                    if (output.contains("ply_path"))
+                    {
+                        std::lock_guard<std::mutex> lock(m_mutex);
+                        m_outputPlyPath = output["ply_path"].get<std::string>();
+                        LOGI("ComfyUI: PLY output path: %s\n", m_outputPlyPath.c_str());
+                    }
                 }
             }
-        }
-        else if (msgType == "execution_error")
-        {
-            std::lock_guard<std::mutex> lock(m_mutex);
-            m_lastError = data.value("message", "Unknown execution error");
-            m_state.store(State::Error);
+            else if (msgType == "execution_error")
+            {
+                std::lock_guard<std::mutex> lock(m_mutex);
+                m_lastError = data.value("message", "Unknown execution error");
+                m_state.store(State::Error);
 
-            WorkflowResult result;
-            result.success = false;
-            result.errorMessage = m_lastError;
-            m_pendingResults.push(result);
+                WorkflowResult result;
+                result.success = false;
+                result.errorMessage = m_lastError;
+                m_pendingResults.push(result);
+            }
         }
-    }
-    catch (const std::exception& e)
-    {
-        LOGE("ComfyUI: Error parsing message: %s\n", e.what());
+        catch (const std::exception& e)
+        {
+            LOGE("ComfyUI: Error parsing message: %s\n", e.what());
+        }
     }
 }
 
 bool ComfyUIClient::sendHttpPost(const std::string& endpoint, const std::string& body, std::string& response)
 {
-#ifdef _WIN32
-    WSADATA wsaData;
-    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0)
-    {
+    ix::HttpClient httpClient;
+    auto args = std::make_shared<ix::HttpRequestArgs>();
+    args->body = body;
+    args->extraHeaders["Content-Type"] = "application/json";
+    
+    std::string url = "http://" + m_host + ":" + std::to_string(m_port) + endpoint;
+    auto res = httpClient.post(url, body, args);
+    
+    if (res->errorCode != ix::HttpErrorCode::Ok) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_lastError = "HTTP error: " + res->errorMsg;
         return false;
     }
-#endif
-
-    int sock = static_cast<int>(socket(AF_INET, SOCK_STREAM, 0));
-    if (sock < 0)
-    {
-#ifdef _WIN32
-        WSACleanup();
-#endif
+    
+    if (res->statusCode != 200) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_lastError = "HTTP error " + std::to_string(res->statusCode);
         return false;
     }
-
-    struct sockaddr_in server{};
-    server.sin_family = AF_INET;
-    server.sin_port = htons(m_port);
-    inet_pton(AF_INET, m_host.c_str(), &server.sin_addr);
-
-    if (::connect(sock, (struct sockaddr*)&server, sizeof(server)) < 0)
-    {
-#ifdef _WIN32
-        closesocket(sock);
-        WSACleanup();
-#else
-        close(sock);
-#endif
-        return false;
-    }
-
-    std::stringstream request;
-    request << "POST " << endpoint << " HTTP/1.1\r\n";
-    request << "Host: " << m_host << ":" << m_port << "\r\n";
-    request << "Content-Type: application/json\r\n";
-    request << "Content-Length: " << body.size() << "\r\n";
-    request << "Connection: close\r\n\r\n";
-    request << body;
-
-    std::string requestStr = request.str();
-    send(sock, requestStr.c_str(), static_cast<int>(requestStr.size()), 0);
-
-    char buffer[4096];
-    response.clear();
-    int bytesReceived;
-    while ((bytesReceived = recv(sock, buffer, sizeof(buffer) - 1, 0)) > 0)
-    {
-        buffer[bytesReceived] = '\0';
-        response += buffer;
-    }
-
-#ifdef _WIN32
-    closesocket(sock);
-    WSACleanup();
-#else
-    close(sock);
-#endif
-
+    
+    response = res->body;
     return true;
 }
+
+// ... rest of the file ...
 
 nlohmann::json ComfyUIClient::loadAndModifyWorkflow(const std::filesystem::path& workflowPath,
                                                      const std::string& positivePrompt,

@@ -19,6 +19,11 @@
 
 #include <gaussian_splatting_ui.h>
 
+// Define the dynamic dispatcher storage
+// This handles LNK2001: unresolved external symbol "class vk::detail::DispatchLoaderDynamic vk::detail::defaultDispatchLoaderDynamic"
+#include <vulkan/vulkan.hpp>
+VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
+
 using namespace vk_gaussian_splatting;
 
 // create, setup and run an nvapp::Application

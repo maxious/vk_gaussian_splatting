@@ -20,7 +20,11 @@
 #ifndef _GAUSSIAN_SPLATTING_H_
 #define _GAUSSIAN_SPLATTING_H_
 
+#include "depth_stream_client.h"
+#include "depth_to_vk.h"
+
 #include <iostream>
+
 #include <string>
 #include <array>
 #include <chrono>
@@ -106,6 +110,9 @@
 
 namespace vk_gaussian_splatting {
 
+
+
+
 class GaussianSplatting
 {
 public:
@@ -119,8 +126,13 @@ public:
                                    std::vector<std::string>& outDeviceExtensions);
 #endif
 
-public:
-  // Camera manipulator
+    void enableDepthRendering(const std::string& videoPath);
+    void updateDepthRendering(VkCommandBuffer cmd);
+
+  public:
+    // Camera manipulator
+
+
   // public so that it can be accessed by main
   std::shared_ptr<nvutils::CameraManipulator> cameraManip{};
 
@@ -546,8 +558,16 @@ protected:
 
   shaderio::PushConstantRay m_pcRay{};  // Push constant for ray tracer
 
+  std::unique_ptr<DepthStreamClient>   m_depthClient;
+  std::unique_ptr<DepthTextureManager> m_depthManager;
+  bool m_enableDepthRendering = false;
+  float m_depthScale = 1.0f;
+  float m_depthBias = 0.0f;
+
   ///////////////////////////////
   // Post processing
+
+
 
   VkPipeline       m_computePipelinePostProcess = VK_NULL_HANDLE;
   VkPipelineLayout m_pipelineLayoutPostProcess  = VK_NULL_HANDLE;

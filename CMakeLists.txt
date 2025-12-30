@@ -134,43 +134,41 @@ set_property(TARGET webp PROPERTY FOLDER "ThirdParty/libwebp")
 set_property(TARGET webpdecode PROPERTY FOLDER "ThirdParty/libwebp")
 set_property(TARGET webpdspdecode PROPERTY FOLDER "ThirdParty/libwebp")
 set_property(TARGET webputilsdecode PROPERTY FOLDER "ThirdParty/libwebp")
-message(STATUS "libwebp enabled for SOG format support")
+  message(STATUS "libwebp enabled for SOG format support")
+
+
 
 #####
-# WebSocket++ for ComfyUI integration
-option(ENABLE_COMFYUI "Enable ComfyUI WebSocket integration" ON)
+# Network libraries for ComfyUI and Depth Streaming (unified)
+option(ENABLE_COMFYUI "Enable ComfyUI integration" ON)
+option(ENABLE_DEPTH_STREAMING "Enable VideoDepthViewer3D depth streaming" ON)
 
-if(ENABLE_COMFYUI)
+if(ENABLE_COMFYUI OR ENABLE_DEPTH_STREAMING)
   include(FetchContent)
-  
-  # Standalone ASIO (no Boost dependency)
+
+# IXWebSocket for HTTP and WebSocket (No OpenSSL dependency on Windows - uses Schannel)
   FetchContent_Declare(
-    asio
-    GIT_REPOSITORY https://github.com/chriskohlhoff/asio.git
-    GIT_TAG        asio-1-30-2
+    ixwebsocket
+    GIT_REPOSITORY https://github.com/machinezone/IXWebSocket.git
+    GIT_TAG        v11.3.3
   )
-  FetchContent_MakeAvailable(asio)
+  # Configure IXWebSocket options
+  set(USE_TLS OFF CACHE BOOL "" FORCE) # Disable TLS to avoid OpenSSL/MbedTLS issues for now
+  set(USE_OPENSSL OFF CACHE BOOL "" FORCE)
+  set(USE_MBED_TLS OFF CACHE BOOL "" FORCE)
+  set(USE_ZLIB OFF CACHE BOOL "" FORCE) 
+  set(USE_WS ON CACHE BOOL "" FORCE)
+  set(USE_TEST OFF CACHE BOOL "" FORCE)
+  set(IXWEBSOCKET_INSTALL OFF CACHE BOOL "" FORCE)
   
-  # WebSocket++ (header-only)
-  FetchContent_Declare(
-    websocketpp
-    GIT_REPOSITORY https://github.com/zaphoyd/websocketpp.git
-    GIT_TAG        4dfe1be74e684acca19ac1cf96cce0df9eac2a2d
-  )
-  FetchContent_MakeAvailable(websocketpp)
-  
-  # Create interface library for websocketpp
-  add_library(websocketpp INTERFACE)
-  target_include_directories(websocketpp INTERFACE 
-    ${websocketpp_SOURCE_DIR}
-    ${asio_SOURCE_DIR}/asio/include
-  )
-  target_compile_definitions(websocketpp INTERFACE 
-    ASIO_STANDALONE
-    _WEBSOCKETPP_CPP11_STL_
-  )
-  
-  message(STATUS "WebSocket++ enabled for ComfyUI integration")
+  FetchContent_MakeAvailable(ixwebsocket)
+
+  if(ENABLE_COMFYUI)
+    message(STATUS "ComfyUI integration enabled (IXWebSocket)")
+  endif()
+  if(ENABLE_DEPTH_STREAMING)
+    message(STATUS "Depth streaming enabled (IXWebSocket)")
+  endif()
 endif()
 
 #####
@@ -193,6 +191,17 @@ set_property(TARGET spz PROPERTY FOLDER "ThirdParty")
 #
 # Note: GLOB is used here, so if you add new files, you must re-run CMake or touch this file.
 file(GLOB SOURCE_FILES src/*.*)
+
+# Exclude ComfyUI files if disabled
+if (NOT ENABLE_COMFYUI)
+    list(FILTER SOURCE_FILES EXCLUDE REGEX "comfyui_(client|loader)\\.cpp$")
+endif()
+
+# Exclude Depth Streaming files if disabled
+if (NOT ENABLE_DEPTH_STREAMING)
+    list(FILTER SOURCE_FILES EXCLUDE REGEX "depth_(stream_client|parser|buffer|to_vk)\\.cpp$")
+endif()
+
 # Note: src/nvvk_swapchain_override.cpp implements the HDR support for the swapchain,
 # overriding the default implementation in nvpro_core2 without modifying the submodule.
 # Remove "unity build" partial source files that are #included by gaussian_splatting.cpp
@@ -253,10 +262,54 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 
 target_include_directories(${PROJECT_NAME} PRIVATE ${libwebp_SOURCE_DIR}/src)
 
-# WebSocket++ linkage for ComfyUI
-if(ENABLE_COMFYUI)
-  target_compile_definitions(${PROJECT_NAME} PRIVATE WITH_COMFYUI)
-  target_link_libraries(${PROJECT_NAME} PRIVATE websocketpp)
+# Network libraries linkage for ComfyUI and Depth Streaming
+if(ENABLE_COMFYUI OR ENABLE_DEPTH_STREAMING)
+  if(ENABLE_COMFYUI)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE WITH_COMFYUI)
+  endif()
+  if(ENABLE_DEPTH_STREAMING)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE WITH_DEPTH_STREAMING)
+  endif()
+  target_link_libraries(${PROJECT_NAME} PRIVATE ixwebsocket)
+  target_include_directories(${PROJECT_NAME} PRIVATE ${ixwebsocket_SOURCE_DIR})
+endif()
+
+# DLSS-RR linkage
+if(ENABLE_DLSS_RR AND NGX_FOUND)
+  target_compile_definitions(${PROJECT_NAME} PRIVATE WITH_DLSS_RR)
+  target_link_libraries(${PROJECT_NAME} PRIVATE ngx)
+endif()
+
+# Linking with other libraries
+# Link libraries and include directories
+target_link_libraries(${PROJECT_NAME} PRIVATE
+  nvpro2::nvapp
+  nvpro2::nvgui
+  nvpro2::nvvkglsl
+  nvpro2::nvslang
+  nvpro2::nvshaders_host
+  nvpro2::nvutils
+  nvpro2::nvvk
+  nvpro2::nvgpu_monitor
+  vk_radix_sort
+  spz::spz
+  meshoptimizer
+  webp
+  zlib
+)
+
+target_include_directories(${PROJECT_NAME} PRIVATE ${libwebp_SOURCE_DIR}/src)
+
+# Network libraries linkage for ComfyUI and Depth Streaming
+if(ENABLE_COMFYUI OR ENABLE_DEPTH_STREAMING)
+  if(ENABLE_COMFYUI)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE WITH_COMFYUI)
+  endif()
+  if(ENABLE_DEPTH_STREAMING)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE WITH_DEPTH_STREAMING)
+  endif()
+  target_link_libraries(${PROJECT_NAME} PRIVATE ixwebsocket)
+  target_include_directories(${PROJECT_NAME} PRIVATE ${ixwebsocket_SOURCE_DIR})
 endif()
 
 # DLSS-RR linkage

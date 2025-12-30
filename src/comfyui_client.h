@@ -30,20 +30,11 @@
 #include <filesystem>
 #include <queue>
 
-#ifndef ASIO_STANDALONE
-#define ASIO_STANDALONE
-#endif
-#ifndef _WEBSOCKETPP_CPP11_STL_
-#define _WEBSOCKETPP_CPP11_STL_
-#endif
-#include <websocketpp/config/asio_no_tls_client.hpp>
-#include <websocketpp/client.hpp>
-
+#include <ixwebsocket/IXWebSocket.h>
+#include <ixwebsocket/IXHttpClient.h>
 #include <tinygltf/json.hpp>
 
 namespace vk_gaussian_splatting {
-
-using WsClient = websocketpp::client<websocketpp::config::asio_client>;
 
 class ComfyUIClient
 {
@@ -92,13 +83,11 @@ public:
     void update();
 
 private:
-    void onMessage(websocketpp::connection_hdl hdl, WsClient::message_ptr msg);
-    void onOpen(websocketpp::connection_hdl hdl);
-    void onClose(websocketpp::connection_hdl hdl);
-    void onFail(websocketpp::connection_hdl hdl);
-
-    void ioThreadFunc();
+    void onMessage(const ix::WebSocketMessagePtr& msg);
+    
+    // Helper function for sending HTTP POST requests
     bool sendHttpPost(const std::string& endpoint, const std::string& body, std::string& response);
+    
     nlohmann::json loadAndModifyWorkflow(const std::filesystem::path& workflowPath,
                                          const std::string& positivePrompt,
                                          const std::string& negativePrompt);
@@ -106,9 +95,7 @@ private:
     std::string generateClientId();
 
 private:
-    WsClient                        m_client;
-    websocketpp::connection_hdl     m_connectionHdl;
-    std::thread                     m_ioThread;
+    ix::WebSocket                   m_webSocket;
     std::atomic<State>              m_state{State::Disconnected};
     std::atomic<bool>               m_shouldRun{false};
 
