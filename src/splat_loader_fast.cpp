@@ -49,6 +49,9 @@ struct PropertyLayout
   size_t rotOffset[4]   = {static_cast<size_t>(-1), static_cast<size_t>(-1), static_cast<size_t>(-1), static_cast<size_t>(-1)};
   size_t restOffset[45];
   int    restCount = 0;
+  size_t motionOffset[3] = {static_cast<size_t>(-1), static_cast<size_t>(-1), static_cast<size_t>(-1)};
+  size_t timeOffset      = static_cast<size_t>(-1);
+  size_t timeScaleOffset = static_cast<size_t>(-1);
 
   PropertyLayout()
   {
@@ -153,6 +156,14 @@ static bool parseHeader(const char* data, size_t size, size_t& headerSize, Prope
         std::from_chars(name.data() + 4, name.data() + name.size(), idx);
         if(idx >= 0 && idx < 4) layout.rotOffset[idx] = layout.vertexStride;
       }
+      else if(name.starts_with("motion_"))
+      {
+        int idx = 0;
+        std::from_chars(name.data() + 7, name.data() + name.size(), idx);
+        if(idx >= 0 && idx < 3) layout.motionOffset[idx] = layout.vertexStride;
+      }
+      else if(name == "t") layout.timeOffset = layout.vertexStride;
+      else if(name == "t_scale") layout.timeScaleOffset = layout.vertexStride;
       layout.vertexStride += 4;
     }
     
@@ -186,6 +197,22 @@ bool SplatLoaderFast::load(const std::filesystem::path& filename, SplatSet& outp
   const char* dataStart = static_cast<const char*>(mapping.data()) + headerSize;
   const size_t count     = layout.vertexCount;
   const size_t stride    = layout.vertexStride;
+
+  LOGI("PLY: %zu vertices, stride=%zu bytes, headerSize=%zu\n", count, stride, headerSize);
+  LOGI("PLY offsets: x=%zu y=%zu z=%zu opacity=%zu\n", layout.xOffset, layout.yOffset, layout.zOffset, layout.opacityOffset);
+  LOGI("PLY offsets: t=%zu t_scale=%zu motion=%zu/%zu/%zu\n", 
+       layout.timeOffset, layout.timeScaleOffset, 
+       layout.motionOffset[0], layout.motionOffset[1], layout.motionOffset[2]);
+  
+  size_t expectedDataSize = count * stride;
+  size_t actualDataSize = mapping.size() - headerSize;
+  LOGI("PLY data: expected=%zu actual=%zu\n", expectedDataSize, actualDataSize);
+  
+  if(actualDataSize < expectedDataSize)
+  {
+    LOGE("PLY file truncated: expected %zu bytes, got %zu\n", expectedDataSize, actualDataSize);
+    return false;
+  }
 
   output.clear();
   output.positions.resize(count * 3);
@@ -253,7 +280,27 @@ bool SplatLoaderFast::load(const std::filesystem::path& filename, SplatSet& outp
   for(int j = 0; j < layout.restCount; ++j)
   {
     extract_float(layout.restOffset[j], output.f_rest.data() + j, layout.restCount);
-    if(progressCallback && (j % 5 == 0)) progressCallback(0.6f + 0.4f * (float(j) / layout.restCount));
+    if(progressCallback && (j % 5 == 0)) progressCallback(0.6f + 0.3f * (float(j) / layout.restCount));
+  }
+
+  if(layout.timeOffset != static_cast<size_t>(-1))
+  {
+    output.has_time_data = true;
+    output.motion.resize(count * 3);
+    output.time.resize(count);
+    output.time_scale.resize(count);
+    extract_float(layout.motionOffset[0], output.motion.data() + 0, 3);
+    extract_float(layout.motionOffset[1], output.motion.data() + 1, 3);
+    extract_float(layout.motionOffset[2], output.motion.data() + 2, 3);
+    extract_float(layout.timeOffset, output.time.data(), 1);
+    extract_float(layout.timeScaleOffset, output.time_scale.data(), 1);
+    
+    for(size_t i = 0; i < count; ++i)
+    {
+      output.time_scale[i] = std::exp(output.time_scale[i]);
+    }
+    
+    if(progressCallback) progressCallback(0.95f);
   }
 
   if(progressCallback) progressCallback(1.0f);

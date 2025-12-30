@@ -26,6 +26,10 @@
 #include <algorithm>
 #include <filesystem>
 #include <string>
+#include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
+
+#include "splat-types.h"
 
 // 3rd party spz library, used here for coordinate system convertions
 #include "splat-types.h"

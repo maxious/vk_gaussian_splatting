@@ -25,8 +25,6 @@
 
 #include <nvutils/logger.hpp>
 
-// 3rd party ply library
-#include "miniply.h"
 #include "splat_loader_fast.h"
 // 3rd party spz library
 #include "load-spz.h"
@@ -228,110 +226,30 @@ bool SplatLoaderAsync::innerLoad(std::filesystem::path filename, SplatSet& outpu
     bool success = SplatLoaderFast::load(filename, output, [this](float progress) { setProgress(progress); });
     if(success)
     {
-      output.convertCoordinates(spz::CoordinateSystem::RDF, spz::CoordinateSystem::RUB);
+      if(output.has_time_data)
+      {
+        LOGI("FreeTimeGS temporal data detected: %zu splats with motion vectors\n", output.size());
+        size_t sampleCount = output.size() < 5 ? output.size() : 5;
+        for(size_t i = 0; i < sampleCount; ++i)
+        {
+          LOGD("  Splat %zu: motion=(%.3f, %.3f, %.3f) t=%.3f t_scale=%.3f\n",
+               i, output.motion[i*3], output.motion[i*3+1], output.motion[i*3+2],
+               output.time[i], output.time_scale[i]);
+        }
+      }
+      else
+      {
+        output.convertCoordinates(spz::CoordinateSystem::RDF, spz::CoordinateSystem::RUB);
+      }
       auto      endTime  = std::chrono::high_resolution_clock::now();
       long long loadTime = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
-      LOGI("PLY file loaded in %lldms (fast loader)\n", loadTime);
+      LOGI("PLY file loaded in %lldms (fast loader)%s\n", loadTime, output.has_time_data ? " [4D temporal]" : "");
       return true;
     }
-  }
-
-  // We use miniply to load .ply files (binary or utf8)
-  // Open the file
-  miniply::PLYReader reader(filename.string().c_str());
-  if(!reader.valid())
-  {
-    LOGE("Error: splat loader failed to open file: %s\n", filename.string().c_str());
+    LOGE("Error: fast PLY loader failed for binary file: %s\n", filename.string().c_str());
     return false;
   }
 
-  uint32_t indices[45];
-  bool     gsFound = false;
-
-  while(reader.has_element() && !gsFound)
-  {
-    if(reader.element_is(miniply::kPLYVertexElement) && reader.load_element())
-    {
-      const uint32_t numVerts = reader.num_rows();
-      if(numVerts == 0)
-      {
-        LOGW("Warning: splat loader skipping empty ply element\n");
-        continue;  // move to next while iteration
-      }
-
-      // load progress
-      const uint32_t total  = numVerts * (3 + 3 + 4 + 1 + 3 + 45);
-      uint32_t       loaded = 0;
-
-      // put that first so the loading progress looks better
-      if(reader.find_properties(indices, 45, "f_rest_0", "f_rest_1", "f_rest_2", "f_rest_3", "f_rest_4", "f_rest_5",
-                                "f_rest_6", "f_rest_7", "f_rest_8", "f_rest_9", "f_rest_10", "f_rest_11", "f_rest_12",
-                                "f_rest_13", "f_rest_14", "f_rest_15", "f_rest_16", "f_rest_17", "f_rest_18",
-                                "f_rest_19", "f_rest_20", "f_rest_21", "f_rest_22", "f_rest_23", "f_rest_24",
-                                "f_rest_25", "f_rest_26", "f_rest_27", "f_rest_28", "f_rest_29", "f_rest_30", "f_rest_31",
-                                "f_rest_32", "f_rest_33", "f_rest_34", "f_rest_35", "f_rest_36", "f_rest_37", "f_rest_38",
-                                "f_rest_39", "f_rest_40", "f_rest_41", "f_rest_42", "f_rest_43", "f_rest_44"))
-      {
-        output.f_rest.resize(numVerts * 45);
-        reader.extract_properties(indices, 45, miniply::PLYPropertyType::Float, output.f_rest.data());
-        loaded += numVerts * 45;
-        setProgress(float(loaded) / float(total));
-      }
-      if(reader.find_properties(indices, 3, "x", "y", "z"))
-      {
-        output.positions.resize(numVerts * 3);
-        reader.extract_properties(indices, 3, miniply::PLYPropertyType::Float, output.positions.data());
-        loaded += numVerts * 3;
-        setProgress(float(loaded) / float(total));
-      }
-      if(reader.find_properties(indices, 1, "opacity"))
-      {
-        output.opacity.resize(numVerts);
-        reader.extract_properties(indices, 1, miniply::PLYPropertyType::Float, output.opacity.data());
-        loaded += numVerts;
-        setProgress(float(loaded) / float(total));
-      }
-      if(reader.find_properties(indices, 3, "scale_0", "scale_1", "scale_2"))
-      {
-        output.scale.resize(numVerts * 3);
-        reader.extract_properties(indices, 3, miniply::PLYPropertyType::Float, output.scale.data());
-        loaded += numVerts * 3;
-        setProgress(float(loaded) / float(total));
-      }
-      if(reader.find_properties(indices, 4, "rot_0", "rot_1", "rot_2", "rot_3"))
-      {
-        output.rotation.resize(numVerts * 4);
-        reader.extract_properties(indices, 4, miniply::PLYPropertyType::Float, output.rotation.data());
-        loaded += numVerts * 4;
-        setProgress(float(loaded) / float(total));
-      }
-      if(reader.find_properties(indices, 3, "f_dc_0", "f_dc_1", "f_dc_2"))
-      {
-        output.f_dc.resize(numVerts * 3);
-        reader.extract_properties(indices, 3, miniply::PLYPropertyType::Float, output.f_dc.data());
-        loaded += numVerts * 3;
-        setProgress(float(loaded) / float(total));
-      }
-
-      gsFound = true;
-    }
-
-    reader.next_element();
-  }
-
-  if(gsFound)
-  {
-    // convert coordinates
-    output.convertCoordinates(spz::CoordinateSystem::RDF, spz::CoordinateSystem::RUB);
-    //
-    auto      endTime  = std::chrono::high_resolution_clock::now();
-    long long loadTime = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
-    LOGI("File loaded in %lldms\n", loadTime);
-  }
-  else
-  {
-    LOGE("Error: invalid 3DGS PLY file\n");
-  }
-
-  return gsFound;
+  LOGE("Error: unsupported file format: %s\n", filename.string().c_str());
+  return false;
 }
