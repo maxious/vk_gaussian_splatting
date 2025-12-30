@@ -351,6 +351,8 @@ void GaussianSplatting::updateDepthRendering(VkCommandBuffer cmd)
   // Request depth for current time
   uint64_t timestampMs = static_cast<uint64_t>(prmFrame.currentTime * 1000.0f);
   
+  m_depthClient->update(prmFrame.currentTime * 1000.0f, m_depthClient->getFps());
+
   DepthFrame frame;
   if(m_depthClient->getFrame(timestampMs, frame)) {
       if(m_depthManager) {

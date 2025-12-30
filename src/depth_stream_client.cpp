@@ -40,6 +40,8 @@ bool DepthStreamClient::uploadVideo(const std::filesystem::path& videoPath, Sess
         outSession.fps = json["fps"].get<float>();
         outSession.durationMs = json.value("duration_ms", static_cast<uint64_t>(0));
 
+        m_currentSession = outSession;
+
         LOGI("Session created: %s (%dx%d @ %.1f FPS)\n",
                outSession.sessionId.c_str(), outSession.width, outSession.height, outSession.fps);
         return true;
@@ -65,6 +67,14 @@ bool DepthStreamClient::getSessionStatus(const std::string& sessionId, SessionSt
 
 bool DepthStreamClient::deleteSession(const std::string& sessionId) {
     return sendHttpDelete("/api/sessions/" + sessionId);
+}
+
+void DepthStreamClient::close() {
+    disconnectWebSocket();
+    if (!m_currentSession.sessionId.empty()) {
+        deleteSession(m_currentSession.sessionId);
+        m_currentSession = SessionInfo{};
+    }
 }
 
 bool DepthStreamClient::connectWebSocket(const std::string& sessionId) {
@@ -163,6 +173,29 @@ bool DepthStreamClient::requestDepth(uint64_t timestampMs) {
 
 bool DepthStreamClient::getFrame(uint64_t targetMs, DepthFrame& outFrame) {
     return m_depthBuffer.getFrame(targetMs, outFrame);
+}
+
+void DepthStreamClient::update(double currentTimeMs, float videoFps) {
+    if (!m_connected.load()) return;
+
+    const float fps = videoFps > 0.0f ? videoFps : 30.0f;
+    const double stepMs = 1000.0 / fps;
+    const double bufferWindowMs = 3000.0;
+
+    float rtt = m_depthBuffer.getRTT();
+    double minLeadMs = std::min(3000.0, std::max(100.0, static_cast<double>(rtt) + 100.0));
+
+    double startMs = std::max(0.0, currentTimeMs + minLeadMs);
+    uint64_t alignedStartMs = static_cast<uint64_t>(std::ceil(startMs / stepMs) * stepMs);
+    uint64_t endMs = static_cast<uint64_t>(alignedStartMs + bufferWindowMs);
+
+    // Iterate through the lookahead window and request missing frames
+    for (uint64_t t = alignedStartMs; t < endMs; t += static_cast<uint64_t>(stepMs)) {
+        m_depthBuffer.ensureFrame(t);
+    }
+
+    // Cleanup old frames (keep 2 seconds history)
+    m_depthBuffer.cleanup(static_cast<uint64_t>(std::max(0.0, currentTimeMs - 2000.0)));
 }
 
 bool DepthStreamClient::sendHttpPostMultipart(const std::string& endpoint, const std::filesystem::path& videoPath, std::string& response) {

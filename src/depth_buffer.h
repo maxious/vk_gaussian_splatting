@@ -18,6 +18,10 @@ public:
 
     // Get best frame for current timestamp
     bool getFrame(uint64_t targetMs, DepthFrame& outFrame);
+    
+    void ensureFrame(uint64_t targetMs);
+
+    void cleanup(uint64_t oldThresholdMs);
 
     size_t getPendingCount() const { return m_pendingFrames.size(); }
     float getRTT() const { return m_rtt; }

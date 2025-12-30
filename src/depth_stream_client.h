@@ -64,8 +64,11 @@ public:
 
     bool connectWebSocket(const std::string& sessionId);
     void disconnectWebSocket();
+    void close();
     bool requestDepth(uint64_t timestampMs);
     bool getFrame(uint64_t targetMs, DepthFrame& outFrame);
+    
+    void update(double currentTimeMs, float videoFps);
 
     void setDepthCallback(DepthFrameCallback callback) { m_depthCallback = callback; }
     void setStatusCallback(StatusCallback callback) { m_statusCallback = callback; }
@@ -79,6 +82,8 @@ public:
     };
     
     ClientStats getStats() const;
+    
+    float getFps() const { return m_currentSession.fps; }
 
 private:
     void onDepthFrame(const ix::WebSocketMessagePtr& msg);
@@ -89,6 +94,7 @@ private:
 
     std::string             m_backendHost;
     int                     m_backendPort;
+    SessionInfo             m_currentSession;
 
     ix::WebSocket           m_webSocket;
     std::atomic<bool>       m_shouldRun{false};

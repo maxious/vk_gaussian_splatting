@@ -22,14 +22,12 @@ void DepthBuffer::addFrame(const DepthFrame& frame) {
     }
 }
 
-bool DepthBuffer::getFrame(uint64_t targetMs, DepthFrame& outFrame) {
-    auto cacheIt = m_receivedFrames.find(targetMs);
-    if (cacheIt != m_receivedFrames.end()) {
-        outFrame = cacheIt->second;
-        return true;
+void DepthBuffer::ensureFrame(uint64_t targetMs) {
+    if (m_receivedFrames.find(targetMs) != m_receivedFrames.end()) {
+        return;
     }
 
-    if (!m_client) return false;
+    if (!m_client) return;
 
     auto it = std::find_if(m_pendingFrames.begin(), m_pendingFrames.end(),
                           [&](const PendingFrame& pf) {
@@ -37,7 +35,7 @@ bool DepthBuffer::getFrame(uint64_t targetMs, DepthFrame& outFrame) {
                           });
 
     if (it != m_pendingFrames.end()) {
-        return false;
+        return;
     }
 
     if (m_pendingFrames.size() >= m_maxPending) {
@@ -50,6 +48,26 @@ bool DepthBuffer::getFrame(uint64_t targetMs, DepthFrame& outFrame) {
     m_pendingFrames.push_back(pf);
 
     m_client->requestDepth(targetMs);
+}
+
+void DepthBuffer::cleanup(uint64_t oldThresholdMs) {
+    for (auto it = m_receivedFrames.begin(); it != m_receivedFrames.end();) {
+        if (it->first < oldThresholdMs) {
+            it = m_receivedFrames.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+bool DepthBuffer::getFrame(uint64_t targetMs, DepthFrame& outFrame) {
+    auto cacheIt = m_receivedFrames.find(targetMs);
+    if (cacheIt != m_receivedFrames.end()) {
+        outFrame = cacheIt->second;
+        return true;
+    }
+
+    ensureFrame(targetMs);
     
     return false;
 }
