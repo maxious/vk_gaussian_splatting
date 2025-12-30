@@ -41,6 +41,8 @@ struct SceneParameters
   bool addSceneToExisting = false;
   // triggers a project load at next frame when set to non empty string
   std::filesystem::path projectToLoadFilename;
+  // triggers a depth frame (VDZ) load at next frame when set to non empty string
+  std::filesystem::path depthFrameToLoadFilename;
   // triggers an obj file import at next frame when set to non empty string
   std::filesystem::path meshToImportFilename;
 

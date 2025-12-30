@@ -36,6 +36,7 @@
 #include <GLFW/glfw3.h>
 
 #include "gaussian_splatting_ui.h"
+#include "vdz_loader.h"
 #include <imgui/imgui_internal.h>
 
 namespace vk_gaussian_splatting {
@@ -395,6 +396,8 @@ void GaussianSplattingUI::onFileDrop(const std::filesystem::path& filename)
     prmScene.sceneToLoadFilename = filename;
   else if(extension == ".4dv")
     prmScene.sceneToLoadFilename = filename;
+  else if(extension == ".vdz")
+    prmScene.depthFrameToLoadFilename = filename;
   else if(extension == ".vkgs")
     prmScene.projectToLoadFilename = filename;
   else if(extension == ".obj")
@@ -708,6 +711,32 @@ void GaussianSplattingUI::onUIRender()
       }
     }
     ImGui::EndPopup();
+  }
+
+  /////////////////
+  // Handle depth frame loading
+  if(!prmScene.depthFrameToLoadFilename.empty())
+  {
+    DepthFrame depthFrame;
+    if(VDZLoader::loadVDZFile(prmScene.depthFrameToLoadFilename, depthFrame))
+    {
+      LOGI("Depth frame loaded: %ux%u pixels\n", depthFrame.width, depthFrame.height);
+      
+      // Upload depth frame to GPU
+      if(m_depthManager)
+      {
+        VkCommandBuffer cmd = m_app->createTempCmdBuffer();
+        m_depthManager->uploadDepthFrame(depthFrame, cmd);
+        m_app->submitAndWaitTempCmdBuffer(cmd);
+      }
+    }
+    else
+    {
+      LOGE("Failed to load depth frame: %s\n", prmScene.depthFrameToLoadFilename.string().c_str());
+    }
+    
+    // reset request
+    prmScene.depthFrameToLoadFilename.clear();
   }
 
   if(!m_showUI)
