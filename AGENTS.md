@@ -21,9 +21,37 @@ The logger writes to both console and log file, making debugging easier.
 
 ## Build & Test
 
-- Build with CMake (Visual Studio or command line)
-- No automated test suite currently exists
-- Manual testing required for UI features
+### Building
+
+Build with CMake (Visual Studio or command line):
+```bash
+# Configure
+cmake -S . -B build
+
+# Build (Release or Debug)
+cmake --build build --config Release
+cmake --build build --config Debug
+```
+
+### Running Tests
+
+The project uses doctest for unit testing. The test suite is header-only (`tests/doctest.h`).
+
+To build and run tests:
+```bash
+# Build tests
+cmake --build build --target unit_tests --config Debug
+
+# Run tests (Windows)
+.\_bin\Release\Debug\unit_tests.exe
+
+# Or use ctest
+cmake --build build --target RUN_TESTS --config Debug
+```
+
+Test files are located in the `tests/` directory. Add new test files to `tests/CMakeLists.txt` as needed.
+
+**Note**: Manual testing is still required for UI features and Vulkan rendering.
 
 ## Key Subsystems
 

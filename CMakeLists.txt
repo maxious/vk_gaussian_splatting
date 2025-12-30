@@ -36,6 +36,18 @@ set(Slang_VERSION "2025.24.2" CACHE STRING "Slang version" FORCE)
 
 find_package(NvproCore2 REQUIRED)
 
+#####################################################################################
+# Unit Testing with doctest
+#
+enable_testing()
+
+message(STATUS "doctest testing framework enabled (header-only)")
+
+# Add tests subdirectory if not building with CMake's --install or similar
+if(NOT CMAKE_SOURCE_DIR STREQUAL CMAKE_BINARY_DIR)
+  add_subdirectory(tests)
+endif()
+
 # set with -DDISABLE_DEFAULT_SCENE=ON on command line or use cmake-gui to set the parameter
 # if default scene is not disabled at build using this option, one can still disable it by 
 # providing "-loadDefaultScene 0" to the sample command line
