@@ -25,6 +25,7 @@ function(find_ffmpeg_library _lib_name _header_name)
     find_library(${_upper_name}_LIBRARY
         NAMES ${_lib_name}
         PATHS
+            ${CMAKE_SOURCE_DIR}/ffmpeg-8.0.1-full_build-shared/lib
             $ENV{FFMPEG_DIR}/lib
             $ENV{FFMPEG_ROOT}/lib
             /usr/local/lib
@@ -38,6 +39,7 @@ function(find_ffmpeg_library _lib_name _header_name)
     find_path(${_upper_name}_INCLUDE_DIR
         NAMES lib${_lib_name}/${_header_name}
         PATHS
+            ${CMAKE_SOURCE_DIR}/ffmpeg-8.0.1-full_build-shared/include
             $ENV{FFMPEG_DIR}/include
             $ENV{FFMPEG_ROOT}/include
             /usr/local/include

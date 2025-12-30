@@ -7,3 +7,4 @@ _benchmark*/
 _downloaded_resources/
 generated/
 .vs
+ffmpeg-8.0.1-full_build_shared/

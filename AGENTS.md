@@ -66,3 +66,23 @@ Test files are located in the `tests/` directory. Add new test files to `tests/C
 - ImGui - UI framework
 - GLM - Math library
 - FFmpeg - Video encoding (external, must be in PATH)
+
+### FFmpeg Setup
+
+Download the shared build from https://github.com/GyanD/codexffmpeg/releases/tag/8.0.1 and extract to `ffmpeg-8.0.1-full_build-shared/` in the project root directory.
+
+The CMake configuration will automatically find FFmpeg in this location. The directory is ignored by git, so each developer needs to download and extract it manually.
+
+Example:
+```bash
+# Download ffmpeg-8.0.1-full_build-shared.zip from the releases page
+# Extract to the project root directory
+# Resulting structure:
+# vk_gaussian_splatting/
+# ├── ffmpeg-8.0.1-full_build-shared/
+# │   ├── bin/
+# │   ├── include/
+# │   ├── lib/
+# │   └── ...
+# └── ...
+```
