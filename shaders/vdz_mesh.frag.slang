@@ -44,7 +44,23 @@ FragmentOutput main(FragmentInput input)
   float2 sampleUv = float2(1.0 - input.uv.x, 1.0 - input.uv.y);
   float4 color = vdzVideoTexture.Sample(vdzSampler, sampleUv);
   
-  output.color = color;
+  // Use a turbo colormap for depth visualization if input is single channel
+  // Or just pass through if it's actual video
+  // Since we know for now vdzVideoTexture IS the depth texture (R32F), we visualize it
+  
+  float d = color.r;
+  
+  // Normalize visualization range (adjust as needed, e.g. 0 to 5 meters)
+  float v = clamp(d / 5.0, 0.0, 1.0);
+  
+  // Simple heatmap (Blue -> Green -> Red)
+  float3 heatmap;
+  if (v < 0.5)
+      heatmap = lerp(float3(0,0,1), float3(0,1,0), v * 2.0);
+  else
+      heatmap = lerp(float3(0,1,0), float3(1,0,0), (v - 0.5) * 2.0);
+
+  output.color = float4(heatmap, 1.0);
   
   return output;
 }

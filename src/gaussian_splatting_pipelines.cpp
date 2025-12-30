@@ -159,6 +159,7 @@ void GaussianSplatting::initPipelines()
     {
       writeContainer.append(bindings.getWriteSet(BINDING_VDZ_DEPTH_TEXTURE, m_descriptorSet),
                             depthTexture.image.descriptor.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, m_sampler);
+      // Currently using depth texture as video texture placeholder
       writeContainer.append(bindings.getWriteSet(BINDING_VDZ_VIDEO_TEXTURE, m_descriptorSet),
                             depthTexture.image.descriptor.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, m_sampler);
     }
@@ -399,7 +400,8 @@ void GaussianSplatting::initPipelines()
     // VDZ mesh vertex layout: position (vec3) + uv (vec2)
     pipelineState.vertexBindings   = {{.binding = 0,
                                        .stride  = sizeof(float) * 3 + sizeof(float) * 2,
-                                       .divisor = 1}};
+                                       .inputRate = VK_VERTEX_INPUT_RATE_VERTEX}};
+                                       
     pipelineState.vertexAttributes = {{.location = 0,
                                        .binding  = 0,
                                        .format   = VK_FORMAT_R32G32B32_SFLOAT,

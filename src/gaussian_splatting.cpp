@@ -180,6 +180,14 @@ void GaussianSplatting::onDetach()
   m_splatSetVk.deinit();
   m_meshSetVk.deinit();
   m_vdzMesh.cleanup();
+  
+  if(m_depthManager)
+  {
+    m_depthManager->cleanup();
+    m_depthManager.reset();
+  }
+  m_depthClient.reset();
+
   m_profilerGpuTimer.deinit();
   m_profilerManager->destroyTimeline(m_profilerTimeline);
   m_profilerTimeline = nullptr;
