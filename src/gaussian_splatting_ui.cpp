@@ -3636,6 +3636,9 @@ void GaussianSplattingUI::guiDrawDepthStreamProperties()
     static bool backendConnected = false;
     static bool connectionAttempted = false;
     static bool connectionFailed = false;
+    static DepthStreamClient::SessionInfo currentSession;
+    static bool uploadInProgress = false;
+    static bool uploadFailed = false;
 
     if(connectionAttempted)
     {
@@ -3647,6 +3650,19 @@ void GaussianSplattingUI::guiDrawDepthStreamProperties()
       {
         ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "✗ Failed to connect to backend");
       }
+    }
+
+    if(uploadInProgress)
+    {
+      ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "⟳ Uploading video...");
+    }
+    else if(uploadFailed)
+    {
+      ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "✗ Upload failed");
+    }
+    else if(m_enableDepthRendering)
+    {
+      ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "✓ Streaming active - Session: %s", currentSession.sessionId.c_str());
     }
 
     if(backendConnected)
@@ -3677,14 +3693,43 @@ void GaussianSplattingUI::guiDrawDepthStreamProperties()
           {
             m_enableDepthRendering = false;
             backendConnected = false;
-            // TODO: Implement proper disconnect and session cleanup
+            uploadFailed = false;
+            uploadInProgress = false;
+            if (m_depthClient) {
+              m_depthClient->disconnectWebSocket();
+            }
           }
         }
         else
         {
-          if(ImGui::Button("Upload & Start") && !videoPath.empty())
+          if(ImGui::Button("Upload & Start") && !videoPath.empty() && !uploadInProgress)
           {
-            enableDepthRendering(hostBuffer, port, videoPath.string());
+            uploadInProgress = true;
+            uploadFailed = false;
+
+            // Upload video and create session
+            if (m_depthClient && m_depthClient->uploadVideo(videoPath, currentSession))
+            {
+              // Connect WebSocket for depth streaming
+              if (m_depthClient->connectWebSocket(currentSession.sessionId))
+              {
+                // Enable depth rendering with the uploaded video path
+                enableDepthRendering(hostBuffer, port, videoPath.string());
+                uploadInProgress = false;
+              }
+              else
+              {
+                LOGE("Failed to connect WebSocket for depth streaming\n");
+                uploadFailed = true;
+                uploadInProgress = false;
+              }
+            }
+            else
+            {
+              LOGE("Failed to upload video to backend\n");
+              uploadFailed = true;
+              uploadInProgress = false;
+            }
           }
         }
         return false;
