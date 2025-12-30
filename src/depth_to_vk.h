@@ -28,9 +28,9 @@ private:
     DepthTexture* findOrCreateTexture(uint32_t width, uint32_t height);
     void createTexture(uint32_t width, uint32_t height, DepthTexture& outTexture);
 
-    vk::Device                 m_device;
-    vk::PhysicalDevice           m_physicalDevice;
-    vk::Queue                  m_graphicsQueue;
+    VkDevice                   m_device;
+    VkPhysicalDevice           m_physicalDevice;
+    VkQueue                    m_graphicsQueue;
     nvvk::ResourceAllocator*   m_allocator{nullptr};
     std::unique_ptr<nvvk::StagingUploader> m_stagingAllocator;
 

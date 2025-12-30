@@ -725,6 +725,11 @@ void GaussianSplattingUI::onUIRender()
       LOGI("Depth frame loaded: %ux%u pixels\n", depthFrame.width, depthFrame.height);
       
       // Upload depth frame to GPU
+      if(!m_depthManager)
+      {
+        m_depthManager = std::make_unique<DepthTextureManager>();
+        m_depthManager->initialize(m_device, m_app->getPhysicalDevice(), m_app->getQueue(0).queue, &m_alloc);
+      }
       if(m_depthManager)
       {
         VkCommandBuffer cmd = m_app->createTempCmdBuffer();
@@ -1277,17 +1282,24 @@ void GaussianSplattingUI::guiDrawRendererProperties()
     m_requestUpdateSplatData = true;
   }
 
-  ImGui::BeginDisabled(prmSelectedPipeline != PIPELINE_RTX);
+  bool allowVisualize = (prmSelectedPipeline == PIPELINE_RTX) || 
+                        (m_depthManager != nullptr) ||
+                        (prmRender.visualize == VISUALIZE_VDZ_DEPTH) || 
+                        (prmRender.visualize == VISUALIZE_VDZ_MESH);
+
+  ImGui::BeginDisabled(!allowVisualize);
   if(PE::entry(
          "Visualize", [&]() { return m_ui.enumCombobox(GUI_VISUALIZE, "##ID", &prmRender.visualize); }, "Selects the visualization mode"))
   {
     m_requestUpdateShaders = true;
     prmFrame.visualize = prmRender.visualize;
   }
-  ImGui::BeginDisabled(prmRender.visualize == 0);
+
+  ImGui::BeginDisabled(prmRender.visualize == VISUALIZE_FINAL);
   if(PE::DragFloat("Multiplier", (float*)&prmFrame.multiplier, 1.0F, 0.0F, 1000.0F))
     resetFrameCounter();
   ImGui::EndDisabled();
+
   ImGui::EndDisabled();
 
   PE::end();

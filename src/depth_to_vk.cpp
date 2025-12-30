@@ -1,3 +1,4 @@
+#include <volk.h>
 #include "depth_to_vk.h"
 #include <nvutils/logger.hpp>
 #include <nvvk/barriers.hpp>
@@ -17,7 +18,7 @@ bool DepthTextureManager::initialize(VkDevice device, VkPhysicalDevice physicalD
 
 void DepthTextureManager::cleanup() {
     for (auto& tex : m_textures) {
-        if (tex.image.descriptor.imageView) m_device.destroyImageView(tex.image.descriptor.imageView);
+        if (tex.image.descriptor.imageView) vkDestroyImageView(m_device, tex.image.descriptor.imageView, nullptr);
         m_allocator->destroyImage(tex.image);
     }
     m_textures.clear();
@@ -77,7 +78,8 @@ void DepthTextureManager::createTexture(uint32_t width, uint32_t height, DepthTe
     viewInfo.subresourceRange.baseArrayLayer = 0;
     viewInfo.subresourceRange.layerCount = 1;
 
-    outTexture.image.descriptor.imageView = m_device.createImageView(viewInfo);
+    VkImageViewCreateInfo vkViewInfo = viewInfo;
+    vkCreateImageView(m_device, &vkViewInfo, nullptr, &outTexture.image.descriptor.imageView);
     outTexture.image.descriptor.imageLayout = static_cast<VkImageLayout>(vk::ImageLayout::eShaderReadOnlyOptimal);
 }
 
