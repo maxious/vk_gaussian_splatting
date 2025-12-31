@@ -22,6 +22,7 @@
 
 #include "depth_stream_client.h"
 #include "depth_to_vk.h"
+#include "vdz_sequence_loader.h"
 #ifdef WITH_VIDEO_DECODER
 #include "video_decoder.h"
 #endif
@@ -131,6 +132,7 @@ public:
 #endif
 
     void enableDepthRendering(const std::string& host, int port, const std::string& videoPath);
+    void enableVideoDepthPlayback(const std::string& videoPath, const std::string& vdzPath);
     void updateDepthRendering(VkCommandBuffer cmd);
 
   public:
@@ -573,12 +575,19 @@ protected:
 
   std::unique_ptr<DepthStreamClient>   m_depthClient;
   std::unique_ptr<DepthTextureManager> m_depthManager;
+  std::unique_ptr<VDZSequenceLoader>   m_vdzSequence;
   bool m_enableDepthRendering = false;
+  bool m_videoDepthPlaybackMode = false;
   float m_depthScale = 1.0f;
   float m_depthBias = 0.0f;
 
   DepthStreamClient::ClientStats m_depthStats{};
   int m_depthFrameCounter = 0;  // For selective debug logging
+  
+  size_t m_lastVdzFrameIndex = SIZE_MAX;
+  std::chrono::steady_clock::time_point m_playbackStartTime;
+  bool m_playbackPaused = false;
+  double m_playbackTimeOffset = 0.0;
 
 #ifdef WITH_VIDEO_DECODER
   std::unique_ptr<VideoDecoder> m_videoDecoder;

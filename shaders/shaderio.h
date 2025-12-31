@@ -238,14 +238,15 @@ struct FrameInfo
   float3   viewTransArray[2];               // Translation vectors for eye 0 and eye 1
 
   // VDZ depth mesh rendering parameters (for VISUALIZE_VDZ_MESH mode)
-  float vdzZScale     DEFAULT(1.0f);   // Depth scale multiplier
-  float vdzZBias      DEFAULT(0.0f);   // Global Z offset (added after scaling)
-  float vdzZGamma     DEFAULT(1.0f);   // Gamma correction for depth (pow(depth, gamma))
-  float vdzZMaxClip   DEFAULT(1.0f);   // Maximum depth clipping threshold
-  float vdzPlaneScale DEFAULT(1.0f);   // Scale of the view plane
+  float vdzZScale     DEFAULT(10.0f);  // Depth scale multiplier
+  float vdzZBias      DEFAULT(2.0f);   // Global Z offset (added after scaling)
+  float vdzZGamma     DEFAULT(5.0f);   // Gamma correction for depth (pow(depth, gamma))
+  float vdzZMaxClip   DEFAULT(0.2f);   // Maximum depth clipping threshold
+  float vdzPlaneScale DEFAULT(1.4f);   // Scale of the view plane
   float vdzAspect     DEFAULT(1.777f); // Aspect ratio (width/height) of depth texture
+  float vdzEdgeThreshold DEFAULT(1.0f);  // Max depth gradient before discarding fragment (edge detection)
   int32_t visualize   DEFAULT(0);      // Current visualization mode
-  int32_t _pad0       DEFAULT(0);      // Padding for alignment
+  int32_t vdzUseVideoTexture DEFAULT(0);  // 1 = use video RGB texture, 0 = use colormap
 };
 
 // Push constant for raster

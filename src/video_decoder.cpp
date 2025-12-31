@@ -44,6 +44,7 @@ VideoDecoder::VideoDecoder()
     , m_duration(0.0)
     , m_running(false)
     , m_stopRequested(false)
+    , m_paused(false)
     , m_maxQueueSize(10)
     , m_seekRequested(false)
     , m_seekTimestamp(0.0)
@@ -190,9 +191,15 @@ void VideoDecoder::startDecoding()
         return;
     }
 
+    // Ensure any previous thread is properly joined before starting new one
+    if (m_decodeThread.joinable()) {
+        m_decodeThread.join();
+    }
+
     m_running = true;
     m_stopRequested = false;
     m_seekRequested = false;
+    m_paused = false;
 
     m_decodeThread = std::thread(&VideoDecoder::decodingThread, this);
 }
@@ -205,6 +212,8 @@ void VideoDecoder::stopDecoding()
 
     m_stopRequested = true;
     m_running = false;
+    m_paused = false;
+    m_pauseCondition.notify_one();
 
     if (m_decodeThread.joinable()) {
         m_decodeThread.join();
@@ -234,13 +243,46 @@ bool VideoDecoder::seekToTime(double timestamp)
         return false;
     }
 
+    // If decoder stopped (e.g., at EOF), restart it
+    bool wasRunning = m_running.load();
+    if (!wasRunning) {
+        // Perform seek directly since thread isn't running
+        AVRational time_base = m_formatContext->streams[m_videoStreamIndex]->time_base;
+        int64_t seek_pts = static_cast<int64_t>(timestamp / av_q2d(time_base));
+        
+        int ret = av_seek_frame(m_formatContext, m_videoStreamIndex, seek_pts, AVSEEK_FLAG_BACKWARD);
+        if (ret >= 0) {
+            avcodec_flush_buffers(m_codecContext);
+            LOGI("Seeked to timestamp: %.2f s (restarting decoder)\n", timestamp);
+        } else {
+            LOGE("Seek failed\n");
+            return false;
+        }
+        
+        // Clear queue and restart decoding thread
+        {
+            std::lock_guard<std::mutex> lock(m_queueMutex);
+            m_frameQueue.clear();
+        }
+        
+        startDecoding();
+        return true;
+    }
+
     m_seekRequested = true;
     m_seekTimestamp = timestamp;
 
-    // Clear current queue
+    // Clear current queue and wake up any waiting consumers
     {
         std::lock_guard<std::mutex> lock(m_queueMutex);
         m_frameQueue.clear();
+    }
+    m_queueCondition.notify_all();
+    
+    // If paused, resume to process the seek
+    if (m_paused) {
+        m_paused = false;
+        m_pauseCondition.notify_one();
     }
 
     return true;
@@ -269,11 +311,31 @@ double VideoDecoder::getCurrentTime() const
     return 0.0;
 }
 
+void VideoDecoder::pause()
+{
+    m_paused = true;
+}
+
+void VideoDecoder::resume()
+{
+    m_paused = false;
+    m_pauseCondition.notify_one();
+}
+
 void VideoDecoder::decodingThread()
 {
     LOGI("Video decoding thread started\n");
 
     while (m_running && !m_stopRequested) {
+        // Handle pause
+        if (m_paused) {
+            std::unique_lock<std::mutex> lock(m_pauseMutex);
+            m_pauseCondition.wait(lock, [this]() {
+                return !m_paused || m_stopRequested;
+            });
+            if (m_stopRequested) break;
+        }
+
         if (m_seekRequested) {
             // Handle seeking
             double seek_ts = m_seekTimestamp;

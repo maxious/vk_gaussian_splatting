@@ -66,6 +66,7 @@ dev = [
 # CLI entry points
 vkgs-backend = "backend.main:run_server"
 vkgs-preprocess = "offline.preprocess:main"
+vkgs-depth = "offline.video_depth:main"
 vkgs-export-ply = "offline.export_ply:main"
 vkgs-export-gaussian-ply = "offline.export_gaussian_ply:main"
 

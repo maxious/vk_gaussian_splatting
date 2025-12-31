@@ -5,16 +5,13 @@ cmake_minimum_required(VERSION 3.22)
 add_executable(unit_tests
     main.cpp
     test_depth.cpp
-    # Add more test files here as they are created:
-    # test_loaders.cpp
-    # test_4dv.cpp
+    test_vdz_sequence.cpp
 )
 
-# Add depth_parser.cpp (we can link directly since tests are in same project)
-# For better separation, we could refactor src/ into a library, but for now:
-# Note: We're NOT adding all source files, just specific ones we test
+# Add source files we need to test
 target_sources(unit_tests PRIVATE
     ../src/depth_parser.cpp
+    ../src/vdz_sequence_loader.cpp
 )
 
 # Include directories for src files and tests

@@ -55,11 +55,14 @@ def write_vdz_frame(f: BinaryIO, frame: VdzFrame, compress: bool = True) -> int:
         payload = raw_bytes
         magic = b"VDZ1"
 
+    # Clamp timestamp to valid uint32 range
+    timestamp_uint = max(0, min(int(frame.timestamp_ms), 0xFFFFFFFF))
+    
     header = VDZ_HEADER_STRUCT.pack(
         magic,
         1,  # version
         1,  # data type (uint16)
-        int(frame.timestamp_ms),
+        timestamp_uint,
         frame.width,
         frame.height,
         scale,

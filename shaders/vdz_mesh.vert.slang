@@ -46,9 +46,8 @@ VertexOutput main(VertexInput input)
   float2 uv = input.uv;
   output.uv = uv;
 
-  // Sample depth from VDZ texture
-  // Flip UV for sampling (match WebGL convention)
-  float2 sampleUv = float2(1.0 - uv.x, 1.0 - uv.y);
+  // Sample depth from VDZ texture (no flip needed - direct mapping)
+  float2 sampleUv = uv;
   float depth = vdzDepthTexture.SampleLevel(vdzSampler, sampleUv, 0);
   
   // Apply gamma correction
@@ -64,6 +63,8 @@ VertexOutput main(VertexInput input)
   float planeScale = frameInfo.vdzPlaneScale;
   float aspect = frameInfo.vdzAspect;
   
+  // X: left-to-right maps to positive-to-negative (looking into screen)
+  // Y: top-to-bottom maps to positive-to-negative (Vulkan convention)
   float x = (0.5 - uv.x) * aspect * planeScale;
   float y = (0.5 - uv.y) * planeScale;
   

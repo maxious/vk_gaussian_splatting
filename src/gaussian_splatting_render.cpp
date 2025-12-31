@@ -676,6 +676,12 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
         drawSplatPrimitives(cmd, splatCount);
       }
 
+      // Update depth/video textures before rendering VDZ mesh
+      if(prmFrame.visualize == VISUALIZE_VDZ_MESH && m_enableDepthRendering)
+      {
+        updateDepthRendering(cmd);
+      }
+
       // Render VDZ depth mesh if in VDZ mesh visualization mode
       if(prmFrame.visualize == VISUALIZE_VDZ_MESH)
       {

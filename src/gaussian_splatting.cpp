@@ -190,6 +190,17 @@ void GaussianSplatting::onDetach()
   m_depthClient.reset();
 #ifdef WITH_VIDEO_DECODER
   m_videoDecoder.reset();
+  // Clean up video texture
+  if(m_videoTexture.view != VK_NULL_HANDLE)
+  {
+    vkDestroyImageView(m_device, m_videoTexture.view, nullptr);
+    m_videoTexture.view = VK_NULL_HANDLE;
+  }
+  if(m_videoTexture.image.image != VK_NULL_HANDLE)
+  {
+    m_alloc.destroyImage(m_videoTexture.image);
+    m_videoTexture.image = {};
+  }
 #endif
 
   m_profilerGpuTimer.deinit();
@@ -372,6 +383,82 @@ void GaussianSplatting::enableDepthRendering(const std::string& host, int port, 
   LOGI("Depth rendering enabled for session: %s\n", videoPath.c_str());
 }
 
+void GaussianSplatting::enableVideoDepthPlayback(const std::string& videoPath, const std::string& vdzPath)
+{
+  if(!m_depthManager)
+  {
+    m_depthManager = std::make_unique<DepthTextureManager>();
+    m_depthManager->initialize(m_device, m_app->getPhysicalDevice(), m_app->getQueue(0).queue, &m_alloc);
+  }
+
+  m_vdzSequence = std::make_unique<VDZSequenceLoader>();
+  if(!m_vdzSequence->open(vdzPath))
+  {
+    LOGE("Failed to open VDZ sequence: %s\n", vdzPath.c_str());
+    m_vdzSequence.reset();
+    return;
+  }
+
+#ifdef WITH_VIDEO_DECODER
+  m_videoDecoder = std::make_unique<VideoDecoder>();
+  if(!m_videoDecoder->open(videoPath))
+  {
+    LOGE("Failed to open video file: %s\n", videoPath.c_str());
+    m_videoDecoder.reset();
+    m_vdzSequence.reset();
+    return;
+  }
+  m_videoDecoder->startDecoding();
+#else
+  LOGE("Video decoder not available - build with ENABLE_VIDEO_DECODER=ON\n");
+  m_vdzSequence.reset();
+  return;
+#endif
+
+  m_videoDepthPlaybackMode = true;
+  m_enableDepthRendering = true;
+  m_playbackStartTime = std::chrono::steady_clock::now();
+  m_playbackTimeOffset = 0.0;
+  m_playbackPaused = false;
+  m_lastVdzFrameIndex = SIZE_MAX;
+
+  // Ensure shaders and pipelines are initialized for VDZ rendering
+  // This is needed when no radiance field is loaded
+  if(!m_shaders.valid)
+  {
+    initShaders();
+    initRendererBuffers();
+    initPipelines();
+  }
+
+  // Load and upload first depth frame immediately
+  DepthFrame firstFrame;
+  if(m_vdzSequence->getFrame(0, firstFrame))
+  {
+    VkCommandBuffer cmd = m_app->createTempCmdBuffer();
+    m_depthManager->uploadDepthFrame(firstFrame, cmd);
+    m_app->submitAndWaitTempCmdBuffer(cmd);
+    m_lastVdzFrameIndex = 0;
+    
+    // Set VDZ rendering parameters based on depth data
+    prmFrame.vdzZMaxClip = firstFrame.zMax > 0.0f ? firstFrame.zMax : 2.0f;
+    prmFrame.vdzAspect = static_cast<float>(firstFrame.width) / static_cast<float>(firstFrame.height);
+    // Use good defaults for depth visualization
+    prmFrame.vdzZScale = 10.0f;
+    prmFrame.vdzZBias = 2.0f;
+    prmFrame.vdzZGamma = 5.0f;
+    prmFrame.vdzZMaxClip = 0.2f;
+    prmFrame.vdzPlaneScale = 1.4f;
+    prmFrame.vdzEdgeThreshold = 1.0f;
+    
+    LOGI("First depth frame uploaded: %ux%u, zMax=%.2f, aspect=%.3f\n", 
+         firstFrame.width, firstFrame.height, firstFrame.zMax, prmFrame.vdzAspect);
+  }
+
+  LOGI("Video+Depth playback enabled: %s + %s (%zu depth frames)\n",
+       videoPath.c_str(), vdzPath.c_str(), m_vdzSequence->getFrameCount());
+}
+
 void GaussianSplatting::updateDepthRendering(VkCommandBuffer cmd)
 {
   if(!m_enableDepthRendering)
@@ -383,8 +470,13 @@ void GaussianSplatting::updateDepthRendering(VkCommandBuffer cmd)
   // Handle video decoder case
   if(m_videoDecoder)
   {
-    // Synchronize video frames with depth frames based on timestamps
-    // For now, just get the next available frame
+    // Skip frame updates when paused
+    if(m_playbackPaused)
+    {
+      return;
+    }
+    
+    // Get next available frame from decoder
     DecodedFrame videoFrame;
     if(m_videoDecoder->getNextFrame(videoFrame))
     {
@@ -395,9 +487,10 @@ void GaussianSplatting::updateDepthRendering(VkCommandBuffer cmd)
           // Check if texture needs (re)creation
           if(m_videoTexture.width != videoFrame.width || m_videoTexture.height != videoFrame.height)
           {
-              // Destroy old
-              if(m_videoTexture.view) { vkDestroyImageView(m_device, m_videoTexture.view, nullptr); m_videoTexture.view = VK_NULL_HANDLE; }
-              if(m_videoTexture.image.image) { m_alloc.destroyImage(m_videoTexture.image); }
+              // Destroy old - wait for GPU to finish using resources
+              vkDeviceWaitIdle(m_device);
+              if(m_videoTexture.view != VK_NULL_HANDLE) { vkDestroyImageView(m_device, m_videoTexture.view, nullptr); m_videoTexture.view = VK_NULL_HANDLE; }
+              if(m_videoTexture.image.image != VK_NULL_HANDLE) { m_alloc.destroyImage(m_videoTexture.image); m_videoTexture.image = {}; }
 
               // Create new
               VkImageCreateInfo info = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
@@ -499,10 +592,34 @@ void GaussianSplatting::updateDepthRendering(VkCommandBuffer cmd)
       }
       
       LOGD("Got video frame: %dx%d @ %.3f s\n", videoFrame.width, videoFrame.height, videoFrame.timestamp);
+      
+      if(m_videoDepthPlaybackMode && m_vdzSequence && m_vdzSequence->isOpen())
+      {
+        uint32_t videoTimestampMs = static_cast<uint32_t>(videoFrame.timestamp * 1000.0);
+        size_t depthFrameIdx = m_vdzSequence->getFrameIndexForTimestamp(videoTimestampMs);
+        
+        if(depthFrameIdx != m_lastVdzFrameIndex)
+        {
+          DepthFrame depthFrame;
+          if(m_vdzSequence->getFrame(depthFrameIdx, depthFrame))
+          {
+            if(m_depthManager)
+            {
+              m_depthManager->uploadDepthFrame(depthFrame, cmd);
+              m_lastVdzFrameIndex = depthFrameIdx;
+              m_depthFrameCounter++;
+              
+              if(m_depthFrameCounter % 30 == 0)
+              {
+                LOGI("Synced depth frame #%zu: %ux%u @ %u ms (video: %u ms)\n",
+                     depthFrameIdx, depthFrame.width, depthFrame.height,
+                     depthFrame.timestampMs, videoTimestampMs);
+              }
+            }
+          }
+        }
+      }
     }
-
-    // TODO: Get corresponding depth frame and synchronize timestamps
-    // For now, depth frames are handled separately (from VDZ files)
   }
   else
 #endif

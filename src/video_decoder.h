@@ -118,6 +118,21 @@ public:
      */
     double getCurrentTime() const;
 
+    /**
+     * @brief Pause decoding
+     */
+    void pause();
+
+    /**
+     * @brief Resume decoding
+     */
+    void resume();
+
+    /**
+     * @brief Check if decoding is paused
+     */
+    bool isPaused() const { return m_paused.load(); }
+
 private:
     /**
      * @brief Decoding thread function
@@ -163,6 +178,9 @@ private:
     std::thread m_decodeThread;
     std::atomic<bool> m_running;
     std::atomic<bool> m_stopRequested;
+    std::atomic<bool> m_paused;
+    std::condition_variable m_pauseCondition;
+    std::mutex m_pauseMutex;
 
     // Frame queue for thread safety
     std::vector<DecodedFrame> m_frameQueue;

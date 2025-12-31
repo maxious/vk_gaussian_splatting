@@ -34,21 +34,37 @@ bool parseDepthFrame(const std::vector<uint8_t>& buffer, DepthFrame& outFrame) {
         uLongf decompressedSize = header.width * header.height * sizeof(uint16_t);
         samples.resize(header.width * header.height);
 
+        const Bytef* compressedData = reinterpret_cast<const Bytef*>(buffer.data() + HEADER_SIZE);
+        uInt compressedSize = static_cast<uInt>(buffer.size() - HEADER_SIZE);
+
+        // Try zlib format first (Python's zlib.compress uses this)
         z_stream stream{};
-        stream.next_in = const_cast<Bytef*>(reinterpret_cast<const Bytef*>(buffer.data() + HEADER_SIZE));
-        stream.avail_in = static_cast<uInt>(buffer.size() - HEADER_SIZE);
+        stream.next_in = const_cast<Bytef*>(compressedData);
+        stream.avail_in = compressedSize;
         stream.next_out = reinterpret_cast<Bytef*>(samples.data());
-        stream.avail_out = decompressedSize;
+        stream.avail_out = static_cast<uInt>(decompressedSize);
 
-        if (inflateInit2(&stream, -MAX_WBITS) != Z_OK) {
-             if (inflateInit(&stream) != Z_OK) {
-                LOGE("Failed to initialize zlib\n");
-                return false;
-             }
+        int ret = Z_DATA_ERROR;
+        
+        // Try standard zlib format (with header)
+        if (inflateInit(&stream) == Z_OK) {
+            ret = inflate(&stream, Z_FINISH);
+            inflateEnd(&stream);
         }
-
-        int ret = inflate(&stream, Z_FINISH);
-        inflateEnd(&stream);
+        
+        // If that failed, try raw deflate
+        if (ret != Z_STREAM_END) {
+            stream = z_stream{};
+            stream.next_in = const_cast<Bytef*>(compressedData);
+            stream.avail_in = compressedSize;
+            stream.next_out = reinterpret_cast<Bytef*>(samples.data());
+            stream.avail_out = static_cast<uInt>(decompressedSize);
+            
+            if (inflateInit2(&stream, -MAX_WBITS) == Z_OK) {
+                ret = inflate(&stream, Z_FINISH);
+                inflateEnd(&stream);
+            }
+        }
 
         if (ret != Z_STREAM_END) {
              LOGE("Decompression failed with code: %d\n", ret);

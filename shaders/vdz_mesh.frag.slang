@@ -22,6 +22,7 @@
 // clang-format off
 [[vk::binding(BINDING_FRAME_INFO_UBO, 0)]] ConstantBuffer<FrameInfo> frameInfo;
 [[vk::binding(BINDING_VDZ_VIDEO_TEXTURE, 0)]] Texture2D<float4> vdzVideoTexture : register(t25);
+[[vk::binding(BINDING_VDZ_DEPTH_TEXTURE, 0)]] Texture2D<float> vdzDepthTexture : register(t26);
 [[vk::binding(BINDING_VDZ_VIDEO_TEXTURE, 0)]] SamplerState vdzSampler : register(s25);
 
 struct FragmentInput
@@ -35,40 +36,73 @@ struct FragmentOutput
 };
 // clang-format on
 
+// Turbo-like colormap for depth visualization
+float3 depthToColormap(float depth, float minD, float maxD)
+{
+  float v = clamp((depth - minD) / (maxD - minD), 0.0, 1.0);
+  
+  // Turbo-like heatmap (Blue -> Cyan -> Green -> Yellow -> Red)
+  float3 c;
+  if (v < 0.25)
+      c = lerp(float3(0.18995, 0.07176, 0.23217), float3(0.19903, 0.52157, 0.71861), v * 4.0);
+  else if (v < 0.5)
+      c = lerp(float3(0.19903, 0.52157, 0.71861), float3(0.56468, 0.87997, 0.25378), (v - 0.25) * 4.0);
+  else if (v < 0.75)
+      c = lerp(float3(0.56468, 0.87997, 0.25378), float3(0.99000, 0.65154, 0.09877), (v - 0.5) * 4.0);
+  else
+      c = lerp(float3(0.99000, 0.65154, 0.09877), float3(0.72271, 0.07562, 0.15135), (v - 0.75) * 4.0);
+  
+  return c;
+}
+
 [shader("fragment")]
 FragmentOutput main(FragmentInput input)
 {
   FragmentOutput output;
   
-  // Sample video texture with flipped UVs (match vertex shader convention)
-  float2 sampleUv = float2(1.0 - input.uv.x, 1.0 - input.uv.y);
-  float4 color = vdzVideoTexture.Sample(vdzSampler, sampleUv);
+  // Sample directly (match vertex shader convention)
+  float2 sampleUv = input.uv;
   
-  // Use a turbo colormap for depth visualization if input is single channel
-  // Or just pass through if it's actual video
-  // Since we know for now vdzVideoTexture IS the depth texture (R32F), we visualize it
+  // Sample depth for edge detection
+  float depth = vdzDepthTexture.Sample(vdzSampler, sampleUv);
   
-  float d = color.r;
-  
-  // Debug: Black for 0.0 (invalid/empty)
-  if (d < 0.0001) {
-      output.color = float4(0, 0, 0, 1);
-      return output;
+  // Detect depth discontinuities using screen-space derivatives
+  // Large gradients indicate triangle spanning a depth edge
+  if (frameInfo.vdzEdgeThreshold > 0.0)
+  {
+    float dDepthX = abs(ddx(depth));
+    float dDepthY = abs(ddy(depth));
+    float maxGradient = max(dDepthX, dDepthY);
+    
+    // Discard fragments at depth edges to prevent stretched triangles
+    if (maxGradient > frameInfo.vdzEdgeThreshold)
+    {
+      discard;
+    }
   }
-
-  // Normalize visualization range (0.5m to 1.5m which matches the test files)
-  float minD = 0.5;
-  float maxD = 1.5;
-  float v = clamp((d - minD) / (maxD - minD), 0.0, 1.0);
   
-  // Turbo-like heatmap (Blue -> Green -> Red)
-  float3 heatmap;
-  if (v < 0.5)
-      heatmap = lerp(float3(0,0,1), float3(0,1,0), v * 2.0);
+  // Black for invalid/empty depth
+  if (depth < 0.0001)
+  {
+    discard;
+  }
+  
+  if (frameInfo.vdzUseVideoTexture != 0)
+  {
+    // Video+Depth mode: Use video RGB texture
+    float4 videoColor = vdzVideoTexture.Sample(vdzSampler, sampleUv);
+    output.color = float4(videoColor.rgb, 1.0);
+  }
   else
-      heatmap = lerp(float3(0,1,0), float3(1,0,0), (v - 0.5) * 2.0);
-
-  output.color = float4(heatmap, 1.0);
+  {
+    // Depth-only mode: Use colormap visualization
+    // Use VDZ parameters for visualization range
+    float minD = 0.3;   // Near plane
+    float maxD = frameInfo.vdzZMaxClip > 0.0 ? frameInfo.vdzZMaxClip : 1.5;
+    
+    float3 colormap = depthToColormap(depth, minD, maxD);
+    output.color = float4(colormap, 1.0);
+  }
   
   return output;
 }
