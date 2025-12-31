@@ -59,6 +59,9 @@ public:
 
     bool testConnection();
     bool uploadVideo(const std::filesystem::path& videoPath, SessionInfo& outSession);
+    bool uploadImage(const std::filesystem::path& imagePath, std::vector<uint8_t>& outPlyData);
+    bool processImagePath(const std::filesystem::path& imagePath, std::vector<uint8_t>& outPlyData);
+    
     bool getSessionStatus(const std::string& sessionId, SessionStatus& outStatus);
     bool deleteSession(const std::string& sessionId);
 
@@ -98,7 +101,7 @@ public:
 private:
     void onDepthFrame(const ix::WebSocketMessagePtr& msg);
 
-    bool sendHttpPostMultipart(const std::string& endpoint, const std::filesystem::path& filePath, std::string& response);
+    bool sendHttpPostMultipart(const std::string& endpoint, const std::filesystem::path& filePath, std::string& response, const std::string& contentType = "video/mp4");
     bool sendHttpGet(const std::string& endpoint, std::string& response);
     bool sendHttpDelete(const std::string& endpoint);
 

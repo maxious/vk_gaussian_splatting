@@ -3771,10 +3771,10 @@ void GaussianSplattingUI::guiDrawDepthStreamProperties()
         std::string displayText = videoPath.empty() ? "No file selected" : videoPath.filename().string();
         ImGui::Text("%s", displayText.c_str());
 
-        if(ImGui::Button("Select Video File..."))
+        if(ImGui::Button("Select Video/Image File..."))
         {
-          auto path = nvgui::windowOpenFileDialog(m_app->getWindowHandle(), "Select depth video file",
-                                                  "Video Files|*.mp4;*.avi;*.mov;*.mkv|All Files|*.*");
+          auto path = nvgui::windowOpenFileDialog(m_app->getWindowHandle(), "Select depth video/image file",
+                                                  "Video/Image Files|*.mp4;*.avi;*.mov;*.mkv;*.jpg;*.jpeg;*.png|All Files|*.*");
           if(!path.empty())
           {
             videoPath = path;
@@ -3806,28 +3806,70 @@ void GaussianSplattingUI::guiDrawDepthStreamProperties()
             uploadInProgress = true;
             uploadFailed = false;
 
-            // Upload video and create session
-            if (m_depthClient && m_depthClient->uploadVideo(videoPath, currentSession))
+            std::string ext = videoPath.extension().string();
+            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+            bool isImage = (ext == ".jpg" || ext == ".jpeg" || ext == ".png");
+
+            if (isImage)
             {
-              // Connect WebSocket for depth streaming
-              if (m_depthClient->connectWebSocket(currentSession.sessionId))
-              {
-                // Enable depth rendering with the uploaded video path
-                enableDepthRendering(hostBuffer, port, videoPath.string());
-                uploadInProgress = false;
-              }
-              else
-              {
-                LOGE("Failed to connect WebSocket for depth streaming\n");
-                uploadFailed = true;
-                uploadInProgress = false;
-              }
+                // Image processing logic
+                std::vector<uint8_t> plyData;
+                
+                // Use processImagePath if file is local and backend is on localhost, otherwise upload
+                bool success = false;
+                if (std::string(hostBuffer) == "127.0.0.1" || std::string(hostBuffer) == "localhost")
+                {
+                    success = m_depthClient->processImagePath(videoPath, plyData);
+                }
+                else
+                {
+                    success = m_depthClient->uploadImage(videoPath, plyData);
+                }
+
+                if (success && !plyData.empty())
+                {
+                    // Write PLY data to temp file for loading via existing file-based API
+                    std::filesystem::path tempPlyPath = std::filesystem::temp_directory_path() / "temp_gs_image.ply";
+                    std::ofstream out(tempPlyPath, std::ios::binary);
+                    out.write(reinterpret_cast<const char*>(plyData.data()), plyData.size());
+                    out.close();
+
+                    prmScene.sceneToLoadFilename = tempPlyPath;
+                    prmScene.addSceneToExisting = false;
+                    uploadInProgress = false;
+                    
+                    LOGI("Loaded 3DGS from image: %s\n", videoPath.string().c_str());
+                }
+                else
+                {
+                    LOGE("Failed to process image\n");
+                    uploadFailed = true;
+                    uploadInProgress = false;
+                }
             }
             else
             {
-              LOGE("Failed to upload video to backend\n");
-              uploadFailed = true;
-              uploadInProgress = false;
+                // Video processing logic
+                if (m_depthClient && m_depthClient->uploadVideo(videoPath, currentSession))
+                {
+                  if (m_depthClient->connectWebSocket(currentSession.sessionId))
+                  {
+                    enableDepthRendering(hostBuffer, port, videoPath.string());
+                    uploadInProgress = false;
+                  }
+                  else
+                  {
+                    LOGE("Failed to connect WebSocket\n");
+                    uploadFailed = true;
+                    uploadInProgress = false;
+                  }
+                }
+                else
+                {
+                  LOGE("Failed to upload video\n");
+                  uploadFailed = true;
+                  uploadInProgress = false;
+                }
             }
           }
         }
@@ -3908,3 +3950,4 @@ void GaussianSplattingUI::guiDrawPerformancePanel()
 
 
 }  // namespace vk_gaussian_splatting
+

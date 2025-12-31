@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import numpy as np
 from PIL import Image
@@ -32,29 +32,25 @@ class DepthPrediction:
 class DepthModel:
     """Lazy-loading wrapper around Video Depth Anything / Depth Anything 3."""
 
-    def __init__(
-        self, model_id: Optional[str] = None, device: Optional[str] = None
-    ) -> None:
+    def __init__(self, model_id: Optional[str] = None, device: Optional[str] = None) -> None:
         settings = get_settings()
         self.model_id = model_id or settings.depth_model_id
         self.device = torch.device(device or settings.device)
         self.process_res = settings.depth_process_res
         self.cache_dir = settings.data_root.parent / "checkpoints"
         self.cache_dir.mkdir(parents=True, exist_ok=True)
-        self._model: DepthAnything3 | None = None
+        self._model: Any = None
         self._semaphore: asyncio.Semaphore | None = None
         self._max_workers = settings.inference_worker_count
 
-    def _ensure_model(self) -> DepthAnything3:
+    def _ensure_model(self) -> Any:
         if self._model is not None:
             return self._model
         if DepthAnything3 is None:
             raise RuntimeError(
                 'depth-anything-3 package is not installed; run `uv pip install "videodepthviewer3d[inference]"`.'
             )
-        model = DepthAnything3.from_pretrained(
-            self.model_id, cache_dir=str(self.cache_dir)
-        )
+        model = DepthAnything3.from_pretrained(self.model_id, cache_dir=str(self.cache_dir))
         self._model = model.to(self.device).eval()
         return self._model
 

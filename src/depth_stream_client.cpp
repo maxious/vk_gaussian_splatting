@@ -56,6 +56,49 @@ bool DepthStreamClient::uploadVideo(const std::filesystem::path& videoPath, Sess
     }
 }
 
+bool DepthStreamClient::uploadImage(const std::filesystem::path& imagePath, std::vector<uint8_t>& outPlyData) {
+    std::string response;
+    // Determine mime type based on extension
+    std::string ext = imagePath.extension().string();
+    std::string contentType = "image/jpeg";
+    if (ext == ".png") contentType = "image/png";
+    
+    if (!sendHttpPostMultipart("/api/image/upload", imagePath, response, contentType)) {
+        return false;
+    }
+    
+    // The response body IS the PLY data (binary)
+    outPlyData.assign(response.begin(), response.end());
+    return true;
+}
+
+bool DepthStreamClient::processImagePath(const std::filesystem::path& imagePath, std::vector<uint8_t>& outPlyData) {
+    ix::HttpClient httpClient;
+    auto args = std::make_shared<ix::HttpRequestArgs>();
+    
+    nlohmann::json jsonBody;
+    jsonBody["path"] = imagePath.string();
+    std::string body = jsonBody.dump();
+    
+    args->extraHeaders["Content-Type"] = "application/json";
+    
+    std::string url = "http://" + m_backendHost + ":" + std::to_string(m_backendPort) + "/api/image/path";
+    auto res = httpClient.post(url, body, args);
+    
+    if (res->errorCode != ix::HttpErrorCode::Ok) {
+        LOGE("HTTP error: %s\n", res->errorMsg.c_str());
+        return false;
+    }
+    
+    if (res->statusCode != 200) {
+        LOGE("HTTP error %d processing image path\n", res->statusCode);
+        return false;
+    }
+    
+    outPlyData.assign(res->body.begin(), res->body.end());
+    return true;
+}
+
 bool DepthStreamClient::getSessionStatus(const std::string& sessionId, SessionStatus& outStatus) {
     std::string response;
     if (!sendHttpGet("/api/sessions/" + sessionId, response)) {
@@ -218,17 +261,17 @@ float rtt = m_depthBuffer.getRTT();
     }
 }
 
-bool DepthStreamClient::sendHttpPostMultipart(const std::string& endpoint, const std::filesystem::path& videoPath, std::string& response) {
+bool DepthStreamClient::sendHttpPostMultipart(const std::string& endpoint, const std::filesystem::path& filePath, std::string& response, const std::string& contentType) {
     ix::HttpClient httpClient;
     auto args = std::make_shared<ix::HttpRequestArgs>();
     
-    std::ifstream file(videoPath, std::ios::binary);
+    std::ifstream file(filePath, std::ios::binary);
     if (!file.is_open()) {
-        LOGE("Failed to open video file: %s\n", videoPath.string().c_str());
+        LOGE("Failed to open file: %s\n", filePath.string().c_str());
         return false;
     }
 
-    std::vector<uint8_t> videoData((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    std::vector<uint8_t> fileData((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
 
     // Create multipart boundary
     std::string boundary = "----WebKitFormBoundary" + std::to_string(std::rand());
@@ -236,9 +279,9 @@ bool DepthStreamClient::sendHttpPostMultipart(const std::string& endpoint, const
     // Build multipart body
     std::ostringstream body_stream;
     body_stream << "--" << boundary << "\r\n";
-    body_stream << "Content-Disposition: form-data; name=\"file\"; filename=\"" << videoPath.filename().string() << "\"\r\n";
-    body_stream << "Content-Type: video/mp4\r\n\r\n";
-    body_stream.write(reinterpret_cast<const char*>(videoData.data()), videoData.size());
+    body_stream << "Content-Disposition: form-data; name=\"file\"; filename=\"" << filePath.filename().string() << "\"\r\n";
+    body_stream << "Content-Type: " << contentType << "\r\n\r\n";
+    body_stream.write(reinterpret_cast<const char*>(fileData.data()), fileData.size());
     body_stream << "\r\n--" << boundary << "--\r\n";
 
     std::string body = body_stream.str();
@@ -253,7 +296,7 @@ bool DepthStreamClient::sendHttpPostMultipart(const std::string& endpoint, const
     }
     
     if (res->statusCode != 200) {
-        LOGE("HTTP error %d uploading video\n", res->statusCode);
+        LOGE("HTTP error %d uploading file\n", res->statusCode);
         return false;
     }
     

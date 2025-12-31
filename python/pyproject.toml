@@ -60,6 +60,7 @@ dev = [
 vkgs-backend = "backend.main:run_server"
 vkgs-preprocess = "offline.preprocess:main"
 vkgs-export-ply = "offline.export_ply:main"
+vkgs-export-gaussian-ply = "offline.export_gaussian_ply:main"
 
 [build-system]
 requires = ["setuptools>=68"]
