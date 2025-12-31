@@ -1,0 +1,73 @@
+[project]
+name = "vk-gaussian-splatting-tools"
+version = "0.1.0"
+description = "Python tools for vk_gaussian_splatting: depth streaming backend and offline preprocessing"
+authors = [{ name = "maxio" }]
+readme = "README.md"
+requires-python = ">=3.10"
+
+dependencies = [
+    "numpy>=1.26",
+    "pillow>=10.4",
+    "opencv-python-headless>=4.10",
+    "addict>=2.4",
+    "hf-xet>=1.2.0",
+]
+
+[project.optional-dependencies]
+# Livestream backend (FastAPI + WebSocket)
+backend = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.7",
+    "python-multipart>=0.0.17",
+    "av>=12.0",
+    "orjson>=3.10",
+    "ixwebsocket>=0.1",  # if needed for C++ client compat
+]
+
+# Depth inference (shared by backend and offline)
+inference = [
+    "torch>=2.4",
+    "torchvision>=0.19",
+    "xformers>=0.0.28",
+    "transformers>=4.44",
+    "einops>=0.8",
+    "safetensors>=0.4",
+    "triton-windows>=3.2; sys_platform == 'win32'",
+    "depth-anything-3 @ git+https://github.com/ByteDance-Seed/Depth-Anything-3@main",
+]
+
+# Offline preprocessing (DA3-streaming based)
+offline = [
+    "trimesh>=4.0",
+    "scipy>=1.11",
+    "tqdm>=4.66",
+    "numba>=0.59",
+    "gsplat>=1.5.3",
+]
+
+dev = [
+    "pytest>=8.2",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.6",
+    "ty>=0.0.8",
+]
+
+[project.scripts]
+# CLI entry points
+vkgs-backend = "backend.main:run_server"
+vkgs-preprocess = "offline.preprocess:main"
+vkgs-export-ply = "offline.export_ply:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["backend*", "offline*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

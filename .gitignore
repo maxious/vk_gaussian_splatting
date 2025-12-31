@@ -1,5 +1,6 @@
 bin_x64/
 build/
+build_test/
 _bin/
 _install/
 _autogen/
@@ -7,4 +8,23 @@ _benchmark*/
 _downloaded_resources/
 generated/
 .vs
+ffmpeg-8.0.1-full_build-shared/
 ffmpeg-8.0.1-full_build_shared/
+%TEMP%/
+.opencode/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+.eggs/
+dist/
+*.so
+.Python
+python/.venv/
+.venv/
+venv/
+ENV/
+.ruff_cache/

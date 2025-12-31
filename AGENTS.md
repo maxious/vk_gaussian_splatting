@@ -60,6 +60,39 @@ Test files are located in the `tests/` directory. Add new test files to `tests/C
 - **Video Export**: `video_renderer.cpp`, `camera_trajectory.cpp`
 - **Scene Loading**: `splat_loader_async.cpp`, `sog_loader.cpp`, `splat_set.cpp`
 
+## Python Tools
+
+For the `python/` subdirectory, we use the following tools:
+
+- **Type Checker**: [ty](https://github.com/astral-sh/ty) (fast Python type checker by Astral)
+- **Linter/Formatter**: `ruff`
+- **Package Manager**: `uv`
+
+### Python Setup
+
+```bash
+cd python
+uv venv
+source .venv/bin/activate  # or .venv\Scripts\activate
+uv pip install -e ".[dev]"
+
+# Install CUDA-enabled PyTorch (recommended for GPU acceleration)
+uv pip install torch torchvision xformers --index-url https://download.pytorch.org/whl/cu130
+
+# Windows-specific: Install triton-windows for xformers optimization
+if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" ]]; then
+    uv pip install triton-windows
+fi
+```
+
+### Running Type Checks
+
+Use `ty` to run type checks:
+
+```bash
+uvx ty check
+```
+
 ## Third-party Libraries
 
 - nvpro_core2 - NVIDIA Vulkan utilities (submodule)
