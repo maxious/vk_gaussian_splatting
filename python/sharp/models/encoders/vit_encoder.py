@@ -21,9 +21,6 @@ class TimmViT(timm.models.VisionTransformer):
 
     def __init__(self, config: ViTConfig):
         """Initialize ViT from TIMM implementation."""
-        # Handle mlp layers.
-        mlp_layer = timm.layers.GluMlp if config.mlp_mode == "glu" else timm.layers.Mlp
-
         super().__init__(
             in_chans=config.in_chans,
             embed_dim=config.embed_dim,
@@ -35,8 +32,7 @@ class TimmViT(timm.models.VisionTransformer):
             num_classes=config.num_classes,
             mlp_ratio=config.mlp_ratio,
             qkv_bias=config.qkv_bias,
-            global_pool=config.global_pool,
-            mlp_layer=mlp_layer,
+            global_pool="",
         )
 
         # Required for extracting intermediate features.
@@ -56,32 +52,6 @@ class TimmViT(timm.models.VisionTransformer):
         # Shape: (batch, height, width, dim) -> (batch, dim, height, width)
         embeddings = embeddings.reshape(batch_size, height, width, channel).permute(0, 3, 1, 2)
         return embeddings
-
-    def forward(self, input_tensor: torch.Tensor) -> tuple[torch.Tensor, dict[int, torch.Tensor]]:
-        """Override forwarding with intermediate features.
-
-        Adapted from timm ViT.
-
-        Returns:
-            Output features and list of features from intermediate layers (patch encoder only).
-        """
-        intermediate_features = {}
-
-        x = self.patch_embed(input_tensor)
-        batch_size, seq_len, _ = x.shape
-
-        x = self._pos_embed(x)
-        x = self.patch_drop(x)
-        x = self.norm_pre(x)
-
-        for idx, block in enumerate(self.blocks):
-            x = block(x)
-            if self.intermediate_features_ids is not None and idx in self.intermediate_features_ids:
-                intermediate_features[idx] = x
-        x = self.norm(x)
-
-        x = self.reshape_feature(x)
-        return x, intermediate_features
 
     def internal_resolution(self) -> int:
         """Return the internal image size of the network."""
@@ -107,5 +77,5 @@ def create_vit(
 
     config.intermediate_features_ids = intermediate_features_ids
     model = TimmViT(config)
-    # LOGGER.debug(model)
+
     return model

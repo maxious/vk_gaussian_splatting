@@ -9,7 +9,7 @@ from __future__ import annotations
 import dataclasses
 from typing import Literal
 
-ViTPreset = Literal["dinov2l16_384",]
+ViTPreset = Literal["dinov2l16_384", "dinov3l16_384"]
 
 MLPMode = Literal["vanilla", "glu"]
 
@@ -54,5 +54,14 @@ VIT_CONFIG_DICT: dict[ViTPreset, ViTConfig] = {
         num_heads=16,
         init_values=1e-5,
         global_pool="",
+    ),
+    "dinov3l16_384": ViTConfig(
+        in_chans=3,
+        embed_dim=1024,
+        depth=24,
+        num_heads=16,
+        init_values=1e-5,
+        mlp_ratio=4.0,
+        qkv_bias=False,
     ),
 }

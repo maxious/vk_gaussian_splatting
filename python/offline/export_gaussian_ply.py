@@ -50,6 +50,7 @@ def write_static_gaussian_ply(
     colors: np.ndarray,
     opacities: np.ndarray,
     sh_rest: np.ndarray | None = None,
+    flip_y: bool = False,
 ) -> None:
     """Write a static 3DGS PLY file using plyfile.
 
@@ -61,6 +62,7 @@ def write_static_gaussian_ply(
         colors: (N, 3) float32 SH DC coefficients
         opacities: (N,) float32 logit opacities
         sh_rest: Optional (N, 45) float32 higher-order SH coefficients
+        flip_y: If True, negate Y coordinates to flip the coordinate system
     """
     n_points = len(means)
 
@@ -97,7 +99,7 @@ def write_static_gaussian_ply(
     elements = np.empty(n_points, dtype=dtype_list)
 
     elements["x"] = means[:, 0]
-    elements["y"] = means[:, 1]
+    elements["y"] = -means[:, 1] if flip_y else means[:, 1]
     elements["z"] = means[:, 2]
     elements["nx"] = 0.0
     elements["ny"] = 0.0
@@ -136,6 +138,7 @@ def write_freetimegs_ply(
     time_center: np.ndarray,
     time_scale: np.ndarray,
     sh_rest: np.ndarray | None = None,
+    flip_y: bool = False,
 ) -> None:
     """Write a FreeTimeGS PLY file with temporal parameters using plyfile.
 
@@ -144,6 +147,7 @@ def write_freetimegs_ply(
         opacity(t) = opacity * exp(-0.5 * ((t - time_center) / time_scale)^2)
 
     Args:
+        flip_y: If True, negate Y coordinates to flip the coordinate system
         path: Output PLY file path
         means: (N, 3) float32 positions at time_center
         scales: (N, 3) float32 log-scales
@@ -194,7 +198,7 @@ def write_freetimegs_ply(
     elements = np.empty(n_points, dtype=dtype_list)
 
     elements["x"] = means[:, 0]
-    elements["y"] = means[:, 1]
+    elements["y"] = -means[:, 1] if flip_y else means[:, 1]
     elements["z"] = means[:, 2]
     elements["nx"] = 0.0
     elements["ny"] = 0.0
@@ -365,9 +369,11 @@ class SharpGaussianProcessor:
         self,
         model_path: str | Path | None = None,
         device: str = "cuda",
+        vit_preset: str = "dinov2l16_384",
     ):
         self.model_path = Path(model_path) if model_path else None
         self.device = device
+        self.vit_preset = vit_preset
         self.predictor = None
 
     def _load_model(self):
@@ -381,8 +387,15 @@ class SharpGaussianProcessor:
         # Disable SSL verification for model download if needed
         ssl._create_default_https_context = ssl._create_unverified_context
 
-        logger.info("Initializing SHARP model...")
+        logger.info(f"Initializing SHARP model with preset: {self.vit_preset}...")
         params = PredictorParams()
+
+        # Configure model backbone preset
+        params.monodepth.patch_encoder_preset = self.vit_preset
+        params.monodepth.image_encoder_preset = self.vit_preset
+        params.gaussian_decoder.patch_encoder_preset = self.vit_preset
+        params.gaussian_decoder.image_encoder_preset = self.vit_preset
+
         self.predictor = create_predictor(params)
 
         if self.model_path and self.model_path.exists():
@@ -415,21 +428,34 @@ class SharpGaussianProcessor:
         frame_paths: list[Path],
         timestamps_ms: list[float],
         per_frame: bool = True,
+        masks_dir: Path | None = None,
+        mask_first_frame: bool = False,
+        remove_black_splats: bool = True,
     ) -> list[GaussianFrame]:
         """Process frames using SHARP."""
         import torch
         import cv2
         from sharp.cli.predict import predict_image
         from sharp.utils import color_space as cs_utils
+        from tqdm import tqdm
 
         self._load_model()
         results = []
 
+        # Silence SHARP CLI logs
+        logging.getLogger("sharp.cli.predict").setLevel(logging.WARNING)
+
         # Constants from SHARP utils
         SH_C0 = 0.28209479177387814
 
-        for i, (path, ts) in enumerate(zip(frame_paths, timestamps_ms)):
-            logger.info(f"Processing frame {i + 1}/{len(frame_paths)} with SHARP")
+        pbar = tqdm(
+            zip(frame_paths, timestamps_ms),
+            total=len(frame_paths),
+            desc="SHARP processing",
+            unit="frame",
+        )
+        for i, (path, ts) in enumerate(pbar):
+            pbar.set_postfix(file=path.name)
 
             # Load image
             img = cv2.imread(str(path))
@@ -439,6 +465,28 @@ class SharpGaussianProcessor:
 
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             H, W = img.shape[:2]
+
+            # Apply mask if provided (skip first frame if requested)
+            if masks_dir is not None and (mask_first_frame or i > 0):
+                mask_path = None
+                for ext in [path.suffix, ".png", ".jpg", ".jpeg"]:
+                    candidate = masks_dir / f"{path.stem}{ext}"
+                    if candidate.exists():
+                        mask_path = candidate
+                        break
+                if mask_path is not None:
+                    mask = cv2.imread(str(mask_path))
+                    if mask is not None:
+                        mask = cv2.cvtColor(mask, cv2.COLOR_BGR2RGB)
+                        # Where mask is black (background), set image to black
+                        black_pixels = np.all(mask == 0, axis=2)
+                        img[black_pixels] = 0
+                        n_masked = black_pixels.sum()
+                        logger.info(f"Masked {n_masked} background pixels in {path.name}")
+                    else:
+                        logger.warning(f"Failed to load mask: {mask_path}")
+                else:
+                    logger.warning(f"Mask not found for {path.stem} in {masks_dir}")
 
             # SHARP expects focal length in pixels.
             # Default to FOV ~60 degrees if unknown (f ~= W) or use 500 like demo
@@ -480,6 +528,18 @@ class SharpGaussianProcessor:
             # sh = (rgb - 0.5) / C0
             colors_sh = (colors_srgb - 0.5) / SH_C0
             colors = colors_sh.cpu().numpy()
+
+            # Filter out black/background splats (SHARP prefers black background)
+            if remove_black_splats:
+                valid_mask = np.any(colors_linear.cpu().numpy() > 0.01, axis=1)
+                n_removed = len(means) - valid_mask.sum()
+                if n_removed > 0:
+                    logger.info(f"Removed {n_removed} black/background splats from frame {i}")
+                    means = means[valid_mask]
+                    scales = scales[valid_mask]
+                    rotations = rotations[valid_mask]
+                    colors = colors[valid_mask]
+                    opacities = opacities[valid_mask]
 
             results.append(
                 GaussianFrame(
@@ -951,6 +1011,7 @@ def export_video_to_gaussian_plys(
     device: str = "cuda",
     process_res: int = 518,
     opacity_threshold: float = 0.0,
+    flip_y: bool = False,
 ) -> None:
     """Convert video to Gaussian PLY files.
 
@@ -982,16 +1043,23 @@ def export_video_to_gaussian_plys(
     cap.release()
 
     if "sharp" in model_id.lower():
-        # Heuristic: if model_id contains "sharp", use Sharp processor
-        # If model_id is a valid path or "sharp" keyword, handle it
-        model_path = (
-            model_id if Path(model_id).exists() or "\\" in model_id or "/" in model_id else None
-        )
-        # If user just passed "sharp" but intends to use default download, model_path remains None
-        if model_id.lower() == "sharp":
-            model_path = None
+        # Parse SHARP model configuration
+        model_path = None
+        vit_preset = "dinov2l16_384"  # Default
 
-        processor = SharpGaussianProcessor(model_path=model_path, device=device)
+        if ":" in model_id:
+            # Format: sharp:dinov3l16_384 or sharp:/path/to/model.pt
+            parts = model_id.split(":", 1)
+            config_part = parts[1]
+
+            if Path(config_part).exists() or "\\" in config_part or "/" in config_part:
+                model_path = config_part
+            else:
+                vit_preset = config_part
+
+        processor = SharpGaussianProcessor(
+            model_path=model_path, device=device, vit_preset=vit_preset
+        )
     else:
         processor = DA3GaussianProcessor(
             model_id=model_id,
@@ -1053,18 +1121,27 @@ def export_video_to_gaussian_plys(
             compute_motion_vectors(all_frames, fps)
         )
 
+        # Zero out motion for static splats (motion magnitude <= 0.001)
+        motion_magnitude = np.linalg.norm(motion, axis=1)
+        static_mask = motion_magnitude <= 0.001
+        n_static = static_mask.sum()
+        if n_static > 0:
+            logger.info(f"Zeroing motion for {n_static} static splats (motion <= 0.001)")
+            motion[static_mask] = 0.0
+
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        write_freetimegs_ply(
-            output_path,
-            means,
-            scales,
-            rotations,
-            colors,
-            opacities,
-            motion,
-            time_center,
-            time_scale,
-        )
+    write_freetimegs_ply(
+        output_path,
+        means,
+        scales,
+        rotations,
+        colors,
+        opacities,
+        motion,
+        time_center,
+        time_scale,
+        flip_y=flip_y,
+    )
 
     logger.info(f"Export complete: {output_path}")
 
@@ -1171,6 +1248,11 @@ def export_images_to_gaussian_plys(
     device: str = "cuda",
     process_res: int = 518,
     opacity_threshold: float = 0.0,
+    masks_dir: Path | None = None,
+    mask_first_frame: bool = True,
+    remove_black_splats: bool = True,
+    save_frequency: int = 5,
+    flip_y: bool = False,
 ) -> None:
     """Process images with DA3 and export to Gaussian PLY files.
 
@@ -1187,8 +1269,9 @@ def export_images_to_gaussian_plys(
         image_pattern: Glob pattern for images
         max_frames: Maximum frames to process
         device: PyTorch device
-        process_res: DA3 processing resolution
+        process_res: Processing resolution for DA3
         opacity_threshold: Prune Gaussians with opacity below this threshold
+        flip_y: If True, negate Y coordinates to flip the coordinate system
     """
     image_paths = sorted(input_dir.glob(image_pattern))
     if max_frames:
@@ -1218,7 +1301,17 @@ def export_images_to_gaussian_plys(
         )
 
     # Process frames individually first
-    frames = processor.process_frames(image_paths, timestamps_ms, per_frame=True)
+    if isinstance(processor, SharpGaussianProcessor):
+        frames = processor.process_frames(
+            image_paths,
+            timestamps_ms,
+            per_frame=True,
+            masks_dir=masks_dir,
+            mask_first_frame=mask_first_frame,
+            remove_black_splats=remove_black_splats,
+        )
+    else:
+        frames = processor.process_frames(image_paths, timestamps_ms, per_frame=True)
 
     if not frames:
         raise RuntimeError("No frames processed successfully")
@@ -1242,7 +1335,10 @@ def export_images_to_gaussian_plys(
                 frame.rotations,
                 frame.colors,
                 frame.opacities,
+                flip_y=flip_y,
             )
+            if (i + 1) % save_frequency == 0:
+                logger.info(f"Saved {i + 1}/{len(frames)} PLY files")
         logger.info(f"Exported {len(frames)} PLY files to {output_path}")
         return
 
@@ -1263,11 +1359,27 @@ def export_images_to_gaussian_plys(
         (means, scales, rotations, colors, opacities, motion, time_center, time_scale) = (
             compute_motion_vectors_gpu(frames, fps)
         )
+
+        # Zero out motion for static splats (motion magnitude <= 0.001)
+        motion_magnitude = np.linalg.norm(motion, axis=1)
+        static_mask = motion_magnitude <= 0.001
+        n_static = static_mask.sum()
+        if n_static > 0:
+            logger.info(f"Zeroing motion for {n_static} static splats (motion <= 0.001)")
+            motion[static_mask] = 0.0
     else:
         logger.info("Computing motion vectors (CPU)...")
         (means, scales, rotations, colors, opacities, motion, time_center, time_scale) = (
             compute_motion_vectors(frames, fps)
         )
+
+        # Zero out motion for static splats (motion magnitude <= 0.001)
+        motion_magnitude = np.linalg.norm(motion, axis=1)
+        static_mask = motion_magnitude <= 0.001
+        n_static = static_mask.sum()
+        if n_static > 0:
+            logger.info(f"Zeroing motion for {n_static} static splats (motion <= 0.001)")
+            motion[static_mask] = 0.0
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     write_freetimegs_ply(
@@ -1291,6 +1403,7 @@ def postprocess_plys_to_freetimegs(
     fps: float = 30.0,
     max_match_distance: float = 0.05,
     ply_pattern: str = "frame_*.ply",
+    flip_y: bool = False,
 ) -> None:
     """Postprocess existing per-frame PLY files to a single FreeTimeGS PLY.
 
@@ -1303,7 +1416,8 @@ def postprocess_plys_to_freetimegs(
         output_path: Output FreeTimeGS PLY file path
         fps: Assumed frame rate if not derivable from filenames
         max_match_distance: Maximum distance for matching Gaussians across frames
-        ply_pattern: Glob pattern for finding PLY files
+        ply_pattern: Glob pattern for PLY files
+        flip_y: If True, negate Y coordinates to flip the coordinate system
     """
     import glob as glob_module
 
@@ -1407,6 +1521,11 @@ def main():
         default=0.0,
         help="Prune Gaussians with opacity below this threshold (e.g. 0.05)",
     )
+    export_parser.add_argument(
+        "--flip-y",
+        action="store_true",
+        help="Negate Y coordinates to flip the coordinate system (useful for SHARP models)",
+    )
     export_parser.add_argument("--device", type=str, default="cuda")
     export_parser.add_argument("-v", "--verbose", action="store_true")
 
@@ -1435,6 +1554,11 @@ def main():
     postprocess_parser.add_argument(
         "--pattern", type=str, default="frame_*.ply", help="Glob pattern for PLY files"
     )
+    postprocess_parser.add_argument(
+        "--flip-y",
+        action="store_true",
+        help="Negate Y coordinates to flip the coordinate system (useful for SHARP models). Only use if input PLYs weren't already flipped.",
+    )
     postprocess_parser.add_argument("-v", "--verbose", action="store_true")
 
     images_parser = subparsers.add_parser(
@@ -1460,7 +1584,10 @@ def main():
         "--fps", type=float, default=30.0, help="Frame rate for temporal normalization"
     )
     images_parser.add_argument(
-        "--model", type=str, default="depth-anything/DA3-GIANT", help="DA3 model ID"
+        "--model",
+        type=str,
+        default="depth-anything/DA3-GIANT",
+        help="Model ID. For SHARP: 'sharp' (DINOv2) or 'sharp:dinov3l16_384' (DINOv3)",
     )
     images_parser.add_argument(
         "--pattern", type=str, default="*.jpg", help="Glob pattern for image files"
@@ -1472,10 +1599,25 @@ def main():
         "--process-res", type=int, default=518, help="Processing resolution for DA3"
     )
     images_parser.add_argument(
-        "--opacity-threshold",
-        type=float,
-        default=0.0,
-        help="Prune Gaussians with opacity below this threshold (e.g. 0.05)",
+        "--masks-dir",
+        type=Path,
+        default=None,
+        help="Directory containing mask images for background removal",
+    )
+    images_parser.add_argument(
+        "--no-mask-first-frame",
+        action="store_true",
+        help="Apply mask to the first frame (default: skip first frame)",
+    )
+    images_parser.add_argument(
+        "--no-remove-black-splats",
+        action="store_true",
+        help="Keep black splats instead of removing them (default: remove)",
+    )
+    images_parser.add_argument(
+        "--flip-y",
+        action="store_true",
+        help="Negate Y coordinates to flip the coordinate system (useful for SHARP models). If using postprocess afterward, don't flip there too.",
     )
     images_parser.add_argument("--device", type=str, default="cuda")
     images_parser.add_argument("-v", "--verbose", action="store_true")
@@ -1523,6 +1665,7 @@ def main():
             device=args.device,
             process_res=args.process_res,
             opacity_threshold=args.opacity_threshold if hasattr(args, "opacity_threshold") else 0.0,
+            flip_y=getattr(args, "flip_y", False),
         )
     elif args.command == "postprocess":
         postprocess_plys_to_freetimegs(
@@ -1531,6 +1674,7 @@ def main():
             fps=args.fps,
             max_match_distance=args.max_match_distance,
             ply_pattern=args.pattern,
+            flip_y=getattr(args, "flip_y", False),
         )
     elif args.command == "images":
         export_images_to_gaussian_plys(
@@ -1544,6 +1688,10 @@ def main():
             device=args.device,
             process_res=args.process_res,
             opacity_threshold=args.opacity_threshold if hasattr(args, "opacity_threshold") else 0.0,
+            masks_dir=args.masks_dir if hasattr(args, "masks_dir") else None,
+            mask_first_frame=not getattr(args, "no_mask_first_frame", False),
+            remove_black_splats=not getattr(args, "no_remove_black_splats", False),
+            flip_y=getattr(args, "flip_y", False),
         )
 
 
