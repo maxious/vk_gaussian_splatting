@@ -1,0 +1,1190 @@
+"""Export video frames to Gaussian Splatting PLY files using DA3.
+
+Supports two modes:
+1. Per-frame static PLY files (one PLY per frame or chunk)
+2. FreeTimeGS PLY with temporal parameters (motion vectors, time center, time scale)
+
+Usage:
+    # Export per-frame static PLYs:
+    python -m offline.export_gaussian_ply --input video.mp4 --output ./gaussians/ --mode frames
+    
+    # Export single FreeTimeGS PLY with motion:
+    python -m offline.export_gaussian_ply --input video.mp4 --output scene.ply --mode freetimegs
+
+Requires DA3-GIANT model with infer_gs=True for Gaussian output.
+"""
+
+from __future__ import annotations
+
+import argparse
+import logging
+import struct
+from dataclasses import dataclass
+from pathlib import Path
+from typing import BinaryIO
+
+import cv2
+import numpy as np
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class GaussianFrame:
+    """Gaussian splat data for a single frame."""
+    frame_idx: int
+    timestamp_ms: float
+    means: np.ndarray        # (N, 3) positions
+    scales: np.ndarray       # (N, 3) log-scale
+    rotations: np.ndarray    # (N, 4) quaternion wxyz
+    colors: np.ndarray       # (N, 3) SH DC term (f_dc)
+    opacities: np.ndarray    # (N,) logit opacity
+
+
+def write_static_gaussian_ply(
+    path: Path,
+    means: np.ndarray,
+    scales: np.ndarray,
+    rotations: np.ndarray,
+    colors: np.ndarray,
+    opacities: np.ndarray,
+    sh_rest: np.ndarray | None = None,
+) -> None:
+    """Write a static 3DGS PLY file.
+    
+    Args:
+        path: Output PLY file path
+        means: (N, 3) float32 positions
+        scales: (N, 3) float32 log-scales
+        rotations: (N, 4) float32 quaternions (wxyz order)
+        colors: (N, 3) float32 SH DC coefficients
+        opacities: (N,) float32 logit opacities
+        sh_rest: Optional (N, 45) float32 higher-order SH coefficients
+    """
+    n_points = len(means)
+    
+    properties = [
+        "property float x",
+        "property float y",
+        "property float z",
+        "property float f_dc_0",
+        "property float f_dc_1",
+        "property float f_dc_2",
+    ]
+    
+    sh_degree = 0
+    if sh_rest is not None and sh_rest.shape[1] > 0:
+        n_sh = sh_rest.shape[1]
+        if n_sh >= 45:
+            sh_degree = 3
+        elif n_sh >= 24:
+            sh_degree = 2
+        elif n_sh >= 9:
+            sh_degree = 1
+        for i in range(n_sh):
+            properties.append(f"property float f_rest_{i}")
+    
+    properties.extend([
+        "property float opacity",
+        "property float scale_0",
+        "property float scale_1",
+        "property float scale_2",
+        "property float rot_0",
+        "property float rot_1",
+        "property float rot_2",
+        "property float rot_3",
+    ])
+    
+    header = "\n".join([
+        "ply",
+        "format binary_little_endian 1.0",
+        f"element vertex {n_points}",
+        *properties,
+        "end_header",
+    ])
+    
+    with open(path, "wb") as f:
+        f.write(header.encode() + b"\n")
+        
+        for i in range(n_points):
+            f.write(struct.pack("<fff", *means[i]))
+            f.write(struct.pack("<fff", *colors[i]))
+            if sh_rest is not None and sh_rest.shape[1] > 0:
+                f.write(struct.pack(f"<{sh_rest.shape[1]}f", *sh_rest[i]))
+            f.write(struct.pack("<f", opacities[i]))
+            f.write(struct.pack("<fff", *scales[i]))
+            f.write(struct.pack("<ffff", *rotations[i]))
+    
+    logger.info(f"Wrote {n_points} Gaussians to {path}")
+
+
+def write_freetimegs_ply(
+    path: Path,
+    means: np.ndarray,
+    scales: np.ndarray,
+    rotations: np.ndarray,
+    colors: np.ndarray,
+    opacities: np.ndarray,
+    motion: np.ndarray,
+    time_center: np.ndarray,
+    time_scale: np.ndarray,
+    sh_rest: np.ndarray | None = None,
+) -> None:
+    """Write a FreeTimeGS PLY file with temporal parameters.
+    
+    The temporal model is:
+        position(t) = mean + motion * (t - time_center)
+        opacity(t) = opacity * exp(-0.5 * ((t - time_center) / time_scale)^2)
+    
+    Args:
+        path: Output PLY file path
+        means: (N, 3) float32 positions at time_center
+        scales: (N, 3) float32 log-scales
+        rotations: (N, 4) float32 quaternions (wxyz order)
+        colors: (N, 3) float32 SH DC coefficients
+        opacities: (N,) float32 logit opacities
+        motion: (N, 3) float32 velocity vectors
+        time_center: (N,) float32 temporal center (0-1 normalized)
+        time_scale: (N,) float32 temporal width (log-space, will be exp'd by viewer)
+        sh_rest: Optional (N, 45) float32 higher-order SH coefficients
+    """
+    n_points = len(means)
+    
+    properties = [
+        "property float x",
+        "property float y",
+        "property float z",
+        "property float f_dc_0",
+        "property float f_dc_1",
+        "property float f_dc_2",
+    ]
+    
+    if sh_rest is not None and sh_rest.shape[1] > 0:
+        for i in range(sh_rest.shape[1]):
+            properties.append(f"property float f_rest_{i}")
+    
+    properties.extend([
+        "property float opacity",
+        "property float scale_0",
+        "property float scale_1",
+        "property float scale_2",
+        "property float rot_0",
+        "property float rot_1",
+        "property float rot_2",
+        "property float rot_3",
+        "property float motion_0",
+        "property float motion_1",
+        "property float motion_2",
+        "property float t",
+        "property float t_scale",
+    ])
+    
+    header = "\n".join([
+        "ply",
+        "format binary_little_endian 1.0",
+        f"element vertex {n_points}",
+        *properties,
+        "end_header",
+    ])
+    
+    with open(path, "wb") as f:
+        f.write(header.encode() + b"\n")
+        
+        for i in range(n_points):
+            f.write(struct.pack("<fff", *means[i]))
+            f.write(struct.pack("<fff", *colors[i]))
+            if sh_rest is not None and sh_rest.shape[1] > 0:
+                f.write(struct.pack(f"<{sh_rest.shape[1]}f", *sh_rest[i]))
+            f.write(struct.pack("<f", opacities[i]))
+            f.write(struct.pack("<fff", *scales[i]))
+            f.write(struct.pack("<ffff", *rotations[i]))
+            f.write(struct.pack("<fff", *motion[i]))
+            f.write(struct.pack("<f", time_center[i]))
+            f.write(struct.pack("<f", time_scale[i]))
+    
+    logger.info(f"Wrote {n_points} FreeTimeGS Gaussians to {path}")
+
+
+class DA3GaussianProcessor:
+    """Process video frames to Gaussian splats using DA3."""
+    
+    def __init__(
+        self,
+        model_id: str = "depth-anything/DA3-GIANT",
+        device: str = "cuda",
+        process_res: int = 518,
+    ):
+        self.model_id = model_id
+        self.device = device
+        self.process_res = process_res
+        self.model = None
+    
+    def _load_model(self):
+        """Lazy load the DA3 model."""
+        if self.model is not None:
+            return
+        
+        import torch
+        
+        if not torch.cuda.is_available():
+            raise RuntimeError("CUDA required for DA3 inference")
+        
+        try:
+            from depth_anything_3.api import DepthAnything3
+        except ImportError:
+            raise RuntimeError(
+                "depth-anything-3 not installed. Run: "
+                "uv pip install depth-anything-3"
+            )
+        
+        logger.info(f"Loading model: {self.model_id} (this may take a while to download...)")
+        logger.info("Model files are cached in ~/.cache/huggingface/hub/")
+        
+        import huggingface_hub
+        huggingface_hub.logging.set_verbosity_info()
+        
+        self.model = DepthAnything3.from_pretrained(self.model_id)
+        logger.info(f"Model loaded, moving to {self.device}...")
+        self.model = self.model.to(self.device).eval()
+        self.dtype = torch.float16
+        logger.info("Model ready for inference")
+    
+    def process_frames(
+        self,
+        frame_paths: list[Path],
+        timestamps_ms: list[float],
+        per_frame: bool = False,
+    ) -> list[GaussianFrame]:
+        """Process frames to extract Gaussians.
+        
+        Args:
+            frame_paths: List of frame image paths
+            timestamps_ms: Corresponding timestamps in milliseconds
+            per_frame: If True, process each frame individually for separate PLYs.
+                      If False (default), process all together for merged Gaussians.
+            
+        Returns:
+            List of GaussianFrame objects (one per frame if per_frame=True,
+            otherwise one merged frame)
+        """
+        import torch
+        
+        self._load_model()
+        
+        if per_frame:
+            return self._process_frames_individually(frame_paths, timestamps_ms)
+        else:
+            return self._process_frames_merged(frame_paths, timestamps_ms)
+    
+    def _process_frames_merged(
+        self,
+        frame_paths: list[Path],
+        timestamps_ms: list[float],
+    ) -> list[GaussianFrame]:
+        """Process all frames together, returning merged Gaussians."""
+        import torch
+        
+        logger.info(f"Processing {len(frame_paths)} frames merged with infer_gs=True")
+        
+        with torch.no_grad():
+            with torch.amp.autocast("cuda", dtype=self.dtype):
+                images = [str(p) for p in frame_paths]
+                
+                predictions = self.model.inference(
+                    images,
+                    process_res=self.process_res,
+                    ref_view_strategy="saddle_balanced",
+                    infer_gs=True,
+                )
+        
+        if predictions.gaussians is None:
+            raise RuntimeError(
+                "Model did not return Gaussians. "
+                "Make sure you're using DA3-GIANT with infer_gs=True"
+            )
+        
+        gaussians = predictions.gaussians
+        
+        means = gaussians.means[0].cpu().numpy()
+        scales = gaussians.scales[0].cpu().numpy()
+        rotations = gaussians.rotations[0].cpu().numpy()
+        opacities = gaussians.opacities[0].cpu().numpy()
+        
+        harmonics = gaussians.harmonics[0].cpu().numpy()
+        colors = harmonics[:, :, 0] if harmonics.ndim == 3 else harmonics
+        
+        if opacities.ndim == 2:
+            opacities = opacities[:, 0]
+        
+        mid_ts = timestamps_ms[len(timestamps_ms) // 2] if timestamps_ms else 0
+        
+        return [GaussianFrame(
+            frame_idx=0,
+            timestamp_ms=mid_ts,
+            means=means.astype(np.float32),
+            scales=scales.astype(np.float32),
+            rotations=rotations.astype(np.float32),
+            colors=colors.astype(np.float32),
+            opacities=opacities.astype(np.float32),
+        )]
+    
+    def _process_frames_individually(
+        self,
+        frame_paths: list[Path],
+        timestamps_ms: list[float],
+    ) -> list[GaussianFrame]:
+        """Process each frame individually for per-frame PLY output."""
+        import torch
+        
+        results = []
+        
+        for i, (frame_path, ts) in enumerate(zip(frame_paths, timestamps_ms)):
+            logger.info(f"Processing frame {i+1}/{len(frame_paths)}: {frame_path.name}")
+            
+            with torch.no_grad():
+                with torch.amp.autocast("cuda", dtype=self.dtype):
+                    predictions = self.model.inference(
+                        [str(frame_path)],
+                        process_res=self.process_res,
+                        ref_view_strategy="first",
+                        infer_gs=True,
+                    )
+            
+            if predictions.gaussians is None:
+                logger.warning(f"Frame {i} did not return Gaussians, skipping")
+                continue
+            
+            gaussians = predictions.gaussians
+            
+            means = gaussians.means[0].cpu().numpy()
+            scales = gaussians.scales[0].cpu().numpy()
+            rotations = gaussians.rotations[0].cpu().numpy()
+            opacities = gaussians.opacities[0].cpu().numpy()
+            
+            harmonics = gaussians.harmonics[0].cpu().numpy()
+            colors = harmonics[:, :, 0] if harmonics.ndim == 3 else harmonics
+            
+            if opacities.ndim == 2:
+                opacities = opacities[:, 0]
+            
+            results.append(GaussianFrame(
+                frame_idx=i,
+                timestamp_ms=ts,
+                means=means.astype(np.float32),
+                scales=scales.astype(np.float32),
+                rotations=rotations.astype(np.float32),
+                colors=colors.astype(np.float32),
+                opacities=opacities.astype(np.float32),
+            ))
+        
+        return results
+
+
+def extract_video_frames(
+    video_path: Path,
+    output_dir: Path,
+    frame_skip: int = 1,
+    max_frames: int | None = None,
+) -> tuple[list[Path], list[float]]:
+    """Extract frames from video.
+    
+    Returns:
+        (frame_paths, timestamps_ms)
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        raise ValueError(f"Cannot open video: {video_path}")
+    
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    
+    frame_paths = []
+    timestamps_ms = []
+    idx = 0
+    saved = 0
+    
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        
+        if idx % frame_skip == 0:
+            if max_frames is not None and saved >= max_frames:
+                break
+            
+            frame_path = output_dir / f"frame_{saved:06d}.png"
+            cv2.imwrite(str(frame_path), frame)
+            frame_paths.append(frame_path)
+            timestamps_ms.append(idx * 1000.0 / fps)
+            saved += 1
+            
+            if saved % 50 == 0:
+                logger.info(f"Extracted {saved} frames")
+        
+        idx += 1
+    
+    cap.release()
+    logger.info(f"Extracted {len(frame_paths)} frames from {video_path}")
+    return frame_paths, timestamps_ms
+
+
+@dataclass
+class GaussianTrajectory:
+    """Tracked Gaussian across multiple frames."""
+    frame_indices: list[int]
+    times_normalized: list[float]
+    positions: list[np.ndarray]
+    scales: list[np.ndarray]
+    rotations: list[np.ndarray]
+    colors: list[np.ndarray]
+    opacities: list[float]
+
+
+def match_gaussians_bidirectional(
+    means_a: np.ndarray,
+    means_b: np.ndarray,
+    max_distance: float = 0.05,
+) -> list[tuple[int, int]]:
+    """Match Gaussians between two frames using bidirectional nearest-neighbor.
+    
+    A match is valid only if A's nearest neighbor in B also has A as its nearest
+    neighbor (mutual best match). This reduces false matches.
+    
+    Args:
+        means_a: (N, 3) positions in frame A
+        means_b: (M, 3) positions in frame B  
+        max_distance: Maximum distance threshold for valid matches
+        
+    Returns:
+        List of (idx_a, idx_b) pairs representing valid matches
+    """
+    from scipy.spatial import cKDTree  # type: ignore[attr-defined]
+    
+    if len(means_a) == 0 or len(means_b) == 0:
+        return []
+    
+    tree_a = cKDTree(means_a)
+    tree_b = cKDTree(means_b)
+    
+    dist_a_to_b, idx_a_to_b = tree_b.query(means_a, k=1)
+    dist_b_to_a, idx_b_to_a = tree_a.query(means_b, k=1)
+    
+    matches = []
+    for i, (j, d) in enumerate(zip(idx_a_to_b, dist_a_to_b)):
+        if d < max_distance and idx_b_to_a[j] == i:
+            matches.append((i, j))
+    
+    return matches
+
+
+def build_trajectories(
+    frames: list[GaussianFrame],
+    max_distance: float = 0.05,
+) -> list[GaussianTrajectory]:
+    """Build Gaussian trajectories by tracking across consecutive frames.
+    
+    Uses union-find to merge tracks and handles Gaussians that appear/disappear.
+    
+    Args:
+        frames: List of per-frame Gaussian data, sorted by time
+        max_distance: Max position difference for matching
+        
+    Returns:
+        List of trajectories, each containing observations across frames
+    """
+    if len(frames) == 0:
+        return []
+    
+    t_start = frames[0].timestamp_ms
+    t_end = frames[-1].timestamp_ms
+    t_range = max(t_end - t_start, 1e-6)
+    
+    gaussian_to_trajectory: dict[tuple[int, int], int] = {}
+    trajectories: list[GaussianTrajectory] = []
+    
+    for frame_idx, frame in enumerate(frames):
+        t_norm = (frame.timestamp_ms - t_start) / t_range
+        
+        for g_idx in range(len(frame.means)):
+            key = (frame_idx, g_idx)
+            
+            if key not in gaussian_to_trajectory:
+                traj_id = len(trajectories)
+                trajectories.append(GaussianTrajectory(
+                    frame_indices=[frame_idx],
+                    times_normalized=[t_norm],
+                    positions=[frame.means[g_idx].copy()],
+                    scales=[frame.scales[g_idx].copy()],
+                    rotations=[frame.rotations[g_idx].copy()],
+                    colors=[frame.colors[g_idx].copy()],
+                    opacities=[float(frame.opacities[g_idx])],
+                ))
+                gaussian_to_trajectory[key] = traj_id
+    
+    for i in range(len(frames) - 1):
+        frame_a = frames[i]
+        frame_b = frames[i + 1]
+        
+        matches = match_gaussians_bidirectional(
+            frame_a.means, frame_b.means, max_distance
+        )
+        
+        for idx_a, idx_b in matches:
+            key_a = (i, idx_a)
+            key_b = (i + 1, idx_b)
+            
+            traj_id_a = gaussian_to_trajectory[key_a]
+            traj_id_b = gaussian_to_trajectory[key_b]
+            
+            if traj_id_a != traj_id_b:
+                traj_a = trajectories[traj_id_a]
+                traj_b = trajectories[traj_id_b]
+                
+                traj_a.frame_indices.extend(traj_b.frame_indices)
+                traj_a.times_normalized.extend(traj_b.times_normalized)
+                traj_a.positions.extend(traj_b.positions)
+                traj_a.scales.extend(traj_b.scales)
+                traj_a.rotations.extend(traj_b.rotations)
+                traj_a.colors.extend(traj_b.colors)
+                traj_a.opacities.extend(traj_b.opacities)
+                
+                for k, v in gaussian_to_trajectory.items():
+                    if v == traj_id_b:
+                        gaussian_to_trajectory[k] = traj_id_a
+    
+    seen_ids = set(gaussian_to_trajectory.values())
+    return [trajectories[i] for i in sorted(seen_ids)]
+
+
+def fit_trajectory_motion(
+    trajectory: GaussianTrajectory,
+    min_observations: int = 2,
+) -> tuple[np.ndarray, np.ndarray, float, float]:
+    """Fit linear motion and temporal parameters to a trajectory.
+    
+    Uses least-squares to fit: position(t) = position_at_t_center + velocity * (t - t_center)
+    
+    Args:
+        trajectory: Gaussian trajectory with multiple observations
+        min_observations: Minimum observations for motion fitting
+        
+    Returns:
+        (position_at_center, velocity, t_center, t_scale_log)
+    """
+    times = np.array(trajectory.times_normalized)
+    positions = np.array(trajectory.positions)
+    
+    t_center = float(np.mean(times))
+    
+    if len(times) >= 3:
+        t_scale = float(np.std(times)) * 2.0
+    else:
+        t_span = times.max() - times.min() if len(times) > 1 else 0.5
+        t_scale = max(t_span / 2.0, 0.1)
+    
+    t_scale = max(t_scale, 0.05)
+    t_scale_log = float(np.log(t_scale))
+    
+    if len(times) < min_observations:
+        pos_center = positions[0]
+        velocity = np.zeros(3, dtype=np.float32)
+        return pos_center, velocity, t_center, t_scale_log
+    
+    dt = times - t_center
+    
+    if np.abs(dt).max() < 1e-6:
+        pos_center = np.mean(positions, axis=0)
+        velocity = np.zeros(3, dtype=np.float32)
+        return pos_center.astype(np.float32), velocity, t_center, t_scale_log
+    
+    A = np.column_stack([np.ones(len(times)), dt])
+    
+    velocity = np.zeros(3, dtype=np.float32)
+    pos_center = np.zeros(3, dtype=np.float32)
+    
+    for dim in range(3):
+        coeffs, _, _, _ = np.linalg.lstsq(A, positions[:, dim], rcond=None)
+        pos_center[dim] = coeffs[0]
+        velocity[dim] = coeffs[1]
+    
+    return pos_center, velocity, t_center, t_scale_log
+
+
+def compute_scene_scale(frames: list[GaussianFrame]) -> float:
+    """Compute approximate scene scale from Gaussian positions."""
+    all_means = np.vstack([f.means for f in frames])
+    bbox_min = all_means.min(axis=0)
+    bbox_max = all_means.max(axis=0)
+    diagonal = np.linalg.norm(bbox_max - bbox_min)
+    return diagonal
+
+
+def compute_motion_vectors(
+    frames: list[GaussianFrame],
+    fps: float,
+    max_match_distance: float | None = None,
+    match_distance_ratio: float = 0.02,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Compute motion vectors by tracking Gaussian positions across frames.
+    
+    Pipeline:
+    1. Match Gaussians between consecutive frames using bidirectional KDTree
+    2. Build trajectories by merging matched observations  
+    3. Fit linear velocity and temporal Gaussian to each trajectory
+    
+    Args:
+        frames: List of per-frame GaussianFrame objects
+        fps: Video frame rate (used if timestamps missing)
+        max_match_distance: Maximum distance for matching. If None, computed as
+            match_distance_ratio * scene_diagonal.
+        match_distance_ratio: Ratio of scene diagonal for auto distance (default 2%)
+    
+    Returns:
+        (means, scales, rotations, colors, opacities, motion, time_center, time_scale)
+        All arrays are for the output Gaussian set (one per trajectory).
+    """
+    if len(frames) < 2:
+        frame = frames[0]
+        n = len(frame.means)
+        return (
+            frame.means,
+            frame.scales,
+            frame.rotations,
+            frame.colors,
+            frame.opacities,
+            np.zeros((n, 3), dtype=np.float32),
+            np.full(n, 0.5, dtype=np.float32),
+            np.zeros(n, dtype=np.float32),
+        )
+    
+    if max_match_distance is None:
+        scene_scale = compute_scene_scale(frames)
+        max_match_distance = scene_scale * match_distance_ratio
+        logger.info(f"Scene scale: {scene_scale:.2f}, using match distance: {max_match_distance:.2f}")
+    
+    logger.info(f"Building trajectories from {len(frames)} frames...")
+    trajectories = build_trajectories(frames, max_distance=max_match_distance)
+    logger.info(f"Found {len(trajectories)} unique Gaussian trajectories")
+    
+    n_traj = len(trajectories)
+    
+    all_means = np.zeros((n_traj, 3), dtype=np.float32)
+    all_scales = np.zeros((n_traj, 3), dtype=np.float32)
+    all_rotations = np.zeros((n_traj, 4), dtype=np.float32)
+    all_colors = np.zeros((n_traj, 3), dtype=np.float32)
+    all_opacities = np.zeros(n_traj, dtype=np.float32)
+    all_motion = np.zeros((n_traj, 3), dtype=np.float32)
+    all_time_center = np.zeros(n_traj, dtype=np.float32)
+    all_time_scale = np.zeros(n_traj, dtype=np.float32)
+    
+    for i, traj in enumerate(trajectories):
+        pos_center, velocity, t_center, t_scale_log = fit_trajectory_motion(traj)
+        
+        all_means[i] = pos_center
+        all_motion[i] = velocity
+        all_time_center[i] = t_center
+        all_time_scale[i] = t_scale_log
+        
+        weights = np.array(traj.opacities)
+        weights = np.maximum(weights, 0.01)
+        weights /= weights.sum()
+        
+        all_scales[i] = np.average(traj.scales, axis=0, weights=weights)
+        all_rotations[i] = np.average(traj.rotations, axis=0, weights=weights)
+        all_colors[i] = np.average(traj.colors, axis=0, weights=weights)
+        all_opacities[i] = np.average(traj.opacities, weights=weights)
+    
+    rot_norms = np.linalg.norm(all_rotations, axis=1, keepdims=True)
+    all_rotations = all_rotations / np.maximum(rot_norms, 1e-8)
+    
+    logger.info(f"Motion stats: velocity magnitude mean={np.linalg.norm(all_motion, axis=1).mean():.4f}, "
+                f"max={np.linalg.norm(all_motion, axis=1).max():.4f}")
+    logger.info(f"Time center: min={all_time_center.min():.3f}, max={all_time_center.max():.3f}")
+    logger.info(f"Time scale (log): min={all_time_scale.min():.3f}, max={all_time_scale.max():.3f}")
+    
+    return (
+        all_means,
+        all_scales,
+        all_rotations,
+        all_colors,
+        all_opacities,
+        all_motion,
+        all_time_center,
+        all_time_scale,
+    )
+
+
+def export_video_to_gaussian_plys(
+    video_path: Path,
+    output_path: Path,
+    mode: str = "frames",
+    model_id: str = "depth-anything/DA3-GIANT",
+    frame_skip: int = 5,
+    chunk_size: int = 10,
+    max_frames: int | None = None,
+    device: str = "cuda",
+    process_res: int = 518,
+) -> None:
+    """Convert video to Gaussian PLY files.
+    
+    Args:
+        video_path: Input video file
+        output_path: Output path (directory for 'frames' mode, file for 'freetimegs')
+        mode: 'frames' for per-frame PLYs, 'freetimegs' for single temporal PLY
+        model_id: DA3 model ID (must support infer_gs=True)
+        frame_skip: Process every Nth frame
+        chunk_size: Number of frames to process together
+        max_frames: Maximum frames to process (None for all)
+        device: PyTorch device
+        process_res: Processing resolution for DA3
+    """
+    temp_dir = output_path.parent / "temp_frames" if mode == "freetimegs" else output_path / "temp_frames"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    
+    frame_paths, timestamps_ms = extract_video_frames(
+        video_path, temp_dir, frame_skip=frame_skip, max_frames=max_frames
+    )
+    
+    if not frame_paths:
+        raise ValueError("No frames extracted from video")
+    
+    cap = cv2.VideoCapture(str(video_path))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    cap.release()
+    
+    processor = DA3GaussianProcessor(
+        model_id=model_id,
+        device=device,
+        process_res=process_res,
+    )
+    
+    all_frames: list[GaussianFrame] = []
+    
+    for chunk_start in range(0, len(frame_paths), chunk_size):
+        chunk_end = min(chunk_start + chunk_size, len(frame_paths))
+        chunk_paths = frame_paths[chunk_start:chunk_end]
+        chunk_timestamps = timestamps_ms[chunk_start:chunk_end]
+        
+        logger.info(f"Processing chunk {chunk_start // chunk_size + 1}: frames {chunk_start}-{chunk_end - 1}")
+        
+        try:
+            # For frames mode, process individually to get per-frame PLYs
+            # For freetimegs mode, process merged for unified scene
+            per_frame = (mode == "frames")
+            chunk_frames = processor.process_frames(chunk_paths, chunk_timestamps, per_frame=per_frame)
+            
+            for i, frame in enumerate(chunk_frames):
+                if per_frame:
+                    frame.frame_idx = chunk_start + i
+            
+            all_frames.extend(chunk_frames)
+            
+            if mode == "frames":
+                output_path.mkdir(parents=True, exist_ok=True)
+                for frame in chunk_frames:
+                    ply_path = output_path / f"frame_{frame.frame_idx:06d}.ply"
+                    write_static_gaussian_ply(
+                        ply_path,
+                        frame.means,
+                        frame.scales,
+                        frame.rotations,
+                        frame.colors,
+                        frame.opacities,
+                    )
+        except Exception as e:
+            logger.error(f"Failed to process chunk: {e}")
+            raise
+    
+    if mode == "freetimegs":
+        logger.info("Computing motion vectors...")
+        (means, scales, rotations, colors, opacities,
+         motion, time_center, time_scale) = compute_motion_vectors(all_frames, fps)
+        
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        write_freetimegs_ply(
+            output_path,
+            means,
+            scales,
+            rotations,
+            colors,
+            opacities,
+            motion,
+            time_center,
+            time_scale,
+        )
+    
+    logger.info(f"Export complete: {output_path}")
+
+
+def load_static_gaussian_ply(path: Path) -> GaussianFrame:
+    """Load a static 3DGS PLY file into a GaussianFrame.
+    
+    Args:
+        path: Path to the PLY file
+        
+    Returns:
+        GaussianFrame with loaded data (frame_idx/timestamp from filename if possible)
+    """
+    import re
+    
+    with open(path, "rb") as f:
+        header_lines = []
+        while True:
+            line = f.readline().decode("ascii").strip()
+            header_lines.append(line)
+            if line == "end_header":
+                break
+        
+        vertex_count = 0
+        properties: list[str] = []
+        in_vertex = False
+        
+        for line in header_lines:
+            if line.startswith("element vertex "):
+                vertex_count = int(line.split()[-1])
+                in_vertex = True
+            elif line.startswith("element "):
+                in_vertex = False
+            elif in_vertex and line.startswith("property float "):
+                properties.append(line.split()[-1])
+        
+        prop_to_idx = {p: i for i, p in enumerate(properties)}
+        
+        stride = len(properties)
+        data = np.frombuffer(f.read(vertex_count * stride * 4), dtype=np.float32)
+        data = data.reshape(vertex_count, stride)
+    
+    means = np.column_stack([
+        data[:, prop_to_idx["x"]],
+        data[:, prop_to_idx["y"]],
+        data[:, prop_to_idx["z"]],
+    ])
+    
+    colors = np.column_stack([
+        data[:, prop_to_idx["f_dc_0"]],
+        data[:, prop_to_idx["f_dc_1"]],
+        data[:, prop_to_idx["f_dc_2"]],
+    ])
+    
+    scales = np.column_stack([
+        data[:, prop_to_idx["scale_0"]],
+        data[:, prop_to_idx["scale_1"]],
+        data[:, prop_to_idx["scale_2"]],
+    ])
+    
+    rotations = np.column_stack([
+        data[:, prop_to_idx["rot_0"]],
+        data[:, prop_to_idx["rot_1"]],
+        data[:, prop_to_idx["rot_2"]],
+        data[:, prop_to_idx["rot_3"]],
+    ])
+    
+    opacities = data[:, prop_to_idx["opacity"]]
+    
+    frame_idx = 0
+    timestamp_ms = 0.0
+    match = re.search(r"frame_(\d+)", path.stem)
+    if match:
+        frame_idx = int(match.group(1))
+        timestamp_ms = frame_idx * 33.33
+    
+    return GaussianFrame(
+        frame_idx=frame_idx,
+        timestamp_ms=timestamp_ms,
+        means=means.astype(np.float32),
+        scales=scales.astype(np.float32),
+        rotations=rotations.astype(np.float32),
+        colors=colors.astype(np.float32),
+        opacities=opacities.astype(np.float32),
+    )
+
+
+def export_images_to_freetimegs(
+    input_dir: Path,
+    output_path: Path,
+    fps: float = 30.0,
+    model_id: str = "depth-anything/DA3-GIANT",
+    image_pattern: str = "*.jpg",
+    max_frames: int | None = None,
+    device: str = "cuda",
+    process_res: int = 518,
+) -> None:
+    """Process images with DA3 and export to FreeTimeGS PLY.
+    
+    Two-step pipeline:
+    1. Run DA3 on each image to get per-frame Gaussians
+    2. Track Gaussians across frames and compute motion vectors
+    
+    Args:
+        input_dir: Directory containing input images
+        output_path: Output FreeTimeGS PLY file path
+        fps: Assumed frame rate for temporal normalization
+        model_id: DA3 model ID
+        image_pattern: Glob pattern for images
+        max_frames: Maximum frames to process
+        device: PyTorch device
+        process_res: DA3 processing resolution
+    """
+    image_paths = sorted(input_dir.glob(image_pattern))
+    if max_frames:
+        image_paths = image_paths[:max_frames]
+    
+    if not image_paths:
+        raise ValueError(f"No images found in {input_dir} matching '{image_pattern}'")
+    
+    logger.info(f"Found {len(image_paths)} images to process")
+    
+    timestamps_ms = [i * (1000.0 / fps) for i in range(len(image_paths))]
+    
+    processor = DA3GaussianProcessor(
+        model_id=model_id,
+        device=device,
+        process_res=process_res,
+    )
+    
+    frames = processor.process_frames(image_paths, timestamps_ms, per_frame=True)
+    
+    if not frames:
+        raise RuntimeError("No frames processed successfully")
+    
+    logger.info(f"Processed {len(frames)} frames, total {sum(len(f.means) for f in frames)} Gaussians")
+    
+    try:
+        from offline.motion_tracking_cuda import (
+            check_cuda_available,
+            check_faiss_available,
+            compute_motion_vectors_gpu,
+        )
+        use_gpu = check_cuda_available() or check_faiss_available()
+    except ImportError:
+        use_gpu = False
+    
+    if use_gpu:
+        logger.info("Computing motion vectors (GPU-accelerated)...")
+        (means, scales, rotations, colors, opacities,
+         motion, time_center, time_scale) = compute_motion_vectors_gpu(frames, fps)
+    else:
+        logger.info("Computing motion vectors (CPU)...")
+        (means, scales, rotations, colors, opacities,
+         motion, time_center, time_scale) = compute_motion_vectors(frames, fps)
+    
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    write_freetimegs_ply(
+        output_path,
+        means,
+        scales,
+        rotations,
+        colors,
+        opacities,
+        motion,
+        time_center,
+        time_scale,
+    )
+    
+    logger.info(f"Wrote FreeTimeGS PLY with {len(means)} Gaussians to {output_path}")
+
+
+def postprocess_plys_to_freetimegs(
+    input_dir: Path,
+    output_path: Path,
+    fps: float = 30.0,
+    max_match_distance: float = 0.05,
+    ply_pattern: str = "frame_*.ply",
+) -> None:
+    """Postprocess existing per-frame PLY files to a single FreeTimeGS PLY.
+    
+    Loads all PLY files matching the pattern, tracks Gaussians across frames,
+    computes motion vectors and temporal parameters, then outputs a single
+    FreeTimeGS PLY file.
+    
+    Args:
+        input_dir: Directory containing per-frame PLY files
+        output_path: Output FreeTimeGS PLY file path
+        fps: Assumed frame rate if not derivable from filenames
+        max_match_distance: Maximum distance for matching Gaussians across frames
+        ply_pattern: Glob pattern for finding PLY files
+    """
+    import glob as glob_module
+    
+    ply_files = sorted(input_dir.glob(ply_pattern))
+    
+    if not ply_files:
+        raise ValueError(f"No PLY files found in {input_dir} matching '{ply_pattern}'")
+    
+    logger.info(f"Found {len(ply_files)} PLY files to postprocess")
+    
+    frames: list[GaussianFrame] = []
+    for i, ply_path in enumerate(ply_files):
+        logger.info(f"Loading {i+1}/{len(ply_files)}: {ply_path.name}")
+        frame = load_static_gaussian_ply(ply_path)
+        frame.frame_idx = i
+        frame.timestamp_ms = i * (1000.0 / fps)
+        frames.append(frame)
+    
+    logger.info(f"Loaded {len(frames)} frames, total {sum(len(f.means) for f in frames)} Gaussian observations")
+    
+    try:
+        from offline.motion_tracking_cuda import (
+            check_cuda_available,
+            check_faiss_gpu_available,
+            compute_motion_vectors_gpu,
+        )
+        use_gpu = check_cuda_available() or check_faiss_gpu_available()
+    except ImportError:
+        use_gpu = False
+    
+    if use_gpu:
+        logger.info("Computing motion vectors (GPU-accelerated)...")
+        (means, scales, rotations, colors, opacities,
+         motion, time_center, time_scale) = compute_motion_vectors_gpu(
+            frames, fps, max_match_distance=max_match_distance
+        )
+    else:
+        logger.info("Computing motion vectors (CPU)...")
+        (means, scales, rotations, colors, opacities,
+         motion, time_center, time_scale) = compute_motion_vectors(
+            frames, fps, max_match_distance=max_match_distance
+        )
+    
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    write_freetimegs_ply(
+        output_path,
+        means,
+        scales,
+        rotations,
+        colors,
+        opacities,
+        motion,
+        time_center,
+        time_scale,
+    )
+    
+    logger.info(f"Wrote FreeTimeGS PLY with {len(means)} Gaussians to {output_path}")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Export video to Gaussian Splatting PLY files using DA3"
+    )
+    subparsers = parser.add_subparsers(dest="command", help="Commands")
+    
+    export_parser = subparsers.add_parser("export", help="Export video to Gaussian PLYs")
+    export_parser.add_argument("--input", "-i", type=Path, required=True,
+                               help="Input video file")
+    export_parser.add_argument("--output", "-o", type=Path, required=True,
+                               help="Output path (directory for frames mode, file for freetimegs)")
+    export_parser.add_argument("--mode", choices=["frames", "freetimegs"], default="frames",
+                               help="Export mode: 'frames' for per-frame PLYs, 'freetimegs' for temporal PLY")
+    export_parser.add_argument("--model", type=str, default="depth-anything/DA3-GIANT",
+                               help="DA3 model ID (must support infer_gs)")
+    export_parser.add_argument("--frame-skip", type=int, default=5,
+                               help="Process every Nth frame")
+    export_parser.add_argument("--chunk-size", type=int, default=10,
+                               help="Frames per processing chunk")
+    export_parser.add_argument("--max-frames", type=int, default=None,
+                               help="Maximum frames to process")
+    export_parser.add_argument("--process-res", type=int, default=518,
+                               help="Processing resolution for DA3")
+    export_parser.add_argument("--device", type=str, default="cuda")
+    export_parser.add_argument("-v", "--verbose", action="store_true")
+    
+    postprocess_parser = subparsers.add_parser(
+        "postprocess", 
+        help="Postprocess per-frame PLYs to FreeTimeGS PLY with motion vectors"
+    )
+    postprocess_parser.add_argument("--input", "-i", type=Path, required=True,
+                                    help="Input directory containing per-frame PLY files")
+    postprocess_parser.add_argument("--output", "-o", type=Path, required=True,
+                                    help="Output FreeTimeGS PLY file")
+    postprocess_parser.add_argument("--fps", type=float, default=30.0,
+                                    help="Frame rate for temporal normalization")
+    postprocess_parser.add_argument("--max-match-distance", type=float, default=0.05,
+                                    help="Maximum distance for matching Gaussians across frames")
+    postprocess_parser.add_argument("--pattern", type=str, default="frame_*.ply",
+                                    help="Glob pattern for PLY files")
+    postprocess_parser.add_argument("-v", "--verbose", action="store_true")
+    
+    images_parser = subparsers.add_parser(
+        "images",
+        help="Process images with DA3 and export to FreeTimeGS PLY"
+    )
+    images_parser.add_argument("--input", "-i", type=Path, required=True,
+                               help="Input directory containing images")
+    images_parser.add_argument("--output", "-o", type=Path, required=True,
+                               help="Output FreeTimeGS PLY file")
+    images_parser.add_argument("--fps", type=float, default=30.0,
+                               help="Frame rate for temporal normalization")
+    images_parser.add_argument("--model", type=str, default="depth-anything/DA3-GIANT",
+                               help="DA3 model ID")
+    images_parser.add_argument("--pattern", type=str, default="*.jpg",
+                               help="Glob pattern for image files")
+    images_parser.add_argument("--max-frames", type=int, default=None,
+                               help="Maximum frames to process")
+    images_parser.add_argument("--process-res", type=int, default=518,
+                               help="Processing resolution for DA3")
+    images_parser.add_argument("--device", type=str, default="cuda")
+    images_parser.add_argument("-v", "--verbose", action="store_true")
+    
+    legacy_parser = subparsers.add_parser("legacy", help="Legacy CLI (deprecated)")
+    legacy_parser.add_argument("--input", "-i", type=Path, required=True)
+    legacy_parser.add_argument("--output", "-o", type=Path, required=True)
+    legacy_parser.add_argument("--mode", choices=["frames", "freetimegs"], default="frames")
+    legacy_parser.add_argument("--model", type=str, default="depth-anything/DA3-GIANT")
+    legacy_parser.add_argument("--frame-skip", type=int, default=5)
+    legacy_parser.add_argument("--chunk-size", type=int, default=10)
+    legacy_parser.add_argument("--max-frames", type=int, default=None)
+    legacy_parser.add_argument("--process-res", type=int, default=518)
+    legacy_parser.add_argument("--device", type=str, default="cuda")
+    legacy_parser.add_argument("-v", "--verbose", action="store_true")
+    
+    args = parser.parse_args()
+    
+    if args.command is None:
+        if hasattr(args, "input"):
+            args.command = "legacy"
+        else:
+            parser.print_help()
+            return
+    
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+    )
+    
+    if args.command == "export" or args.command == "legacy":
+        export_video_to_gaussian_plys(
+            args.input,
+            args.output,
+            mode=args.mode,
+            model_id=args.model,
+            frame_skip=args.frame_skip,
+            chunk_size=args.chunk_size,
+            max_frames=args.max_frames,
+            device=args.device,
+            process_res=args.process_res,
+        )
+    elif args.command == "postprocess":
+        postprocess_plys_to_freetimegs(
+            args.input,
+            args.output,
+            fps=args.fps,
+            max_match_distance=args.max_match_distance,
+            ply_pattern=args.pattern,
+        )
+    elif args.command == "images":
+        export_images_to_freetimegs(
+            args.input,
+            args.output,
+            fps=args.fps,
+            model_id=args.model,
+            image_pattern=args.pattern,
+            max_frames=args.max_frames,
+            device=args.device,
+            process_res=args.process_res,
+        )
+
+
+if __name__ == "__main__":
+    main()
