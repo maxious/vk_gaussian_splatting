@@ -266,6 +266,21 @@ void GaussianSplatting::drawVdzMesh(VkCommandBuffer cmd)
   vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipelineVdzMesh);
   vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_descriptorSet, 0, nullptr);
 
+  if(prmFrame.vdzWorldSpaceMode)
+  {
+      if(!m_vdzWorldSpaceInitialized)
+      {
+          m_vdzModelMatrix = glm::inverse(cameraManip->getViewMatrix());
+          m_vdzWorldSpaceInitialized = true;
+      }
+      m_pcRaster.modelMatrix = m_vdzModelMatrix;
+  }
+  else
+  {
+      m_pcRaster.modelMatrix = glm::mat4(1.0f);
+      m_vdzWorldSpaceInitialized = false;
+  }
+
   vkCmdPushConstants(cmd, m_pipelineLayout,
                      VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_MESH_BIT_EXT | VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                      0, sizeof(shaderio::PushConstant), &m_pcRaster);

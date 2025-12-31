@@ -74,16 +74,53 @@ For the `python/` subdirectory, we use the following tools:
 cd python
 uv venv
 source .venv/bin/activate  # or .venv\Scripts\activate
-uv pip install -e ".[dev]"
+uv pip install -e ".[dev,offline,inference,cuda]"
 
 # Install CUDA-enabled PyTorch (recommended for GPU acceleration)
-uv pip install torch torchvision xformers --index-url https://download.pytorch.org/whl/cu130
+uv pip install torch torchvision xformers --index-url https://download.pytorch.org/whl/cu124  # or cu118/cu121
 
 # Windows-specific: Install triton-windows for xformers optimization
 if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" ]]; then
     uv pip install triton-windows
 fi
 ```
+
+### Offline Processing Tools
+
+The `python/offline/` directory contains tools for generating Gaussian Splats from video or images.
+
+**Key Features:**
+- **DA3-GIANT**: Default model for metric depth estimation and splat generation.
+- **Apple SHARP**: Integrated support for Apple's SHARP model (vendored in `python/sharp`).
+- **FreeTimeGS**: Generates 4D Gaussian Splats with motion vectors (requires `cupy` or `faiss-gpu`).
+- **Pruning**: Opacity-based pruning to reduce file size.
+
+**Usage:**
+
+Run these commands from the `python/` directory to ensure local modules are found:
+
+```bash
+cd python
+
+# 1. Export video frames to PLY using DA3 (Metric)
+uv run python -m offline.export_gaussian_ply export \
+  --input video.mp4 --output output_folder/ \
+  --mode frames --model "depth-anything/DA3NESTED-GIANT-LARGE-1.1"
+
+# 2. Export images to PLY using SHARP (auto-downloads or uses local cache)
+uv run python -m offline.export_gaussian_ply images \
+  --input "path/to/images" --output output_folder/ \
+  --mode frames --model sharp --opacity-threshold 0.05
+
+# 3. Export 4D FreeTimeGS (Single PLY with motion)
+# Uses CuPy for GPU acceleration if FAISS is not available
+uv run python -m offline.export_gaussian_ply images \
+  --input "path/to/images" --output scene.ply \
+  --mode freetimegs --model sharp
+```
+
+**Note on SHARP**:
+The `sharp` library is vendored in `python/sharp` to provide better control and suppress noisy logging. If running from the project root, set `PYTHONPATH=python` or run via `uv run python -m ...` from inside the `python/` directory.
 
 ### Running Type Checks
 

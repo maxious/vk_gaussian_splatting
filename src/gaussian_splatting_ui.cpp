@@ -1536,6 +1536,17 @@ void GaussianSplattingUI::guiDrawRendererProperties()
                     "Depth gradient threshold for edge detection.\n"
                     "Fragments with depth discontinuities above this threshold are discarded.\n"
                     "0 = disabled, higher values = more aggressive edge culling");
+
+    bool worldSpace = prmFrame.vdzWorldSpaceMode != 0;
+    if(PE::Checkbox("World Space / VR Mode", &worldSpace,
+                    "Detach mesh from camera and place it in the world.\n"
+                    "Allows 6DOF movement and VR viewing.\n"
+                    "When enabled, the mesh freezes at the current camera position."))
+    {
+      prmFrame.vdzWorldSpaceMode = worldSpace ? 1 : 0;
+      m_requestUpdateShaders = true;
+    }
+
     PE::end();
   }
 

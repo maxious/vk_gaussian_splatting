@@ -145,7 +145,8 @@ void GaussianSplatting::onAttach(nvapp::Application* app)
   m_cameraSet.init(cameraManip.get());
 
   // Initialize VDZ depth mesh for 2.5D depth visualization
-  m_vdzMesh.initialize(m_device, &m_alloc, 128, 72);
+  // Use higher resolution (512x288) for better VR/World Space quality
+  m_vdzMesh.initialize(m_device, &m_alloc, 512, 288);
 
   // Log HDR support status
   {

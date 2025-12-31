@@ -72,8 +72,20 @@ VertexOutput main(VertexInput input)
   float4 viewPos = float4(x, y, -z, 1.0);
   
   // Transform to clip space
-  // For camera-attached mesh: directly multiply by projection
-  output.position = mul(viewPos, frameInfo.projectionMatrix);
+  if (frameInfo.vdzWorldSpaceMode != 0)
+  {
+    // World-space mode: transform through model -> view -> projection
+    // The mesh is defined in its own local space (0..1 UV), displaced to View-space-like coordinates
+    // We treat 'viewPos' as a local coordinate that needs to be transformed by the captured model matrix
+    // to get into World Space, then by current View/Proj to get to Clip Space.
+    float4 worldPos = mul(viewPos, frameInfo.vdzModelMatrix);
+    output.position = mul(mul(worldPos, frameInfo.viewMatrix), frameInfo.projectionMatrix);
+  }
+  else
+  {
+    // Camera-attached mode: directly multiply by projection (viewPos is already in View Space)
+    output.position = mul(viewPos, frameInfo.projectionMatrix);
+  }
   
   return output;
 }

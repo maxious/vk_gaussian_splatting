@@ -578,6 +578,8 @@ protected:
   std::unique_ptr<VDZSequenceLoader>   m_vdzSequence;
   bool m_enableDepthRendering = false;
   bool m_videoDepthPlaybackMode = false;
+  glm::mat4 m_vdzModelMatrix{1.0f};
+  bool m_vdzWorldSpaceInitialized = false;
   float m_depthScale = 1.0f;
   float m_depthBias = 0.0f;
 

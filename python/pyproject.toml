@@ -37,6 +37,8 @@ inference = [
     "safetensors>=0.4",
     "triton-windows>=3.2; sys_platform == 'win32'",
     "depth-anything-3 @ git+https://github.com/ByteDance-Seed/Depth-Anything-3@main",
+    # "sharp @ git+https://github.com/apple/ml-sharp@main",  # Vendored in python/sharp
+    "timm>=1.0.0",
 ]
 
 # Offline preprocessing (DA3-streaming based)
@@ -47,7 +49,8 @@ offline = [
     "numba>=0.59",
     "gsplat>=1.5.3",
     "xxhash>=3.4",
-    "faiss-cpu>=1.13",
+    # "faiss-cpu>=1.13",  # Using local faiss-gpu
+    "plyfile>=1.0",
 ]
 
 # CUDA acceleration for offline processing

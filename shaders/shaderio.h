@@ -247,6 +247,8 @@ struct FrameInfo
   float vdzEdgeThreshold DEFAULT(1.0f);  // Max depth gradient before discarding fragment (edge detection)
   int32_t visualize   DEFAULT(0);      // Current visualization mode
   int32_t vdzUseVideoTexture DEFAULT(0);  // 1 = use video RGB texture, 0 = use colormap
+  int32_t vdzWorldSpaceMode DEFAULT(0);   // 0 = camera-attached (2.5D), 1 = world-space (VR)
+  float4x4 vdzModelMatrix;                // Captured model matrix for world-space mode
 };
 
 // Push constant for raster
