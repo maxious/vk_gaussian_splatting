@@ -49,13 +49,8 @@ offline = [
     "numba>=0.59",
     "gsplat>=1.5.3",
     "xxhash>=3.4",
-    # "faiss-cpu>=1.13",  # Using local faiss-gpu
+    "faiss-cpu>=1.13",
     "plyfile>=1.0",
-]
-
-# CUDA acceleration for offline processing
-cuda = [
-    "cupy-cuda13x>=13.0",
 ]
 
 dev = [

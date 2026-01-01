@@ -664,297 +664,7 @@ def extract_video_frames(
     return frame_paths, timestamps_ms
 
 
-@dataclass
-class GaussianTrajectory:
-    """Tracked Gaussian across multiple frames."""
 
-    frame_indices: list[int]
-    times_normalized: list[float]
-    positions: list[np.ndarray]
-    scales: list[np.ndarray]
-    rotations: list[np.ndarray]
-    colors: list[np.ndarray]
-    opacities: list[float]
-
-
-def match_gaussians_bidirectional(
-    means_a: np.ndarray,
-    means_b: np.ndarray,
-    max_distance: float = 0.05,
-) -> list[tuple[int, int]]:
-    """Match Gaussians between two frames using bidirectional nearest-neighbor.
-
-    A match is valid only if A's nearest neighbor in B also has A as its nearest
-    neighbor (mutual best match). This reduces false matches.
-
-    Args:
-        means_a: (N, 3) positions in frame A
-        means_b: (M, 3) positions in frame B
-        max_distance: Maximum distance threshold for valid matches
-
-    Returns:
-        List of (idx_a, idx_b) pairs representing valid matches
-    """
-    from scipy.spatial import cKDTree  # type: ignore[attr-defined]
-
-    if len(means_a) == 0 or len(means_b) == 0:
-        return []
-
-    tree_a = cKDTree(means_a)
-    tree_b = cKDTree(means_b)
-
-    dist_a_to_b, idx_a_to_b = tree_b.query(means_a, k=1)
-    dist_b_to_a, idx_b_to_a = tree_a.query(means_b, k=1)
-
-    matches = []
-    for i, (j, d) in enumerate(zip(idx_a_to_b, dist_a_to_b)):
-        if d < max_distance and idx_b_to_a[j] == i:
-            matches.append((i, j))
-
-    return matches
-
-
-def build_trajectories(
-    frames: list[GaussianFrame],
-    max_distance: float = 0.05,
-) -> list[GaussianTrajectory]:
-    """Build Gaussian trajectories by tracking across consecutive frames.
-
-    Uses union-find to merge tracks and handles Gaussians that appear/disappear.
-
-    Args:
-        frames: List of per-frame Gaussian data, sorted by time
-        max_distance: Max position difference for matching
-
-    Returns:
-        List of trajectories, each containing observations across frames
-    """
-    if len(frames) == 0:
-        return []
-
-    t_start = frames[0].timestamp_ms
-    t_end = frames[-1].timestamp_ms
-    t_range = max(t_end - t_start, 1e-6)
-
-    gaussian_to_trajectory: dict[tuple[int, int], int] = {}
-    trajectories: list[GaussianTrajectory] = []
-
-    for frame_idx, frame in enumerate(frames):
-        t_norm = (frame.timestamp_ms - t_start) / t_range
-
-        for g_idx in range(len(frame.means)):
-            key = (frame_idx, g_idx)
-
-            if key not in gaussian_to_trajectory:
-                traj_id = len(trajectories)
-                trajectories.append(
-                    GaussianTrajectory(
-                        frame_indices=[frame_idx],
-                        times_normalized=[t_norm],
-                        positions=[frame.means[g_idx].copy()],
-                        scales=[frame.scales[g_idx].copy()],
-                        rotations=[frame.rotations[g_idx].copy()],
-                        colors=[frame.colors[g_idx].copy()],
-                        opacities=[float(frame.opacities[g_idx])],
-                    )
-                )
-                gaussian_to_trajectory[key] = traj_id
-
-    for i in range(len(frames) - 1):
-        frame_a = frames[i]
-        frame_b = frames[i + 1]
-
-        matches = match_gaussians_bidirectional(frame_a.means, frame_b.means, max_distance)
-
-        for idx_a, idx_b in matches:
-            key_a = (i, idx_a)
-            key_b = (i + 1, idx_b)
-
-            traj_id_a = gaussian_to_trajectory[key_a]
-            traj_id_b = gaussian_to_trajectory[key_b]
-
-            if traj_id_a != traj_id_b:
-                traj_a = trajectories[traj_id_a]
-                traj_b = trajectories[traj_id_b]
-
-                traj_a.frame_indices.extend(traj_b.frame_indices)
-                traj_a.times_normalized.extend(traj_b.times_normalized)
-                traj_a.positions.extend(traj_b.positions)
-                traj_a.scales.extend(traj_b.scales)
-                traj_a.rotations.extend(traj_b.rotations)
-                traj_a.colors.extend(traj_b.colors)
-                traj_a.opacities.extend(traj_b.opacities)
-
-                for k, v in gaussian_to_trajectory.items():
-                    if v == traj_id_b:
-                        gaussian_to_trajectory[k] = traj_id_a
-
-    seen_ids = set(gaussian_to_trajectory.values())
-    return [trajectories[i] for i in sorted(seen_ids)]
-
-
-def fit_trajectory_motion(
-    trajectory: GaussianTrajectory,
-    min_observations: int = 2,
-) -> tuple[np.ndarray, np.ndarray, float, float]:
-    """Fit linear motion and temporal parameters to a trajectory.
-
-    Uses least-squares to fit: position(t) = position_at_t_center + velocity * (t - t_center)
-
-    Args:
-        trajectory: Gaussian trajectory with multiple observations
-        min_observations: Minimum observations for motion fitting
-
-    Returns:
-        (position_at_center, velocity, t_center, t_scale_log)
-    """
-    times = np.array(trajectory.times_normalized)
-    positions = np.array(trajectory.positions)
-
-    t_center = float(np.mean(times))
-
-    if len(times) >= 3:
-        t_scale = float(np.std(times)) * 2.0
-    else:
-        t_span = times.max() - times.min() if len(times) > 1 else 0.5
-        t_scale = max(t_span / 2.0, 0.1)
-
-    t_scale = max(t_scale, 0.05)
-    t_scale_log = float(np.log(t_scale))
-
-    if len(times) < min_observations:
-        pos_center = positions[0]
-        velocity = np.zeros(3, dtype=np.float32)
-        return pos_center, velocity, t_center, t_scale_log
-
-    dt = times - t_center
-
-    if np.abs(dt).max() < 1e-6:
-        pos_center = np.mean(positions, axis=0)
-        velocity = np.zeros(3, dtype=np.float32)
-        return pos_center.astype(np.float32), velocity, t_center, t_scale_log
-
-    A = np.column_stack([np.ones(len(times)), dt])
-
-    velocity = np.zeros(3, dtype=np.float32)
-    pos_center = np.zeros(3, dtype=np.float32)
-
-    for dim in range(3):
-        coeffs, _, _, _ = np.linalg.lstsq(A, positions[:, dim], rcond=None)
-        pos_center[dim] = coeffs[0]
-        velocity[dim] = coeffs[1]
-
-    return pos_center, velocity, t_center, t_scale_log
-
-
-def compute_scene_scale(frames: list[GaussianFrame]) -> float:
-    """Compute approximate scene scale from Gaussian positions."""
-    all_means = np.vstack([f.means for f in frames])
-    bbox_min = all_means.min(axis=0)
-    bbox_max = all_means.max(axis=0)
-    diagonal = np.linalg.norm(bbox_max - bbox_min)
-    return diagonal
-
-
-def compute_motion_vectors(
-    frames: list[GaussianFrame],
-    fps: float,
-    max_match_distance: float | None = None,
-    match_distance_ratio: float = 0.02,
-) -> tuple[
-    np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray
-]:
-    """Compute motion vectors by tracking Gaussian positions across frames.
-
-    Pipeline:
-    1. Match Gaussians between consecutive frames using bidirectional KDTree
-    2. Build trajectories by merging matched observations
-    3. Fit linear velocity and temporal Gaussian to each trajectory
-
-    Args:
-        frames: List of per-frame GaussianFrame objects
-        fps: Video frame rate (used if timestamps missing)
-        max_match_distance: Maximum distance for matching. If None, computed as
-            match_distance_ratio * scene_diagonal.
-        match_distance_ratio: Ratio of scene diagonal for auto distance (default 2%)
-
-    Returns:
-        (means, scales, rotations, colors, opacities, motion, time_center, time_scale)
-        All arrays are for the output Gaussian set (one per trajectory).
-    """
-    if len(frames) < 2:
-        frame = frames[0]
-        n = len(frame.means)
-        return (
-            frame.means,
-            frame.scales,
-            frame.rotations,
-            frame.colors,
-            frame.opacities,
-            np.zeros((n, 3), dtype=np.float32),
-            np.full(n, 0.5, dtype=np.float32),
-            np.zeros(n, dtype=np.float32),
-        )
-
-    if max_match_distance is None:
-        scene_scale = compute_scene_scale(frames)
-        max_match_distance = scene_scale * match_distance_ratio
-        logger.info(
-            f"Scene scale: {scene_scale:.2f}, using match distance: {max_match_distance:.2f}"
-        )
-
-    logger.info(f"Building trajectories from {len(frames)} frames...")
-    trajectories = build_trajectories(frames, max_distance=max_match_distance)
-    logger.info(f"Found {len(trajectories)} unique Gaussian trajectories")
-
-    n_traj = len(trajectories)
-
-    all_means = np.zeros((n_traj, 3), dtype=np.float32)
-    all_scales = np.zeros((n_traj, 3), dtype=np.float32)
-    all_rotations = np.zeros((n_traj, 4), dtype=np.float32)
-    all_colors = np.zeros((n_traj, 3), dtype=np.float32)
-    all_opacities = np.zeros(n_traj, dtype=np.float32)
-    all_motion = np.zeros((n_traj, 3), dtype=np.float32)
-    all_time_center = np.zeros(n_traj, dtype=np.float32)
-    all_time_scale = np.zeros(n_traj, dtype=np.float32)
-
-    for i, traj in enumerate(trajectories):
-        pos_center, velocity, t_center, t_scale_log = fit_trajectory_motion(traj)
-
-        all_means[i] = pos_center
-        all_motion[i] = velocity
-        all_time_center[i] = t_center
-        all_time_scale[i] = t_scale_log
-
-        weights = np.array(traj.opacities)
-        weights = np.maximum(weights, 0.01)
-        weights /= weights.sum()
-
-        all_scales[i] = np.average(traj.scales, axis=0, weights=weights)
-        all_rotations[i] = np.average(traj.rotations, axis=0, weights=weights)
-        all_colors[i] = np.average(traj.colors, axis=0, weights=weights)
-        all_opacities[i] = np.average(traj.opacities, weights=weights)
-
-    rot_norms = np.linalg.norm(all_rotations, axis=1, keepdims=True)
-    all_rotations = all_rotations / np.maximum(rot_norms, 1e-8)
-
-    logger.info(
-        f"Motion stats: velocity magnitude mean={np.linalg.norm(all_motion, axis=1).mean():.4f}, "
-        f"max={np.linalg.norm(all_motion, axis=1).max():.4f}"
-    )
-    logger.info(f"Time center: min={all_time_center.min():.3f}, max={all_time_center.max():.3f}")
-    logger.info(f"Time scale (log): min={all_time_scale.min():.3f}, max={all_time_scale.max():.3f}")
-
-    return (
-        all_means,
-        all_scales,
-        all_rotations,
-        all_colors,
-        all_opacities,
-        all_motion,
-        all_time_center,
-        all_time_scale,
-    )
 
 
 def prune_gaussian_frame(frame: GaussianFrame, opacity_threshold: float = 0.05) -> GaussianFrame:
@@ -1116,18 +826,20 @@ def export_video_to_gaussian_plys(
             raise
 
     if mode == "freetimegs":
-        logger.info("Computing motion vectors...")
+        from offline.motion_tracking_cpu import compute_motion_vectors
+
+        logger.info("Computing motion vectors (CPU-accelerated with FAISS)...")
         (means, scales, rotations, colors, opacities, motion, time_center, time_scale) = (
             compute_motion_vectors(all_frames, fps)
         )
 
-        # Zero out motion for static splats (motion magnitude <= 0.001)
-        motion_magnitude = np.linalg.norm(motion, axis=1)
-        static_mask = motion_magnitude <= 0.001
-        n_static = static_mask.sum()
-        if n_static > 0:
-            logger.info(f"Zeroing motion for {n_static} static splats (motion <= 0.001)")
-            motion[static_mask] = 0.0
+    # Zero out motion for static splats (motion magnitude <= 0.001)
+    motion_magnitude = np.linalg.norm(motion, axis=1)
+    static_mask = motion_magnitude <= 0.001
+    n_static = static_mask.sum()
+    if n_static > 0:
+        logger.info(f"Zeroing motion for {n_static} static splats (motion <= 0.001)")
+        motion[static_mask] = 0.0
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
     write_freetimegs_ply(
@@ -1343,37 +1055,14 @@ def export_images_to_gaussian_plys(
         return
 
     # FreeTimeGS mode
-    try:
-        from offline.motion_tracking_cuda import (
-            check_cuda_available,
-            check_faiss_available,
-            compute_motion_vectors_gpu,
-        )
+    from offline.motion_tracking_cpu import compute_motion_vectors
 
-        use_gpu = check_cuda_available() or check_faiss_available()
-    except ImportError:
-        use_gpu = False
+    logger.info("Computing motion vectors (CPU-accelerated with FAISS)...")
+    (means, scales, rotations, colors, opacities, motion, time_center, time_scale) = (
+        compute_motion_vectors(frames, fps)
+    )
 
-    if use_gpu:
-        logger.info("Computing motion vectors (GPU-accelerated)...")
-        (means, scales, rotations, colors, opacities, motion, time_center, time_scale) = (
-            compute_motion_vectors_gpu(frames, fps)
-        )
-
-        # Zero out motion for static splats (motion magnitude <= 0.001)
-        motion_magnitude = np.linalg.norm(motion, axis=1)
-        static_mask = motion_magnitude <= 0.001
-        n_static = static_mask.sum()
-        if n_static > 0:
-            logger.info(f"Zeroing motion for {n_static} static splats (motion <= 0.001)")
-            motion[static_mask] = 0.0
-    else:
-        logger.info("Computing motion vectors (CPU)...")
-        (means, scales, rotations, colors, opacities, motion, time_center, time_scale) = (
-            compute_motion_vectors(frames, fps)
-        )
-
-        # Zero out motion for static splats (motion magnitude <= 0.001)
+    # Zero out motion for static splats (motion magnitude <= 0.001)
         motion_magnitude = np.linalg.norm(motion, axis=1)
         static_mask = motion_magnitude <= 0.001
         n_static = static_mask.sum()
@@ -1440,27 +1129,12 @@ def postprocess_plys_to_freetimegs(
         f"Loaded {len(frames)} frames, total {sum(len(f.means) for f in frames)} Gaussian observations"
     )
 
-    try:
-        from offline.motion_tracking_cuda import (
-            check_cuda_available,
-            check_faiss_gpu_available,
-            compute_motion_vectors_gpu,
-        )
+    from offline.motion_tracking_cpu import compute_motion_vectors
 
-        use_gpu = check_cuda_available() or check_faiss_gpu_available()
-    except ImportError:
-        use_gpu = False
-
-    if use_gpu:
-        logger.info("Computing motion vectors (GPU-accelerated)...")
-        (means, scales, rotations, colors, opacities, motion, time_center, time_scale) = (
-            compute_motion_vectors_gpu(frames, fps, max_match_distance=max_match_distance)
-        )
-    else:
-        logger.info("Computing motion vectors (CPU)...")
-        (means, scales, rotations, colors, opacities, motion, time_center, time_scale) = (
-            compute_motion_vectors(frames, fps, max_match_distance=max_match_distance)
-        )
+    logger.info("Computing motion vectors (CPU-accelerated with FAISS)...")
+    (means, scales, rotations, colors, opacities, motion, time_center, time_scale) = (
+        compute_motion_vectors(frames, fps, max_match_distance=max_match_distance)
+    )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     write_freetimegs_ply(
