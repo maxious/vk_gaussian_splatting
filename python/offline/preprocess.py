@@ -25,15 +25,7 @@ from typing import Iterator, Optional
 import cv2
 import numpy as np
 
-try:
-    from numba import jit
-except ImportError:
-    # Fallback if numba not available
-    def jit(*args, **kwargs):
-        def decorator(func):
-            return func
-
-        return decorator
+from numba import jit
 
 
 logger = logging.getLogger(__name__)
@@ -142,12 +134,7 @@ class VideoFrameExtractor:
 
 def check_cuda_available() -> None:
     """Assert that CUDA-enabled PyTorch is available."""
-    try:
-        import torch
-    except ImportError:
-        raise RuntimeError(
-            "PyTorch not installed. Run: uv pip install 'vk-gaussian-splatting-tools[inference]'"
-        )
+    import torch
 
     if not torch.cuda.is_available():
         raise RuntimeError(
@@ -179,13 +166,7 @@ class DA3StreamingProcessor:
         # Verify CUDA is available
         check_cuda_available()
 
-        try:
-            from depth_anything_3.api import DepthAnything3
-        except ImportError:
-            raise RuntimeError(
-                "depth-anything-3 not installed. Run: "
-                "uv pip install 'vk-gaussian-splatting-tools[inference]'"
-            )
+        from depth_anything_3.api import DepthAnything3
 
         logger.info(f"Loading model: {self.config.model_id}")
         self.model = DepthAnything3.from_pretrained(self.config.model_id)

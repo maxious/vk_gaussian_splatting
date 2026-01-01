@@ -37,12 +37,7 @@ class DA3GaussianProcessor(GaussianProcessor):
         if not torch.cuda.is_available():
             raise RuntimeError("CUDA required for DA3 inference")
 
-        try:
-            from depth_anything_3.api import DepthAnything3
-        except ImportError:
-            raise RuntimeError(
-                "depth-anything-3 not installed. Run: uv pip install depth-anything-3"
-            )
+        from depth_anything_3.api import DepthAnything3
 
         logger.info(f"Loading model: {self.model_id} (this may take a while to download...)")
         logger.info("Model files are cached in ~/.cache/huggingface/hub/")

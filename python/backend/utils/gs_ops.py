@@ -11,15 +11,7 @@ from PIL import Image
 from backend.models.depth_model import get_depth_model
 from offline.formats import write_gs_ply_header, write_gs_ply_points
 
-try:
-    from numba import jit
-except ImportError:
-    # Fallback if numba not available
-    def jit(*args, **kwargs):
-        def decorator(func):
-            return func
-
-        return decorator
+from numba import jit
 
 
 logger = logging.getLogger(__name__)

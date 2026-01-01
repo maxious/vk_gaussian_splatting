@@ -5,15 +5,7 @@ import numpy as np
 from pathlib import Path
 from dataclasses import dataclass
 
-try:
-    from numba import jit
-except ImportError:
-    # Fallback if numba not available
-    def jit(*args, **kwargs):
-        def decorator(func):
-            return func
-
-        return decorator
+from numba import jit
 
 
 # Define constants and helper classes locally to avoid import issues

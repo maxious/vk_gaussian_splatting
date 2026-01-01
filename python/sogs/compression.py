@@ -17,15 +17,7 @@ import torch
 import torch.nn.functional as F
 from PIL import Image
 
-try:
-    from numba import jit
-except ImportError:
-    # Fallback if numba not available
-    def jit(*args, **kwargs):
-        def decorator(func):
-            return func
-
-        return decorator
+from numba import jit
 
 
 from tqdm import tqdm

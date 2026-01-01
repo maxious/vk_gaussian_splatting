@@ -13,6 +13,9 @@ dependencies = [
     "addict>=2.4",
     "hf-xet>=1.2.0",
     "pydantic-settings>=2.12.0",
+    "torch>=2.4",
+    "torchvision>=0.19",
+    "numba>=0.59",
 ]
 
 [project.optional-dependencies]
@@ -30,8 +33,6 @@ backend = [
 
 # Depth inference (shared by backend and offline)
 inference = [
-    "torch>=2.4",
-    "torchvision>=0.19",
     "xformers>=0.0.28",
     "transformers>=4.44",
     "einops>=0.8",
@@ -47,7 +48,6 @@ offline = [
     "trimesh>=4.0",
     "scipy>=1.11",
     "tqdm>=4.66",
-    "numba>=0.59",
     "gsplat>=1.5.3",
     "xxhash>=3.4",
     "faiss-cpu>=1.13",
