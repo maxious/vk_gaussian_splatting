@@ -324,9 +324,14 @@ if(ENABLE_OPENXR AND OpenXR_FOUND)
   if(TARGET OpenXR::openxr_loader)
     target_link_libraries(${PROJECT_NAME} PRIVATE OpenXR::openxr_loader)
   else()
-    target_link_libraries(${PROJECT_NAME} PRIVATE openxr_loader)
+  target_link_libraries(${PROJECT_NAME} PRIVATE openxr_loader)
     target_include_directories(${PROJECT_NAME} PRIVATE ${openxr-sdk_SOURCE_DIR}/include)
   endif()
+endif()
+
+# WinHTTP support for Windows
+if(WIN32)
+  target_link_libraries(${PROJECT_NAME} PRIVATE winhttp)
 endif()
 
 add_project_definitions(${PROJECT_NAME})

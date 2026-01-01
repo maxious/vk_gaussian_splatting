@@ -222,6 +222,10 @@ void GaussianSplattingUI::onUIMenu()
                                                                  "All Files|*.ply;*.spz;*.sog;*.4dv|PLY Files|*.ply|SPZ files|*.spz|SOG files|*.sog|4DV files|*.4dv");
       prmScene.addSceneToExisting = true;
     }
+    if(ImGui::MenuItem(ICON_MS_CLOUD_DOWNLOAD " Load from SuperSplat URL...", ""))
+    {
+      m_showSuperSplatUrlPopup = true;
+    }
     if(ImGui::MenuItem(ICON_MS_RESTORE_PAGE " Re Open", "F5", false, !m_radianceFields.empty()))
     {
       prmScene.sceneToLoadFilename = getLoadedSceneFilename();
@@ -501,6 +505,46 @@ void GaussianSplattingUI::onUIRender()
 
   /////////////////
   // Handle scene loading
+  if(m_showSuperSplatUrlPopup)
+  {
+    ImGui::OpenPopup("Load from SuperSplat URL");
+    m_showSuperSplatUrlPopup = false;
+  }
+
+  // Always center this window when appearing
+  ImVec2 centerModal = ImGui::GetMainViewport()->GetCenter();
+  ImGui::SetNextWindowPos(centerModal, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+
+  if(ImGui::BeginPopupModal("Load from SuperSplat URL", NULL, ImGuiWindowFlags_AlwaysAutoResize))
+  {
+    static char urlBuf[2048] = "";
+    static bool firstFocus = true;
+    if (firstFocus) {
+        ImGui::SetKeyboardFocusHere();
+        firstFocus = false;
+    }
+    
+    ImGui::Text("Enter the URL of the .sog or .ply file:");
+    bool enterPressed = ImGui::InputText("URL", urlBuf, IM_ARRAYSIZE(urlBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+    
+    if(ImGui::Button("Load", ImVec2(120, 0)) || enterPressed)
+    {
+      if(strlen(urlBuf) > 0)
+      {
+        prmScene.sceneToLoadFilename = std::string(urlBuf);
+        prmScene.addSceneToExisting = false;
+        firstFocus = true;
+        ImGui::CloseCurrentPopup();
+      }
+    }
+    ImGui::SameLine();
+    if(ImGui::Button("Cancel", ImVec2(120, 0)))
+    {
+      firstFocus = true;
+      ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+  }
 
 #ifdef WITH_DEFAULT_SCENE_FEATURE
   // load a default scene if none was provided by command line

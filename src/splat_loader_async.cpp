@@ -35,7 +35,157 @@
 #include "fourdv_loader.h"
 #include "utilities.h"
 
+#ifdef _WIN32
+#include <windows.h>
+#include <winhttp.h>
+#endif
+
 using namespace vk_gaussian_splatting;
+
+#ifdef _WIN32
+namespace {
+bool downloadFile(const std::string& url, const std::filesystem::path& destPath)
+{
+  URL_COMPONENTS urlComp;
+  ZeroMemory(&urlComp, sizeof(urlComp));
+  urlComp.dwStructSize = sizeof(urlComp);
+
+  wchar_t hostName[256] = {0};
+  wchar_t urlPath[2048] = {0};
+  urlComp.lpszHostName = hostName;
+  urlComp.dwHostNameLength = sizeof(hostName) / sizeof(wchar_t);
+  urlComp.lpszUrlPath = urlPath;
+  urlComp.dwUrlPathLength = sizeof(urlPath) / sizeof(wchar_t);
+
+  std::wstring wideUrl(url.begin(), url.end());
+
+  if (!WinHttpCrackUrl(wideUrl.c_str(), static_cast<DWORD>(wideUrl.length()), 0, &urlComp))
+  {
+    LOGE("Failed to parse URL: %s (error %lu)\n", url.c_str(), GetLastError());
+    return false;
+  }
+
+  HINTERNET hSession = WinHttpOpen(L"VkGaussianSplatting/1.0",
+                                   WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+                                   WINHTTP_NO_PROXY_NAME,
+                                   WINHTTP_NO_PROXY_BYPASS, 0);
+  if (!hSession)
+  {
+    LOGE("WinHttpOpen failed (error %lu)\n", GetLastError());
+    return false;
+  }
+
+  HINTERNET hConnect = WinHttpConnect(hSession, hostName, urlComp.nPort, 0);
+  if (!hConnect)
+  {
+    LOGE("WinHttpConnect failed (error %lu)\n", GetLastError());
+    WinHttpCloseHandle(hSession);
+    return false;
+  }
+
+  DWORD dwFlags = (urlComp.nScheme == INTERNET_SCHEME_HTTPS) ? WINHTTP_FLAG_SECURE : 0;
+  HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"GET", urlPath,
+                                          NULL, WINHTTP_NO_REFERER,
+                                          WINHTTP_DEFAULT_ACCEPT_TYPES,
+                                          dwFlags);
+  if (!hRequest)
+  {
+    LOGE("WinHttpOpenRequest failed (error %lu)\n", GetLastError());
+    WinHttpCloseHandle(hConnect);
+    WinHttpCloseHandle(hSession);
+    return false;
+  }
+
+  if (!WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+                          WINHTTP_NO_REQUEST_DATA, 0, 0, 0))
+  {
+    LOGE("WinHttpSendRequest failed (error %lu)\n", GetLastError());
+    WinHttpCloseHandle(hRequest);
+    WinHttpCloseHandle(hConnect);
+    WinHttpCloseHandle(hSession);
+    return false;
+  }
+
+  if (!WinHttpReceiveResponse(hRequest, NULL))
+  {
+    LOGE("WinHttpReceiveResponse failed (error %lu)\n", GetLastError());
+    WinHttpCloseHandle(hRequest);
+    WinHttpCloseHandle(hConnect);
+    WinHttpCloseHandle(hSession);
+    return false;
+  }
+
+  DWORD dwStatusCode = 0;
+  DWORD dwSize = sizeof(dwStatusCode);
+  if (!WinHttpQueryHeaders(hRequest, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                           WINHTTP_HEADER_NAME_BY_INDEX, &dwStatusCode, &dwSize, WINHTTP_NO_HEADER_INDEX))
+  {
+    LOGE("WinHttpQueryHeaders failed (error %lu)\n", GetLastError());
+    WinHttpCloseHandle(hRequest);
+    WinHttpCloseHandle(hConnect);
+    WinHttpCloseHandle(hSession);
+    return false;
+  }
+
+  if (dwStatusCode != 200)
+  {
+    LOGE("Download failed: HTTP %d\n", dwStatusCode);
+    WinHttpCloseHandle(hRequest);
+    WinHttpCloseHandle(hConnect);
+    WinHttpCloseHandle(hSession);
+    return false;
+  }
+
+  std::ofstream outFile(destPath, std::ios::binary);
+  if (!outFile)
+  {
+    LOGE("Failed to create file: %s\n", destPath.string().c_str());
+    WinHttpCloseHandle(hRequest);
+    WinHttpCloseHandle(hConnect);
+    WinHttpCloseHandle(hSession);
+    return false;
+  }
+
+  DWORD dwSizeAvail = 0;
+  DWORD dwDownloaded = 0;
+  std::vector<char> buffer(8192);
+
+  do
+  {
+    dwSizeAvail = 0;
+    if (!WinHttpQueryDataAvailable(hRequest, &dwSizeAvail))
+    {
+      LOGE("WinHttpQueryDataAvailable failed (error %lu)\n", GetLastError());
+      break;
+    }
+
+    if (dwSizeAvail > 0)
+    {
+      if (dwSizeAvail > buffer.size()) buffer.resize(dwSizeAvail);
+
+      if (WinHttpReadData(hRequest, buffer.data(), dwSizeAvail, &dwDownloaded))
+      {
+        outFile.write(buffer.data(), dwDownloaded);
+      }
+      else
+      {
+        LOGE("WinHttpReadData failed (error %lu)\n", GetLastError());
+        break;
+      }
+    }
+  } while (dwSizeAvail > 0);
+
+  outFile.close();
+  WinHttpCloseHandle(hRequest);
+  WinHttpCloseHandle(hConnect);
+  WinHttpCloseHandle(hSession);
+
+  return true;
+}
+}
+#endif
+
+
 
 bool SplatLoaderAsync::loadScene(std::filesystem::path filename, SplatSet& output)
 {
@@ -142,6 +292,45 @@ bool SplatLoaderAsync::reset()
 bool SplatLoaderAsync::innerLoad(std::filesystem::path filename, SplatSet& output)
 {
   auto startTime = std::chrono::high_resolution_clock::now();
+
+  std::string pathStr = filename.string();
+  if (pathStr.find("http://") == 0 || pathStr.find("https://") == 0)
+  {
+#ifdef _WIN32
+    std::filesystem::path tempDir = std::filesystem::temp_directory_path();
+    std::string tempFileName = "downloaded_scene";
+    
+    size_t lastDot = pathStr.find_last_of('.');
+    if (lastDot != std::string::npos && lastDot < pathStr.length() - 1) {
+        std::string ext = pathStr.substr(lastDot);
+        if (ext.length() <= 5) {
+            tempFileName += ext;
+        } else {
+             tempFileName += ".sog";
+        }
+    } else {
+        tempFileName += ".sog";
+    }
+    
+    std::filesystem::path destPath = tempDir / tempFileName;
+    
+    LOGI("Downloading %s to %s...\n", pathStr.c_str(), destPath.string().c_str());
+    
+    if (downloadFile(pathStr, destPath))
+    {
+       filename = destPath;
+       LOGI("Download complete. Proceeding to load...\n");
+    }
+    else
+    {
+       LOGE("Failed to download file from URL.\n");
+       return false;
+    }
+#else
+    LOGE("URL loading is currently only supported on Windows.\n");
+    return false;
+#endif
+  }
 
   // SOG format (bundled .sog or unbundled meta.json)
   if(hasExtension(filename, ".sog") || filename.filename() == "meta.json")

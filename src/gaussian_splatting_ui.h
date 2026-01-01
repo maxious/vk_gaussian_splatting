@@ -258,6 +258,7 @@ private:
   void dumpSplat(uint32_t splatIdx);
 
   // Video Export
+  bool                  m_showSuperSplatUrlPopup = false;
   bool                  m_showVideoExportWindow = false;
   VideoRenderer         m_videoRenderer;
   VideoRenderSettings   m_videoSettings;
