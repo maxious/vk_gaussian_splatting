@@ -322,12 +322,12 @@ def depth_to_point_cloud(
     points_cam = np.stack([x, y, z], axis=-1)  # (H, W, 3)
 
     # Transform to world space
-    R = extrinsics[:3, :3]
-    t = extrinsics[:3, 3]
+    R = np.ascontiguousarray(extrinsics[:3, :3])
+    t = np.ascontiguousarray(extrinsics[:3, 3])
 
     # w2c -> c2w
     R_inv = R.T
-    t_inv = -R.T @ t
+    t_inv = -R_inv @ t
 
     points_world = points_cam @ R_inv.T + t_inv
 
