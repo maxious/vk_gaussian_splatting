@@ -67,13 +67,13 @@ def assert_cuda_available() -> None:
 
 
 def check_faiss_gpu_available() -> bool:
-    """Check if FAISS GPU is available (Deprecated)."""
-    return False
+    """Check if FAISS GPU is available."""
+    try:
+        import faiss
 
-
-def check_faiss_available() -> bool:
-    """Check if FAISS is available (Deprecated)."""
-    return False
+        return faiss.get_num_gpus() > 0
+    except (ImportError, AttributeError):
+        return False
 
 
 def check_faiss_available() -> bool:
@@ -144,16 +144,143 @@ def match_gaussians_faiss(
     return matches
 
 
+def match_gaussians_sliding_window_faiss(
+    all_means: list[np.ndarray],
+    max_distance: float,
+    window_size: int = 3,
+) -> list[tuple[int, int, int, int]]:
+    """Match Gaussians using sliding window for gap-bridging.
+
+    For each point in frame i, finds the best match in frames i+1 to i+window_size.
+    Prioritizes closer frames - if a good match is found in i+1, doesn't look further.
+
+    Args:
+        all_means: List of (N_i, 3) arrays of Gaussian positions per frame
+        max_distance: Maximum distance for valid match
+        window_size: How many future frames to search (default 3)
+
+    Returns:
+        List of (frame_a, idx_a, frame_b, idx_b) tuples representing matches
+    """
+    import faiss
+
+    n_frames = len(all_means)
+    if n_frames < 2:
+        return []
+
+    # Pre-build all FAISS indices
+    indices = []
+    for means in all_means:
+        means = np.ascontiguousarray(means, dtype=np.float32)
+        index = faiss.IndexFlatL2(3)
+        index.add(means)
+        indices.append(index)
+
+    all_matches: list[tuple[int, int, int, int]] = []
+    max_dist_sq = max_distance * max_distance
+
+    for frame_a in range(n_frames - 1):
+        means_a = np.ascontiguousarray(all_means[frame_a], dtype=np.float32)
+        n_a = len(means_a)
+
+        # Track which points in frame_a have been matched
+        matched_a = np.zeros(n_a, dtype=bool)
+        # Best match info for each point: (frame_b, idx_b, distance_sq)
+        best_match_frame = np.full(n_a, -1, dtype=np.int32)
+        best_match_idx = np.full(n_a, -1, dtype=np.int32)
+        best_match_dist = np.full(n_a, np.inf, dtype=np.float32)
+
+        # Search in window, prioritizing closer frames
+        for offset in range(1, min(window_size + 1, n_frames - frame_a)):
+            frame_b = frame_a + offset
+            means_b = np.ascontiguousarray(all_means[frame_b], dtype=np.float32)
+            n_b = len(means_b)
+
+            # Forward search: A -> B
+            dist_a_to_b, idx_a_to_b = indices[frame_b].search(means_a, 1)
+            dist_a_to_b = dist_a_to_b[:, 0]  # Squared distances from FAISS
+            idx_a_to_b = idx_a_to_b[:, 0]
+
+            # Backward search: B -> A (for mutual match check)
+            dist_b_to_a, idx_b_to_a = indices[frame_a].search(means_b, 1)
+            idx_b_to_a = idx_b_to_a[:, 0]
+
+            # Find valid mutual matches
+            for i in range(n_a):
+                if matched_a[i]:
+                    continue  # Already matched in closer frame
+
+                j = idx_a_to_b[i]
+                dist_sq = dist_a_to_b[i]
+
+                # Check: within distance AND mutual best match
+                if dist_sq < max_dist_sq and idx_b_to_a[j] == i:
+                    # Valid match! Since we process closer frames first,
+                    # this is the best match for this point
+                    matched_a[i] = True
+                    best_match_frame[i] = frame_b
+                    best_match_idx[i] = j
+                    best_match_dist[i] = dist_sq
+
+        # Collect matches for this source frame
+        for i in range(n_a):
+            if best_match_frame[i] >= 0:
+                all_matches.append(
+                    (
+                        frame_a,
+                        i,
+                        int(best_match_frame[i]),
+                        int(best_match_idx[i]),
+                    )
+                )
+
+    return all_matches
+
+
 def match_gaussians_batch_faiss(
     all_means: list[np.ndarray],
     max_distance: float,
-    use_gpu: bool = False,
+    window_size: int = 1,
 ) -> list[list[tuple[int, int]]]:
-    """Match Gaussians between all consecutive frame pairs using FAISS.
+    """Match Gaussians between consecutive frame pairs using FAISS.
 
-    Deprecated: Use match_gaussians_batch_cupy instead.
+    This is a compatibility wrapper that returns matches in the old format.
+    For new code, use match_gaussians_sliding_window_faiss directly.
+
+    Args:
+        all_means: List of position arrays per frame
+        max_distance: Maximum match distance
+        window_size: If 1, only consecutive pairs. If >1, uses sliding window.
+
+    Returns:
+        List of match lists, one per consecutive frame pair.
+        Each match is (idx_in_frame_a, idx_in_frame_b).
     """
-    raise NotImplementedError("FAISS support has been removed.")
+    if window_size == 1:
+        # Fast path: just do pairwise matching
+        import faiss
+
+        all_matches = []
+        for i in range(len(all_means) - 1):
+            matches = match_gaussians_faiss(
+                all_means[i], all_means[i + 1], max_distance, use_gpu=False
+            )
+            all_matches.append(matches)
+        return all_matches
+    else:
+        # Use sliding window and convert format
+        sw_matches = match_gaussians_sliding_window_faiss(all_means, max_distance, window_size)
+
+        # Group by consecutive frame pairs for compatibility
+        n_frames = len(all_means)
+        all_matches: list[list[tuple[int, int]]] = [[] for _ in range(n_frames - 1)]
+
+        for frame_a, idx_a, frame_b, idx_b in sw_matches:
+            # Only include consecutive matches in compatibility mode
+            if frame_b == frame_a + 1:
+                all_matches[frame_a].append((idx_a, idx_b))
+
+        return all_matches
 
 
 def match_gaussians_batch_cupy(
@@ -260,11 +387,17 @@ def match_gaussians_batch_cupy(
 def build_trajectories_gpu(
     frames: list,  # list[GaussianFrame]
     max_distance: float,
+    window_size: int = 3,
 ) -> TrajectoryDataGPU:
-    """Build trajectories using accelerated matching.
+    """Build trajectories using accelerated matching with sliding window.
 
-    Uses union-find on CPU (fast enough) with CuPy for matching.
-    Falls back to scipy KDTree if CuPy is unavailable.
+    Uses FAISS AVX512 for fast matching with gap-bridging support.
+    Falls back to CuPy or scipy if FAISS is unavailable.
+
+    Args:
+        frames: List of GaussianFrame objects
+        max_distance: Maximum distance for valid matches
+        window_size: How many future frames to search for matches (default 3)
     """
     if len(frames) == 0:
         raise ValueError("No frames provided")
@@ -278,11 +411,17 @@ def build_trajectories_gpu(
 
     all_means = [f.means for f in frames]
 
-    if check_cuda_available():
-        logger.info("Using CuPy KNN for matching")
+    # Choose best available matching method
+    if check_faiss_available():
+        logger.info(f"Using FAISS sliding window matching (window_size={window_size})")
+        sliding_matches = match_gaussians_sliding_window_faiss(all_means, max_distance, window_size)
+        use_sliding_format = True
+    elif check_cuda_available():
+        logger.info("FAISS not available, using CuPy KNN for matching (pairwise only)")
         all_matches = match_gaussians_batch_cupy(all_means, max_distance)
+        use_sliding_format = False
     else:
-        logger.info("CuPy not available, using scipy KDTree")
+        logger.info("CuPy not available, using scipy KDTree (pairwise only)")
         from offline.export_gaussian_ply import match_gaussians_bidirectional
 
         all_matches = []
@@ -291,6 +430,7 @@ def build_trajectories_gpu(
                 frames[i].means, frames[i + 1].means, max_distance
             )
             all_matches.append(matches)
+        use_sliding_format = False
 
     frame_offsets = [0]
     for f in frames:
@@ -314,11 +454,24 @@ def build_trajectories_gpu(
         if rank[px] == rank[py]:
             rank[px] += 1
 
-    for frame_idx, matches in enumerate(all_matches):
-        offset_a = frame_offsets[frame_idx]
-        offset_b = frame_offsets[frame_idx + 1]
-        for idx_a, idx_b in matches:
-            union(offset_a + idx_a, offset_b + idx_b)
+    # Apply matches to union-find
+    if use_sliding_format:
+        # Sliding window format: (frame_a, idx_a, frame_b, idx_b)
+        gap_bridged = 0
+        for frame_a, idx_a, frame_b, idx_b in sliding_matches:
+            global_a = frame_offsets[frame_a] + idx_a
+            global_b = frame_offsets[frame_b] + idx_b
+            union(global_a, global_b)
+            if frame_b > frame_a + 1:
+                gap_bridged += 1
+        logger.info(f"Total matches: {len(sliding_matches)}, gap-bridged: {gap_bridged}")
+    else:
+        # Pairwise format: list of lists
+        for frame_idx, matches in enumerate(all_matches):
+            offset_a = frame_offsets[frame_idx]
+            offset_b = frame_offsets[frame_idx + 1]
+            for idx_a, idx_b in matches:
+                union(offset_a + idx_a, offset_b + idx_b)
 
     root_to_traj_id: dict[int, int] = {}
     trajectory_ids = np.zeros(total_gaussians, dtype=np.int32)
