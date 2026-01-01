@@ -86,7 +86,7 @@ target-version = "py310"
 
 [tool.ty.src]
 include = ["."]
-exclude = ["sharp/"]
+exclude = ["sharp*"]
 
 [tool.uv]
 environments = ["sys_platform == 'win32'"]
