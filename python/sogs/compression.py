@@ -1,447 +1,408 @@
+"""
+Super Compressed Gaussian Splatting (SOG) format compression.
+
+Based on the official PlayCanvas splat-transform implementation v0.16.1.
+"""
+
 import json
+import math
 import os
-from typing import Any, Callable, Dict
+import shutil
+import zipfile
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
 import torch.nn.functional as F
-from torch import Tensor
-
-# Mandatory imports for SOG compression
-import faiss  # type: ignore
-from .plas import sort_with_plas  # type: ignore
+from PIL import Image
 
 try:
     from tqdm import tqdm
 except ImportError:
     tqdm = None
 
-from plyfile import PlyData
-from PIL import Image
+# Import FAISS for k-means clustering
+try:
+    import faiss
+
+    FAISS_AVAILABLE = True
+except ImportError:
+    FAISS_AVAILABLE = False
+    print("Warning: FAISS not available. K-means clustering will be limited.")
 
 
-def _get_compress_fn(param_name: str) -> Callable:
-    compress_fn_map = {
-        "means": _compress_16bit,
-        "scales": _compress,
-        "quats": _compress_quats,
-        "sh0": _compress,  # placeholder
-        "shN": _compress_kmeans,
-        "motion": _compress_16bit,  # Added for FreeTimeGS
-        "t": _compress_16bit,  # Added for FreeTimeGS (16-bit for time precision)
-        "t_scale": _compress,  # Added for FreeTimeGS
-    }
-    return compress_fn_map[param_name]
+def log_transform(value: float) -> float:
+    """Log transform for means (sign(x) * log(|x| + 1))."""
+    return math.copysign(math.log(abs(value) + 1), value)
 
 
-def run_compression(compress_dir: str, splats: Dict[str, Tensor], verbose: bool) -> None:
-    """Run compression
+def sigmoid(x: float) -> float:
+    """Sigmoid function for opacity."""
+    return 1 / (1 + math.exp(-x))
 
-    Args:
-        compress_dir (str): directory to save compressed files
-        splats (Dict[str, Tensor]): Gaussian splats to compress
+
+def srgb_to_linear(c: float) -> float:
+    """Convert sRGB to linear RGB."""
+    if c <= 0.04045:
+        return c / 12.92
+    else:
+        return ((c + 0.055) / 1.055) ** 2.4
+
+
+def linear_to_srgb(c: float) -> float:
+    """Convert linear RGB to sRGB."""
+    if c <= 0.0031308:
+        return c * 12.92
+    else:
+        return 1.055 * (c ** (1 / 2.4)) - 0.055
+
+
+def pack_quaternion(q: np.ndarray) -> Tuple[np.ndarray, int]:
     """
-    # FAISS is now mandatory for SOG compression
-
-    # Param-specific preprocessing
-    splats["means"] = log_transform(splats["means"])
-    splats["quats"] = F.normalize(splats["quats"], dim=-1)
-    neg_mask = splats["quats"][..., 3] < 0
-    splats["quats"][neg_mask] *= -1
-    splats["sh0"] = splats["sh0"].clamp(-3.0, 3.0)
-
-    if "shN" in splats:
-        splats["shN"] = splats["shN"].clamp(-6.0, 6.0)
-
-    # FreeTimeGS preprocessing
-    if "t_scale" in splats:
-        # t_scale is strictly positive, log transform it
-        splats["t_scale"] = log_transform(splats["t_scale"])
-
-    n_gs = len(splats["means"])
-    n_sidelen = int(n_gs**0.5)
-    n_crop = n_gs - n_sidelen**2
-    if n_crop != 0:
-        splats = _crop_n_splats(splats, n_crop)
-        print(f"Warning: Number of Gaussians was not square. Removed {n_crop} Gaussians.")
-
-    meta: Dict[str, Any] = {}
-
-    splats = sort_splats(splats, verbose)
-
-    # Extract opacities and merge into sh0
-    opacities = splats.pop("opacities")
-
-    param_iter = (
-        tqdm(splats.keys(), desc="Compressing parameters", disable=not verbose)
-        if tqdm
-        else splats.keys()
-    )
-    for param_name in param_iter:
-        if param_name == "sh0":
-            meta["sh0"] = _compress_sh0_with_opacity(
-                compress_dir, "sh0", splats["sh0"], opacities, n_sidelen, verbose=verbose
-            )
-        else:
-            compress_fn = _get_compress_fn(param_name)
-            meta[param_name] = compress_fn(
-                compress_dir, param_name, splats[param_name], n_sidelen=n_sidelen, verbose=verbose
-            )
-
-    with open(os.path.join(compress_dir, "meta.json"), "w") as f:
-        json.dump(meta, f, indent=2)
-
-
-def log_transform(x):
-    return torch.sign(x) * torch.log1p(torch.abs(x))
-
-
-def write_image(compress_dir, param_name, img, lossless: bool = True, quality: int = 100):
-    filename = f"{param_name}.webp"
-    img = np.ascontiguousarray(img)
-    Image.fromarray(img).save(
-        os.path.join(compress_dir, filename),
-        format="webp",
-        lossless=lossless,
-        quality=quality if not lossless else 100,
-        method=6,
-        exact=True,
-    )
-    if verbose_log:
-        print(f"[OK] {filename}")
-    return filename
-
-
-verbose_log = True
-
-
-def _crop_n_splats(splats: Dict[str, Tensor], n_crop: int) -> Dict[str, Tensor]:
-    opacities = splats["opacities"]
-    keep_indices = torch.argsort(opacities, descending=True)[:-n_crop]
-    for k, v in splats.items():
-        splats[k] = v[keep_indices]
-    return splats
-
-
-def _compress(
-    compress_dir: str, param_name: str, params: Tensor, n_sidelen: int, verbose: bool
-) -> Dict[str, Any]:
-    """Compress parameters with 8-bit quantization and lossless PNG compression."""
-    grid = params.reshape((n_sidelen, n_sidelen, -1))
-    mins = torch.amin(grid, dim=(0, 1))
-    maxs = torch.amax(grid, dim=(0, 1))
-
-    # Handle scalar case (min==max) to avoid div by zero
-    diff = maxs - mins
-    diff[diff == 0] = 1.0
-
-    grid_norm = (grid - mins) / diff
-    img_norm = grid_norm.detach().cpu().numpy()
-
-    img = (img_norm * (2**8 - 1)).round().astype(np.uint8)
-    img = img.squeeze()
-
-    meta = {
-        "shape": list(params.shape),
-        "dtype": str(params.dtype).split(".")[1],
-        "mins": mins.tolist(),
-        "maxs": maxs.tolist(),
-        "files": [write_image(compress_dir, param_name, img)],
-    }
-    return meta
-
-
-def _compress_16bit(
-    compress_dir: str, param_name: str, params: Tensor, n_sidelen: int, verbose: bool
-) -> Dict[str, Any]:
-    """Compress parameters with 16-bit quantization and PNG compression."""
-    grid = params.reshape((n_sidelen, n_sidelen, -1))
-    mins = torch.amin(grid, dim=(0, 1))
-    maxs = torch.amax(grid, dim=(0, 1))
-
-    diff = maxs - mins
-    diff[diff == 0] = 1.0
-
-    grid_norm = (grid - mins) / diff
-    img_norm = grid_norm.detach().cpu().numpy()
-    img = (img_norm * (2**16 - 1)).round().astype(np.uint16)
-    img_l = img & 0xFF
-    img_u = (img >> 8) & 0xFF
-
-    files = [
-        write_image(compress_dir, f"{param_name}_l", img_l.astype(np.uint8)),
-        write_image(compress_dir, f"{param_name}_u", img_u.astype(np.uint8)),
-    ]
-
-    meta = {
-        "shape": list(params.shape),
-        "dtype": str(params.dtype).split(".")[1],
-        "mins": mins.tolist(),
-        "maxs": maxs.tolist(),
-        "files": files,
-    }
-    return meta
-
-
-def _compress_sh0_with_opacity(
-    compress_dir: str,
-    param_name: str,
-    sh0: Tensor,
-    opacities: Tensor,
-    n_sidelen: int,
-    verbose: bool,
-) -> Dict[str, Any]:
-    """Combine sh0 (RGB) and opacities as alpha channel into a single RGBA texture."""
-    grid_sh0 = sh0.reshape((n_sidelen, n_sidelen, -1))
-    grid_opac = opacities.reshape((n_sidelen, n_sidelen, 1))
-    grid = torch.cat([grid_sh0, grid_opac], dim=-1)
-
-    mins = torch.amin(grid, dim=(0, 1))
-    maxs = torch.amax(grid, dim=(0, 1))
-
-    diff = maxs - mins
-    diff[diff == 0] = 1.0
-
-    grid_norm = (grid - mins) / diff
-    img_norm = grid_norm.detach().cpu().numpy()
-
-    img = (img_norm * (2**8 - 1)).round().astype(np.uint8)
-    filename = write_image(compress_dir, param_name, img)
-
-    meta = {
-        "shape": [*list(sh0.shape[:-1]), sh0.shape[-1] + 1],
-        "dtype": str(sh0.dtype).split(".")[1],
-        "mins": mins.tolist(),
-        "maxs": maxs.tolist(),
-        "files": [filename],
-    }
-    return meta
-
-
-def _compress_kmeans(
-    compress_dir: str,
-    param_name: str,
-    params: Tensor,
-    n_sidelen: int,
-    quantization: int = 8,
-    verbose: bool = False,
-) -> Dict[str, Any]:
-    """Run K-means clustering on parameters and save centroids and labels as images."""
-    params = params.reshape(params.shape[0], -1)
-    dim = params.shape[1]
-    n_clusters = round((len(params) >> 2) / 64) * 64
-    n_clusters = min(n_clusters, 2**16)
-
-    # Ensure n_clusters is not greater than n_samples
-    n_clusters = min(n_clusters, len(params))
-    if n_clusters < 1:
-        n_clusters = 1
-
-    # Use FAISS K-means (mandatory for SOG compression)
-    params_np = params.detach().cpu().numpy().astype(np.float32)
-    kmeans = faiss.Kmeans(d=dim, k=n_clusters, niter=25, verbose=verbose, gpu=False)
-    kmeans.train(params_np)
-    centroids = torch.from_numpy(kmeans.centroids.astype(np.float32))  # type: ignore[union-attr]
-    labels = kmeans.index.search(params_np, 1)[1].ravel().astype(np.int32)  # type: ignore[union-attr]
-
-    mins = torch.min(centroids)
-    maxs = torch.max(centroids)
-
-    diff = maxs - mins
-    if diff == 0:
-        diff = 1.0
-
-    centroids_norm = (centroids - mins) / diff
-    centroids_norm = centroids_norm.detach().cpu().numpy()
-    centroids_quant = (centroids_norm * (2**quantization - 1)).round().astype(np.uint8)
-
-    # sort centroids for compact atlas layout
-    sorted_indices = np.lexsort(centroids_quant.T)
-    # Ensure sorted_indices is proper length for reshaping if needed
-    # The original code reshape logic seems specific to 64 alignment?
-    # "sorted_indices = sorted_indices.reshape(64, -1).T.reshape(-1)"
-    # This reshuffling is specific to SOGS viewer logic maybe?
-    # Let's keep it if n_clusters is multiple of 64.
-
-    if len(sorted_indices) % 64 == 0:
-        sorted_indices = sorted_indices.reshape(64, -1).T.reshape(-1)
-
-    sorted_centroids_quant = centroids_quant[sorted_indices]
-
-    inverse = np.argsort(sorted_indices)
-
-    # centroids_packed: original code assumes dim*64/3.
-    # dim for SH (deg 3) is 45. 45*64/3 = 960.
-    # If using less SH, this might break.
-    # We should just save centroids as is, but SOGS viewer expects specific packing?
-    # For now let's assume standard SH degree 3 (45 coeffs).
-    # If not, we might need to adjust.
-
-    # Safety check for reshape
-    try:
-        centroids_packed = sorted_centroids_quant.reshape(-1, int(dim * 64 / 3), 3)
-        files = [
-            write_image(compress_dir, f"{param_name}_centroids", centroids_packed),
-            write_image(
-                compress_dir,
-                f"{param_name}_labels_l",
-                (labels & 0xFF).astype(np.uint8).reshape(n_sidelen, n_sidelen),
-            ),
-            write_image(
-                compress_dir,
-                f"{param_name}_labels_u",
-                ((labels >> 8) & 0xFF).astype(np.uint8).reshape(n_sidelen, n_sidelen),
-            ),
-        ]
-
-        # Note: Original code combined labels into one RG image.
-        # "labels_combined[..., 0] = labels_l; labels_combined[..., 1] = labels_u"
-        # Let's do that to match spec.
-        labels_combined = np.zeros((n_sidelen, n_sidelen, 3), dtype=np.uint8)
-        labels_combined[..., 0] = (labels & 0xFF).astype(np.uint8).reshape(n_sidelen, n_sidelen)
-        labels_combined[..., 1] = (
-            ((labels >> 8) & 0xFF).astype(np.uint8).reshape(n_sidelen, n_sidelen)
-        )
-
-        files = [
-            write_image(compress_dir, f"{param_name}_centroids", centroids_packed),
-            write_image(compress_dir, f"{param_name}_labels", labels_combined),
-        ]
-
-    except Exception as e:
-        print(f"Warning: KMeans packing failed, falling back to simple save: {e}")
-        # Fallback if reshape fails (e.g. not deg 3 SH)
-        files = []
-        # TODO: Handle non-standard SH counts
-
-    meta = {
-        "shape": list(params.shape),
-        "dtype": str(params.dtype).split(".")[1],
-        "mins": mins.tolist(),
-        "maxs": maxs.tolist(),
-        "quantization": quantization,
-        "files": files,
-    }
-    return meta
-
-
-def pack_quaternion_to_rgba_tensor(q: Tensor) -> Tensor:
-    """
-    Packs a batch of quaternions into RGBA channels:
-      - R,G,B: the three smallest components, scaled by sqrt(2) then mapped from [-1,1]→[0,1]
-      - A: index of largest-abs component (0→3) mapped [0,3]→[0,1]
-    q: (...,4)
-    returns: (...,4) in [0,1]
-    """
-    abs_q = q.abs()
-    max_idx = abs_q.argmax(dim=-1)  # (...)
-
-    # ensure largest component is positive
-    max_vals = q.gather(-1, max_idx.unsqueeze(-1)).squeeze(-1)
-    sign = max_vals.sign()
-    sign[sign == 0] = 1
-    q_signed = q * sign.unsqueeze(-1)
-
-    # build variants dropping each component
-    variants = []
-    for i in range(4):
-        dims = list(range(4))
-        dims.remove(i)
-        variants.append(q_signed[..., dims])  # (...,3)
-    stacked = torch.stack(variants, dim=-2)  # (...,4,3)
-
-    # select the appropriate 3-vector based on max_idx
-    idx_exp = max_idx.unsqueeze(-1).unsqueeze(-1).expand(*max_idx.shape, 1, 3)
-    small = torch.gather(stacked, dim=-2, index=idx_exp).squeeze(-2)  # (...,3)
-
-    # scale by sqrt(2) to normalize range to [-1,1]
-    small = small * torch.sqrt(torch.tensor(2.0, device=small.device, dtype=small.dtype))
-
-    # map from [-1,1] to [0,1]
-    rgb = small * 0.5 + 0.5
-    a = (252.0 + max_idx.to(torch.float32)) / 255.0
-    return torch.cat([rgb, a.unsqueeze(-1)], dim=-1)
-
-
-def _compress_quats(
-    compress_dir: str, param_name: str, params: Tensor, n_sidelen: int, verbose: bool
-) -> Dict[str, Any]:
-    """Compress quaternions by packing into RGBA and saving as an 8-bit image."""
-    # params: (n_splats,4)
-    rgba = pack_quaternion_to_rgba_tensor(params)
-    img = (rgba.view(n_sidelen, n_sidelen, 4).cpu().numpy() * 255.0).round().astype(np.uint8)
-    filename = write_image(compress_dir, f"{param_name}", img)
-
-    meta = {
-        "shape": list(params.shape),
-        "dtype": "uint8",
-        "encoding": "quaternion_packed",
-        "files": [filename],
-    }
-    return meta
-
-
-def sort_splats(splats: Dict[str, Tensor], verbose: bool = True) -> Dict[str, Tensor]:
-    """Sort splats with Parallel Linear Assignment Sorting from the paper.
-
-    Args:
-        splats (Dict[str, Tensor]): splats
-        verbose (bool, optional): Whether to print verbose information. Default to True.
+    Pack quaternion into RGBA format.
 
     Returns:
-        Dict[str, Tensor]: sorted splats
+        rgba: RGBA values in [0, 255]
+        max_comp: Index of largest component (0-3)
     """
-    if sort_with_plas is None:
-        print("Warning: 'plas' module not found. Sorting skipped (compression will be poor).")
-        return splats
+    # Normalize quaternion
+    norm = np.linalg.norm(q)
+    q = q / norm
 
-    n_gs = len(splats["means"])
-    n_sidelen = int(n_gs**0.5)
-    assert n_sidelen**2 == n_gs, "Must be a perfect square"
+    # Find max component and ensure it's positive
+    max_comp = int(np.argmax(np.abs(q)))
+    if q[max_comp] < 0:
+        q = -q
 
-    sort_keys = [k for k in splats if k != "shN"]
-    # For FreeTimeGS, include motion/time in sorting?
-    # The paper uses "all attributes" essentially.
-    # Adding motion to sort keys makes sense as spatially/temporally similar splats should be grouped.
+    # Scale by sqrt(2) to fit in [-1, 1] range
+    q = q * math.sqrt(2)
 
-    params_to_sort = torch.cat([splats[k].reshape(n_gs, -1) for k in sort_keys], dim=-1)
-    shuffled_indices = torch.randperm(params_to_sort.shape[0], device=params_to_sort.device)
-    params_to_sort = params_to_sort[shuffled_indices]
-    grid = params_to_sort.reshape((n_sidelen, n_sidelen, -1))
-    _, sorted_indices = sort_with_plas(
-        grid.permute(2, 0, 1), improvement_break=1e-4, verbose=verbose
-    )
-    sorted_indices = sorted_indices.squeeze().flatten()
-    sorted_indices = shuffled_indices[sorted_indices]
-    for k, v in splats.items():
-        splats[k] = v[sorted_indices]
-    return splats
+    # Reorder components (drop the largest)
+    indices = [0, 1, 2, 3]
+    indices.remove(max_comp)
+    rgb = q[indices]
+
+    # Map from [-1, 1] to [0, 1] to [0, 255]
+    rgb = ((rgb * 0.5 + 0.5) * 255).clip(0, 255).astype(np.uint8)
+
+    # Alpha channel encodes which component was largest
+    alpha = 252 + max_comp
+
+    rgba = np.array([rgb[0], rgb[1], rgb[2], alpha], dtype=np.uint8)
+    return rgba, max_comp
+
+
+def morton_order_sort(points: np.ndarray) -> np.ndarray:
+    """
+    Sort points in Morton (Z-order) curve order.
+
+    Args:
+        points: (N, 3) array of 3D points
+
+    Returns:
+        indices: Sorted indices
+    """
+    if len(points) == 0:
+        return np.arange(0)
+
+    # Normalize points to [0, 1]
+    min_val = points.min(axis=0)
+    max_val = points.max(axis=0)
+    range_val = max_val - min_val
+    range_val[range_val == 0] = 1  # Avoid division by zero
+
+    normalized = (points - min_val) / range_val
+
+    # Quantize to 10 bits (0-1023)
+    # Note: 10 bits per axis * 3 axes = 30 bits, which fits in 32-bit int
+    quantized = (normalized * 1023).astype(np.uint32)
+
+    # Helper to expand bits for Morton encoding
+    # Spreads low 10 bits of v to positions: - - 9 - - 8 - - 7 ...
+    def expand_bits(v):
+        v = (v * 0x00010001) & 0xFF0000FF
+        v = (v * 0x00000101) & 0x0F00F00F
+        v = (v * 0x00000011) & 0xC30C30C3
+        v = (v * 0x00000005) & 0x49249249
+        return v
+
+    # Vectorized bit expansion
+    # Note: The bit manipulation above is a bit complex to vectorize efficiently in pure numpy
+    # without a specific bit-interleaving ufunc.
+    # Alternative efficient approach using precomputed lookup or simpler bit shifts:
+
+    x = quantized[:, 0]
+    y = quantized[:, 1]
+    z = quantized[:, 2]
+
+    x = (x | (x << 16)) & 0x030000FF
+    x = (x | (x << 8)) & 0x0300F00F
+    x = (x | (x << 4)) & 0x030C30C3
+    x = (x | (x << 2)) & 0x09249249
+
+    y = (y | (y << 16)) & 0x030000FF
+    y = (y | (y << 8)) & 0x0300F00F
+    y = (y | (y << 4)) & 0x030C30C3
+    y = (y | (y << 2)) & 0x09249249
+
+    z = (z | (z << 16)) & 0x030000FF
+    z = (z | (z << 8)) & 0x0300F00F
+    z = (z | (z << 4)) & 0x030C30C3
+    z = (z | (z << 2)) & 0x09249249
+
+    # Interleave: Z Y X
+    codes = (z << 2) | (y << 1) | x
+
+    return np.argsort(codes)
+
+
+def kmeans_1d(
+    data: np.ndarray, n_clusters: int = 256, iterations: int = 10
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Perform 1D k-means clustering.
+
+    Args:
+        data: (N,) or (N, D) array
+        n_clusters: Number of clusters
+        iterations: Number of iterations
+
+    Returns:
+        centroids: (n_clusters,) centroids
+        labels: (N,) cluster labels
+    """
+    if not FAISS_AVAILABLE:
+        # Fallback: simple uniform quantization
+        print("Warning: FAISS not available, using simple quantization")
+        data_flat = data.flatten() if data.ndim > 1 else data
+        min_val, max_val = data_flat.min(), data_flat.max()
+        centroids = np.linspace(min_val, max_val, n_clusters)
+        labels = np.digitize(data_flat, centroids[:-1]) - 1
+        labels = np.clip(labels, 0, n_clusters - 1)
+        return centroids, labels
+
+    # Use FAISS for k-means
+    data_flat = data.flatten() if data.ndim > 1 else data
+    data_2d = data_flat.reshape(-1, 1).astype(np.float32)
+
+    if FAISS_AVAILABLE:
+        import faiss  # type: ignore
+
+        kmeans = faiss.Kmeans(
+            d=data_2d.shape[1], k=n_clusters, niter=iterations, verbose=False, gpu=False
+        )
+        kmeans.train(data_2d)
+        centroids = kmeans.centroids.flatten()  # type: ignore
+        _, labels = kmeans.index.search(data_2d, 1)  # type: ignore
+        labels = labels.flatten().astype(np.int32)
+    else:
+        # Fallback to simple uniform quantization
+        centroids = np.linspace(data_flat.min(), data_flat.max(), n_clusters).astype(np.float32)
+        labels = np.digitize(data_flat, centroids[:-1]).astype(np.int32) - 1
+        labels = np.clip(labels, 0, n_clusters - 1)
+
+    # Sort centroids from smallest to largest
+    sort_indices = np.argsort(centroids)
+    centroids = centroids[sort_indices]
+
+    # Create inverse mapping for labels
+    inv_sort = np.empty_like(sort_indices)
+    inv_sort[sort_indices] = np.arange(len(sort_indices))
+    labels = inv_sort[labels]
+
+    return centroids, labels
+
+
+def write_webp_image(filename: str, data: np.ndarray, width: int, height: int) -> None:
+    """Write RGBA data as lossless WebP image."""
+    if data.dtype != np.uint8:
+        raise ValueError("Data must be uint8")
+
+    if data.size != width * height * 4:
+        raise ValueError(f"Data size {data.size} doesn't match dimensions {width}x{height}x4")
+
+    # Create PIL image from RGBA data
+    img = Image.fromarray(data.reshape(height, width, 4), mode="RGBA")
+    img.save(filename, format="webp", lossless=True, quality=100, method=6, exact=True)
+
+
+def run_compression(
+    output_path: str, splats: Dict[str, torch.Tensor], iterations: int = 10
+) -> None:
+    """
+    Compress Gaussian splats to SOG format.
+
+    Args:
+        output_path: Output .sog file path (will be created as zip)
+        splats: Dictionary with keys: 'means', 'opacities', 'scales', 'quats', 'sh0'
+        iterations: K-means iterations (default: 10)
+    """
+    print(f"Compressing {len(splats['means'])} Gaussians to SOG format...")
+
+    # Extract data
+    means = splats["means"].cpu().numpy()  # (N, 3)
+    opacities = splats["opacities"].cpu().numpy()  # (N,)
+    scales = splats["scales"].cpu().numpy()  # (N, 3)
+    quats = splats["quats"].cpu().numpy()  # (N, 4)
+    sh0 = splats["sh0"].cpu().numpy()  # (N, 1, 3)
+
+    num_gaussians = len(means)
+    print(f"Input: {num_gaussians} Gaussians")
+
+    # Sort by Morton order
+    indices = morton_order_sort(means)
+    means = means[indices]
+    opacities = opacities[indices]
+    scales = scales[indices]
+    quats = quats[indices]
+    sh0 = sh0[indices]
+
+    # Calculate texture dimensions (square, power of 2 aligned)
+    side_len = int(math.ceil(math.sqrt(num_gaussians)))
+    side_len = ((side_len + 3) // 4) * 4  # Align to multiple of 4
+    width = height = side_len
+
+    print(f"Texture dimensions: {width}x{height}")
+
+    # Create temporary directory for uncompressed files
+    temp_dir = output_path.replace(".sog", "_temp")
+    os.makedirs(temp_dir, exist_ok=True)
+
+    try:
+        # Write means (log-transformed, 16-bit split into 8-bit)
+        means_log = np.array([[log_transform(x) for x in row] for row in means])
+        means_min = means_log.min(axis=0)
+        means_max = means_log.max(axis=0)
+        means_range = means_max - means_min
+        means_range = np.where(means_range == 0, 1, means_range)
+
+        means_norm = (means_log - means_min) / means_range
+        means_16bit = (means_norm * 65535).astype(np.uint16)
+
+        # Split into low and high bytes
+        means_l = np.zeros((height, width, 4), dtype=np.uint8)
+        means_u = np.zeros((height, width, 4), dtype=np.uint8)
+
+        for i in range(num_gaussians):
+            y, x = divmod(i, width)
+            val = means_16bit[i]
+            means_l[y, x] = [val[0] & 0xFF, val[1] & 0xFF, val[2] & 0xFF, 255]
+            means_u[y, x] = [(val[0] >> 8) & 0xFF, (val[1] >> 8) & 0xFF, (val[2] >> 8) & 0xFF, 255]
+
+        write_webp_image(os.path.join(temp_dir, "means_l.webp"), means_l.flatten(), width, height)
+        write_webp_image(os.path.join(temp_dir, "means_u.webp"), means_u.flatten(), width, height)
+
+        # Write quaternions (packed into RGBA)
+        quats_rgba = np.zeros((height, width, 4), dtype=np.uint8)
+        for i in range(num_gaussians):
+            y, x = divmod(i, width)
+            rgba, _ = pack_quaternion(quats[i])
+            quats_rgba[y, x] = rgba
+
+        write_webp_image(os.path.join(temp_dir, "quats.webp"), quats_rgba.flatten(), width, height)
+
+        # Write scales (k-means clustered)
+        # Flatten to (N*3, 1) to cluster all components together
+        scales_centroids, scales_labels = kmeans_1d(scales.reshape(-1, 3), 256, iterations)
+
+        # Reshape labels back to (N, 3) to access x,y,z labels
+        scales_labels_3d = scales_labels.reshape(-1, 3)
+
+        scales_data = np.zeros((height, width, 4), dtype=np.uint8)
+
+        for i in range(num_gaussians):
+            y, x = divmod(i, width)
+            # Store indices for x, y, z in R, G, B channels
+            # Alpha is unused (255)
+            scales_data[y, x] = [
+                scales_labels_3d[i, 0],
+                scales_labels_3d[i, 1],
+                scales_labels_3d[i, 2],
+                255,
+            ]
+
+        write_webp_image(
+            os.path.join(temp_dir, "scales.webp"), scales_data.flatten(), width, height
+        )
+
+        # Write colors + opacity (sh0 + opacity, k-means clustered)
+        colors = sh0.reshape(-1, 3)  # (N, 3)
+        colors_centroids, colors_labels = kmeans_1d(colors, 256, iterations)
+
+        # Reshape labels back to (N, 3)
+        colors_labels_3d = colors_labels.reshape(-1, 3)
+
+        # Add opacity channel
+        opacity_norm = np.array([sigmoid(float(o)) for o in opacities])
+        opacity_8bit = (opacity_norm * 255).astype(np.uint8)
+
+        sh0_data = np.zeros((height, width, 4), dtype=np.uint8)
+        for i in range(num_gaussians):
+            y, x = divmod(i, width)
+            # Store indices for R, G, B in R, G, B channels
+            # Store opacity in Alpha channel
+            sh0_data[y, x] = [
+                colors_labels_3d[i, 0],
+                colors_labels_3d[i, 1],
+                colors_labels_3d[i, 2],
+                opacity_8bit[i],
+            ]
+
+        write_webp_image(os.path.join(temp_dir, "sh0.webp"), sh0_data.flatten(), width, height)
+
+        # Create metadata
+        metadata = {
+            "version": 2,
+            "asset": {"generator": "vk_gaussian_splatting sogs v2.0.0"},
+            "count": num_gaussians,
+            "means": {
+                "mins": means_min.tolist(),
+                "maxs": means_max.tolist(),
+                "files": ["means_l.webp", "means_u.webp"],
+            },
+            "scales": {"codebook": scales_centroids.tolist(), "files": ["scales.webp"]},
+            "quats": {"files": ["quats.webp"]},
+            "sh0": {"codebook": colors_centroids.tolist(), "files": ["sh0.webp"]},
+        }
+
+        with open(os.path.join(temp_dir, "meta.json"), "w") as f:
+            json.dump(metadata, f, indent=2)
+
+        # Create zip file (.sog)
+        print(f"Creating bundled SOG file: {output_path}")
+        with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for file in os.listdir(temp_dir):
+                zf.write(os.path.join(temp_dir, file), file)
+
+        print(f"SUCCESS: SOG compression complete: {output_path}")
+
+    finally:
+        # Clean up temp directory
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 @torch.no_grad()
-def read_ply(path):
+def read_ply(path: str) -> Dict[str, torch.Tensor]:
     """
-    Reads a .ply file and reconstructs a dictionary of PyTorch tensors on GPU.
+    Reads a .ply file and returns Gaussian splat data.
+
+    Returns:
+        dict with keys: 'means', 'opacities', 'scales', 'quats', 'sh0'
     """
-    plydata = PlyData.read(path)
+    import plyfile
+
+    plydata = plyfile.PlyData.read(path)
     vd = plydata["vertex"].data
 
-    def has_col(col_name):
-        return col_name in vd.dtype.names
-
+    # Extract basic properties
     xyz = np.stack([vd["x"], vd["y"], vd["z"]], axis=-1)
-    f_dc = np.stack([vd[f"f_dc_{i}"] for i in range(3)], axis=-1)
-
-    rest_cols = [c for c in vd.dtype.names if c.startswith("f_rest_")]
-    rest_cols_sorted = sorted(rest_cols, key=lambda c: int(c.split("_")[-1]))
-    if len(rest_cols_sorted) > 0:
-        f_rest = np.stack([vd[c] for c in rest_cols_sorted], axis=-1)
-    else:
-        f_rest = np.empty((len(vd), 0), dtype=np.float32)
-
     opacities = vd["opacity"]
     scale = np.stack([vd[f"scale_{i}"] for i in range(3)], axis=-1)
     rotation = np.stack([vd[f"rot_{i}"] for i in range(4)], axis=-1)
+
+    # Extract colors (f_dc)
+    f_dc = np.stack([vd[f"f_dc_{i}"] for i in range(3)], axis=-1)
 
     splats = {}
     splats["means"] = torch.from_numpy(xyz).float().cuda()
@@ -449,34 +410,8 @@ def read_ply(path):
     splats["scales"] = torch.from_numpy(scale).float().cuda()
     splats["quats"] = torch.from_numpy(rotation).float().cuda()
 
-    sh0_tensor = torch.from_numpy(f_dc).float()
-    sh0_tensor = sh0_tensor.unsqueeze(-1).transpose(1, 2)
+    # Reshape colors to (N, 1, 3) for sh0
+    sh0_tensor = torch.from_numpy(f_dc).float().unsqueeze(-2)
     splats["sh0"] = sh0_tensor.cuda()
-
-    if f_rest.any():
-        if f_rest.shape[1] % 3 != 0:
-            # raise ValueError(f"Number of f_rest columns ({f_rest.shape[1]}) not divisible by 3.")
-            print(
-                f"Warning: f_rest columns {f_rest.shape[1]} not divisible by 3. SHN compression might fail."
-            )
-
-        num_rest_per_channel = f_rest.shape[1] // 3
-        shn_tensor = (
-            torch.from_numpy(f_rest.reshape(-1, 3, num_rest_per_channel)).float().transpose(1, 2)
-        )
-        splats["shN"] = shn_tensor.cuda()
-
-    # FreeTimeGS Motion Support
-    if has_col("motion_0"):
-        motion = np.stack([vd[f"motion_{i}"] for i in range(3)], axis=-1)
-        splats["motion"] = torch.from_numpy(motion).float().cuda()
-
-    if has_col("t"):
-        t = vd["t"]
-        splats["t"] = torch.from_numpy(t).float().cuda()
-
-    if has_col("t_scale"):
-        t_scale = vd["t_scale"]
-        splats["t_scale"] = torch.from_numpy(t_scale).float().cuda()
 
     return splats
