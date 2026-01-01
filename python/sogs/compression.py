@@ -9,6 +9,7 @@ import math
 import os
 import shutil
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -17,7 +18,7 @@ import torch
 import torch.nn.functional as F
 from PIL import Image
 
-from numba import jit
+from numba import jit, prange
 
 
 from tqdm import tqdm
@@ -32,10 +33,30 @@ def log_transform(value: float) -> float:
     return math.copysign(math.log(abs(value) + 1), value)
 
 
+@jit(nopython=True, parallel=True)
+def log_transform_vectorized(arr: np.ndarray) -> np.ndarray:
+    """Vectorized log transform for means array."""
+    result = np.empty_like(arr)
+    for i in prange(arr.shape[0]):
+        for j in range(arr.shape[1]):
+            val = arr[i, j]
+            result[i, j] = math.copysign(math.log(abs(val) + 1), val)
+    return result
+
+
 @jit(nopython=True)
 def sigmoid(x: float) -> float:
     """Sigmoid function for opacity."""
     return 1 / (1 + math.exp(-x))
+
+
+@jit(nopython=True, parallel=True)
+def sigmoid_vectorized(arr: np.ndarray) -> np.ndarray:
+    """Vectorized sigmoid for opacity array."""
+    result = np.empty(arr.shape, dtype=np.float64)
+    for i in prange(arr.shape[0]):
+        result[i] = 1.0 / (1.0 + math.exp(-arr[i]))
+    return result
 
 
 def srgb_to_linear(c: float) -> float:
@@ -54,56 +75,84 @@ def linear_to_srgb(c: float) -> float:
         return 1.055 * (c ** (1 / 2.4)) - 0.055
 
 
-def pack_quaternion(q: np.ndarray):
+@jit(nopython=True, parallel=True)
+def pack_quaternions_vectorized(quats: np.ndarray) -> np.ndarray:
     """
-    Pack quaternion into RGBA format.
+    Pack quaternions into RGBA format - vectorized with Numba.
+
+    Args:
+        quats: (N, 4) quaternion array
 
     Returns:
-        rgba: RGBA values in [0, 255]
-        max_comp: Index of largest component (0-3)
+        rgba: (N, 4) uint8 RGBA values
     """
-    # Normalize quaternion
-    norm = np.sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3])
-    if norm == 0:
-        return np.array([0, 0, 0, 0], dtype=np.uint8), 0
+    n = quats.shape[0]
+    result = np.zeros((n, 4), dtype=np.uint8)
 
-    q = q / norm
+    for i in prange(n):
+        q = quats[i]
 
-    # Find largest component
-    abs_q = np.abs(q)
-    max_comp = int(np.argmax(abs_q))
+        # Normalize quaternion
+        norm = math.sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3])
+        if norm == 0:
+            result[i, 3] = 0
+            continue
 
-    # Create 3-component vector by dropping largest component
-    indices = np.array([0, 1, 2, 3])
-    mask = indices != max_comp
-    abc = q[mask]  # This will be length 3
+        q0 = q[0] / norm
+        q1 = q[1] / norm
+        q2 = q[2] / norm
+        q3 = q[3] / norm
 
-    # Normalize to [-1, 1] and scale to [-127, 127]
-    norm_abc = np.sqrt(abc[0] * abc[0] + abc[1] * abc[1] + abc[2] * abc[2])
-    if norm_abc > 0:
-        abc = abc / norm_abc
+        # Find largest component
+        abs_q = np.array([abs(q0), abs(q1), abs(q2), abs(q3)])
+        max_comp = 0
+        max_val = abs_q[0]
+        for j in range(1, 4):
+            if abs_q[j] > max_val:
+                max_val = abs_q[j]
+                max_comp = j
 
-    # Quantize to 8 bits each, with sign bit
-    qa = int(abc[0] * 127) & 0xFF
-    qb = int(abc[1] * 127) & 0xFF
-    qc = int(abc[2] * 127) & 0xFF
+        # Create 3-component vector by dropping largest component
+        q_arr = np.array([q0, q1, q2, q3])
+        abc = np.zeros(3)
+        idx = 0
+        for j in range(4):
+            if j != max_comp:
+                abc[idx] = q_arr[j]
+                idx += 1
 
-    # Pack into RGB
-    rgb = np.array([qa, qb, qc], dtype=np.uint8)
+        # Normalize to [-1, 1] and scale to [-127, 127]
+        norm_abc = math.sqrt(abc[0] * abc[0] + abc[1] * abc[1] + abc[2] * abc[2])
+        if norm_abc > 0:
+            abc[0] /= norm_abc
+            abc[1] /= norm_abc
+            abc[2] /= norm_abc
 
-    # Apply octahedral encoding for better precision
-    if rgb[0] & 0x80:
-        rgb[0] &= 0x7F
-        rgb[1] = (rgb[1] | 0x80) if rgb[1] & 0x80 else (rgb[1] & 0x7F)
-    if rgb[1] & 0x80:
-        rgb[1] &= 0x7F
-        rgb[2] |= 0x80
+        # Quantize to 8 bits each, with sign bit
+        qa = int(abc[0] * 127) & 0xFF
+        qb = int(abc[1] * 127) & 0xFF
+        qc = int(abc[2] * 127) & 0xFF
 
-    # Alpha channel stores max component index
-    alpha = (max_comp << 6) & 0xFF
+        # Apply octahedral encoding for better precision
+        if qa & 0x80:
+            qa &= 0x7F
+            if qb & 0x80:
+                qb = qb | 0x80
+            else:
+                qb = qb & 0x7F
+        if qb & 0x80:
+            qb &= 0x7F
+            qc |= 0x80
 
-    rgba = np.array([rgb[0], rgb[1], rgb[2], alpha], dtype=np.uint8)
-    return rgba, max_comp
+        # Alpha channel stores max component index
+        alpha = (max_comp << 6) & 0xFF
+
+        result[i, 0] = qa
+        result[i, 1] = qb
+        result[i, 2] = qc
+        result[i, 3] = alpha
+
+    return result
 
 
 def morton_order_sort(points: np.ndarray) -> np.ndarray:
@@ -222,6 +271,78 @@ def write_webp_image(filename: str, data: np.ndarray, width: int, height: int) -
     img.save(filename, format="webp", lossless=True, quality=100, method=6, exact=True)
 
 
+@jit(nopython=True, parallel=True)
+def fill_texture_rgba_3channel(
+    data: np.ndarray, labels_3d: np.ndarray, alpha_channel: np.ndarray, width: int, height: int
+) -> np.ndarray:
+    """Fill texture with RGB from labels and alpha from separate array - vectorized."""
+    result = np.zeros((height, width, 4), dtype=np.uint8)
+    n = labels_3d.shape[0]
+    for i in prange(n):
+        y = i // width
+        x = i % width
+        result[y, x, 0] = labels_3d[i, 0]
+        result[y, x, 1] = labels_3d[i, 1]
+        result[y, x, 2] = labels_3d[i, 2]
+        result[y, x, 3] = alpha_channel[i]
+    return result
+
+
+@jit(nopython=True, parallel=True)
+def fill_texture_rgba_1channel(labels: np.ndarray, width: int, height: int) -> np.ndarray:
+    """Fill texture with single-channel labels in R, rest zeros, alpha=255."""
+    result = np.zeros((height, width, 4), dtype=np.uint8)
+    n = labels.shape[0]
+    for i in prange(n):
+        y = i // width
+        x = i % width
+        result[y, x, 0] = labels[i]
+        result[y, x, 3] = 255
+    return result
+
+
+@jit(nopython=True, parallel=True)
+def fill_means_textures(
+    means_16bit: np.ndarray, width: int, height: int
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Split 16-bit means into low/high byte textures - vectorized."""
+    n = means_16bit.shape[0]
+    means_l = np.zeros((height, width, 4), dtype=np.uint8)
+    means_u = np.zeros((height, width, 4), dtype=np.uint8)
+
+    for i in prange(n):
+        y = i // width
+        x = i % width
+        val = means_16bit[i]
+        means_l[y, x, 0] = val[0] & 0xFF
+        means_l[y, x, 1] = val[1] & 0xFF
+        means_l[y, x, 2] = val[2] & 0xFF
+        means_l[y, x, 3] = 255
+        means_u[y, x, 0] = (val[0] >> 8) & 0xFF
+        means_u[y, x, 1] = (val[1] >> 8) & 0xFF
+        means_u[y, x, 2] = (val[2] >> 8) & 0xFF
+        means_u[y, x, 3] = 255
+
+    return means_l, means_u
+
+
+@jit(nopython=True, parallel=True)
+def fill_quats_texture(quats_rgba: np.ndarray, width: int, height: int) -> np.ndarray:
+    """Fill quaternion texture from packed RGBA - vectorized."""
+    n = quats_rgba.shape[0]
+    result = np.zeros((height, width, 4), dtype=np.uint8)
+
+    for i in prange(n):
+        y = i // width
+        x = i % width
+        result[y, x, 0] = quats_rgba[i, 0]
+        result[y, x, 1] = quats_rgba[i, 1]
+        result[y, x, 2] = quats_rgba[i, 2]
+        result[y, x, 3] = quats_rgba[i, 3]
+
+    return result
+
+
 def run_compression(
     output_path: str, splats: Dict[str, torch.Tensor], iterations: int = 10, verbose: bool = False
 ) -> None:
@@ -268,6 +389,14 @@ def run_compression(
     quats = quats[indices]
     sh0 = sh0[indices]
 
+    # Apply sorting to optional fields
+    if motion is not None:
+        motion = motion[indices]
+    if time_center is not None:
+        time_center = time_center[indices]
+    if time_scale is not None:
+        time_scale = time_scale[indices]
+
     # Calculate texture dimensions (square, power of 2 aligned)
     side_len = int(math.ceil(math.sqrt(num_gaussians)))
     side_len = ((side_len + 3) // 4) * 4  # Align to multiple of 4
@@ -279,9 +408,13 @@ def run_compression(
     temp_dir = output_path.replace(".sog", "_temp")
     os.makedirs(temp_dir, exist_ok=True)
 
+    # Prepare all WebP write tasks for parallel execution
+    webp_tasks: List[Tuple[str, np.ndarray, int, int]] = []
+
     try:
-        # Write means (log-transformed, 16-bit split into 8-bit)
-        means_log = np.array([[log_transform(x) for x in row] for row in means])
+        # === MEANS: log-transformed, 16-bit split into 8-bit ===
+        # Vectorized log transform
+        means_log = log_transform_vectorized(means.astype(np.float64))
         means_min = means_log.min(axis=0)
         means_max = means_log.max(axis=0)
         means_range = means_max - means_min
@@ -290,99 +423,62 @@ def run_compression(
         means_norm = (means_log - means_min) / means_range
         means_16bit = (means_norm * 65535).astype(np.uint16)
 
-        # Split into low and high bytes
-        means_l = np.zeros((height, width, 4), dtype=np.uint8)
-        means_u = np.zeros((height, width, 4), dtype=np.uint8)
-
-        for i in range(num_gaussians):
-            y, x = divmod(i, width)
-            val = means_16bit[i]
-            means_l[y, x] = [val[0] & 0xFF, val[1] & 0xFF, val[2] & 0xFF, 255]
-            means_u[y, x] = [(val[0] >> 8) & 0xFF, (val[1] >> 8) & 0xFF, (val[2] >> 8) & 0xFF, 255]
-
-        write_webp_image(os.path.join(temp_dir, "means_l.webp"), means_l.flatten(), width, height)
-        write_webp_image(os.path.join(temp_dir, "means_u.webp"), means_u.flatten(), width, height)
-
-        # Write quaternions (packed into RGBA)
-        quats_rgba = np.zeros((height, width, 4), dtype=np.uint8)
-        for i in range(num_gaussians):
-            y, x = divmod(i, width)
-            rgba, _ = pack_quaternion(quats[i])
-            quats_rgba[y, x] = rgba
-
-        write_webp_image(os.path.join(temp_dir, "quats.webp"), quats_rgba.flatten(), width, height)
-
-        # Write scales (k-means clustered)
-        # Flatten to (N*3, 1) to cluster all components together
-        scales_centroids, scales_labels = kmeans_1d(scales.reshape(-1, 3), 256, iterations)
-
-        # Reshape labels back to (N, 3) to access x,y,z labels
-        scales_labels_3d = scales_labels.reshape(-1, 3)
-
-        scales_data = np.zeros((height, width, 4), dtype=np.uint8)
-
-        for i in range(num_gaussians):
-            y, x = divmod(i, width)
-            # Store indices for x, y, z in R, G, B channels
-            # Alpha is unused (255)
-            scales_data[y, x] = [
-                scales_labels_3d[i, 0],
-                scales_labels_3d[i, 1],
-                scales_labels_3d[i, 2],
-                255,
-            ]
-
-        write_webp_image(
-            os.path.join(temp_dir, "scales.webp"), scales_data.flatten(), width, height
+        # Vectorized texture fill
+        means_l, means_u = fill_means_textures(means_16bit, width, height)
+        webp_tasks.append(
+            (os.path.join(temp_dir, "means_l.webp"), means_l.flatten(), width, height)
+        )
+        webp_tasks.append(
+            (os.path.join(temp_dir, "means_u.webp"), means_u.flatten(), width, height)
         )
 
-        # Write colors + opacity (sh0 + opacity, k-means clustered)
+        # === QUATERNIONS: packed into RGBA - vectorized ===
+        quats_packed = pack_quaternions_vectorized(quats.astype(np.float64))
+        quats_texture = fill_quats_texture(quats_packed, width, height)
+        webp_tasks.append(
+            (os.path.join(temp_dir, "quats.webp"), quats_texture.flatten(), width, height)
+        )
+
+        # === SCALES: k-means clustered ===
+        scales_centroids, scales_labels = kmeans_1d(scales.reshape(-1, 3), 256, iterations)
+        scales_labels_3d = scales_labels.reshape(-1, 3).astype(np.uint8)
+        alpha_255 = np.full(num_gaussians, 255, dtype=np.uint8)
+        scales_texture = fill_texture_rgba_3channel(
+            scales_labels_3d, scales_labels_3d, alpha_255, width, height
+        )
+        webp_tasks.append(
+            (os.path.join(temp_dir, "scales.webp"), scales_texture.flatten(), width, height)
+        )
+
+        # === COLORS + OPACITY: sh0 k-means clustered, opacity sigmoid ===
         colors = sh0.reshape(-1, 3)  # (N, 3)
         colors_centroids, colors_labels = kmeans_1d(colors, 256, iterations)
+        colors_labels_3d = colors_labels.reshape(-1, 3).astype(np.uint8)
 
-        # Reshape labels back to (N, 3)
-        colors_labels_3d = colors_labels.reshape(-1, 3)
-
-        # Add opacity channel
-        opacity_norm = np.array([sigmoid(float(o)) for o in opacities])
+        # Vectorized sigmoid
+        opacity_norm = sigmoid_vectorized(opacities.astype(np.float64))
         opacity_8bit = (opacity_norm * 255).astype(np.uint8)
 
-        sh0_data = np.zeros((height, width, 4), dtype=np.uint8)
-        for i in range(num_gaussians):
-            y, x = divmod(i, width)
-            # Store indices for R, G, B in R, G, B channels
-            # Store opacity in Alpha channel
-            sh0_data[y, x] = [
-                colors_labels_3d[i, 0],
-                colors_labels_3d[i, 1],
-                colors_labels_3d[i, 2],
-                opacity_8bit[i],
-            ]
+        sh0_texture = fill_texture_rgba_3channel(
+            colors_labels_3d, colors_labels_3d, opacity_8bit, width, height
+        )
+        webp_tasks.append(
+            (os.path.join(temp_dir, "sh0.webp"), sh0_texture.flatten(), width, height)
+        )
 
-        write_webp_image(os.path.join(temp_dir, "sh0.webp"), sh0_data.flatten(), width, height)
-
-        # Write motion vectors (k-means clustered) if present
+        # === MOTION VECTORS: k-means clustered (optional) ===
         motion_centroids = None
-        motion_labels_3d = None
         if motion is not None:
             motion_centroids, motion_labels = kmeans_1d(motion.reshape(-1, 3), 256, iterations)
-            motion_labels_3d = motion_labels.reshape(-1, 3)
-
-            motion_data = np.zeros((height, width, 4), dtype=np.uint8)
-            for i in range(num_gaussians):
-                y, x = divmod(i, width)
-                motion_data[y, x] = [
-                    motion_labels_3d[i, 0],
-                    motion_labels_3d[i, 1],
-                    motion_labels_3d[i, 2],
-                    255,
-                ]
-
-            write_webp_image(
-                os.path.join(temp_dir, "motion.webp"), motion_data.flatten(), width, height
+            motion_labels_3d = motion_labels.reshape(-1, 3).astype(np.uint8)
+            motion_texture = fill_texture_rgba_3channel(
+                motion_labels_3d, motion_labels_3d, alpha_255, width, height
+            )
+            webp_tasks.append(
+                (os.path.join(temp_dir, "motion.webp"), motion_texture.flatten(), width, height)
             )
 
-        # Write time center (t) - direct 16-bit encoding
+        # === TIME CENTER (t): k-means clustered (optional) ===
         t_centroids = None
         t_labels = None
         if time_center is not None:
@@ -390,20 +486,13 @@ def run_compression(
             t_centroids, t_labels = kmeans_1d(
                 time_center.reshape(-1, 1), num_t_clusters, iterations
             )
+            t_labels_u8 = t_labels.astype(np.uint8)
+            t_texture = fill_texture_rgba_1channel(t_labels_u8, width, height)
+            webp_tasks.append(
+                (os.path.join(temp_dir, "t.webp"), t_texture.flatten(), width, height)
+            )
 
-            t_data = np.zeros((height, width, 4), dtype=np.uint8)
-            for i in range(num_gaussians):
-                y, x = divmod(i, width)
-                t_data[y, x] = [
-                    t_labels[i],
-                    0,  # Unused
-                    0,  # Unused
-                    255,  # Alpha
-                ]
-
-            write_webp_image(os.path.join(temp_dir, "t.webp"), t_data.flatten(), width, height)
-
-        # Write time scale (t_scale) - direct 16-bit encoding
+        # === TIME SCALE (t_scale): k-means clustered (optional) ===
         t_scale_centroids = None
         t_scale_labels = None
         if time_scale is not None:
@@ -411,20 +500,19 @@ def run_compression(
             t_scale_centroids, t_scale_labels = kmeans_1d(
                 time_scale.reshape(-1, 1), num_t_scale_clusters, iterations
             )
-
-            t_scale_data = np.zeros((height, width, 4), dtype=np.uint8)
-            for i in range(num_gaussians):
-                y, x = divmod(i, width)
-                t_scale_data[y, x] = [
-                    t_scale_labels[i],
-                    0,  # Unused
-                    0,  # Unused
-                    255,  # Alpha
-                ]
-
-            write_webp_image(
-                os.path.join(temp_dir, "t_scale.webp"), t_scale_data.flatten(), width, height
+            t_scale_labels_u8 = t_scale_labels.astype(np.uint8)
+            t_scale_texture = fill_texture_rgba_1channel(t_scale_labels_u8, width, height)
+            webp_tasks.append(
+                (os.path.join(temp_dir, "t_scale.webp"), t_scale_texture.flatten(), width, height)
             )
+
+        # === PARALLEL WEBP ENCODING ===
+        def write_webp_task(task: Tuple[str, np.ndarray, int, int]) -> None:
+            filename, data, w, h = task
+            write_webp_image(filename, data, w, h)
+
+        with ThreadPoolExecutor(max_workers=min(8, len(webp_tasks))) as executor:
+            list(executor.map(write_webp_task, webp_tasks))
 
         # Create metadata
         metadata = {
