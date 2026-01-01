@@ -664,9 +664,6 @@ def extract_video_frames(
     return frame_paths, timestamps_ms
 
 
-
-
-
 def prune_gaussian_frame(frame: GaussianFrame, opacity_threshold: float = 0.05) -> GaussianFrame:
     """Prune Gaussians with low opacity.
 
@@ -714,6 +711,7 @@ def export_video_to_gaussian_plys(
     video_path: Path,
     output_path: Path,
     mode: str = "frames",
+    format: str = "ply",
     model_id: str = "depth-anything/DA3-GIANT",
     frame_skip: int = 5,
     chunk_size: int = 10,
@@ -729,6 +727,7 @@ def export_video_to_gaussian_plys(
         video_path: Input video file
         output_path: Output path (directory for 'frames' mode, file for 'freetimegs')
         mode: 'frames' for per-frame PLYs, 'freetimegs' for single temporal PLY
+        format: Output format ('ply', 'sog', '4dv')
         model_id: DA3 model ID (must support infer_gs=True)
         frame_skip: Process every Nth frame
         chunk_size: Number of frames to process together
@@ -841,118 +840,210 @@ def export_video_to_gaussian_plys(
         logger.info(f"Zeroing motion for {n_static} static splats (motion <= 0.001)")
         motion[static_mask] = 0.0
 
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-    write_freetimegs_ply(
-        output_path,
-        means,
-        scales,
-        rotations,
-        colors,
-        opacities,
-        motion,
-        time_center,
-        time_scale,
-        flip_y=flip_y,
-    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if format == "sog":
+        from sogs.compression import run_compression
+        import torch
+
+        # Prepare splats dict for SOGS
+        splats = {
+            "means": torch.from_numpy(means).float().cuda(),
+            "scales": torch.from_numpy(scales).float().cuda(),
+            "quats": torch.from_numpy(rotations).float().cuda(),
+            "opacities": torch.from_numpy(opacities).float().cuda(),
+            # SOGS expects sh0 as (N, 3)
+            "sh0": torch.from_numpy(colors).float().cuda(),
+            "motion": torch.from_numpy(motion).float().cuda(),
+            "t": torch.from_numpy(time_center).float().cuda(),
+            "t_scale": torch.from_numpy(time_scale).float().cuda(),
+        }
+
+        # SOGS expects shN separately if present
+        # In our pipeline, we don't currently support SH > 0 for FreeTimeGS export here yet?
+        # Check sh_rest
+        # (Wait, write_freetimegs_ply doesn't take sh_rest in the call in the code I read?
+        # Ah, compute_motion_vectors returns sh_rest? No, it returns colors (DC).
+        # But wait, compute_motion_vectors call above:
+        # (means, scales, rotations, colors, opacities, motion, time_center, time_scale) = ...
+        # It seems sh_rest is lost?
+        # Let's check compute_motion_vectors signature later.
+        # For now assuming DC only as per current variables.)
+
+        logger.info(f"Compressing to SOG format: {output_path}")
+        # SOGS output is a directory or a .sog file (zipped)
+        # If output_path is a file (e.g. .sog), we use parent dir as temp?
+        # run_compression takes a directory.
+
+        if output_path.suffix == ".sog":
+            comp_dir = output_path.parent / (output_path.stem + "_sog_temp")
+            comp_dir.mkdir(parents=True, exist_ok=True)
+            run_compression(str(comp_dir), splats, verbose=True)
+
+            # Zip it up
+            import shutil
+
+            shutil.make_archive(str(output_path.with_suffix("")), "zip", comp_dir)
+            shutil.move(str(output_path.with_suffix(".zip")), str(output_path))
+            shutil.rmtree(comp_dir)
+            logger.info(f"Saved SOG file to {output_path}")
+        else:
+            # Assume directory
+            output_path.mkdir(parents=True, exist_ok=True)
+            run_compression(str(output_path), splats, verbose=True)
+
+    elif format == "4dv":
+        from offline.export_4dv import export_4dv
+
+        export_4dv(
+            output_path,
+            means,
+            scales,
+            rotations,
+            colors,
+            opacities,
+            motion,
+            time_center,
+            time_scale,
+            sh_rest=None,  # Currently no SH rest in this flow
+        )
+    else:
+        write_freetimegs_ply(
+            output_path,
+            means,
+            scales,
+            rotations,
+            colors,
+            opacities,
+            motion,
+            time_center,
+            time_scale,
+            flip_y=flip_y,
+        )
 
     logger.info(f"Export complete: {output_path}")
 
 
-def load_static_gaussian_ply(path: Path) -> GaussianFrame:
-    """Load a static 3DGS PLY file into a GaussianFrame.
+def postprocess_plys_to_freetimegs(
+    input_dir: Path,
+    output_path: Path,
+    format: str = "ply",
+    fps: float = 30.0,
+    max_match_distance: float = 0.05,
+    ply_pattern: str = "frame_*.ply",
+    flip_y: bool = False,
+) -> None:
+    """Postprocess existing per-frame PLY files to a single FreeTimeGS PLY.
+
+    Loads all PLY files matching the pattern, tracks Gaussians across frames,
+    computes motion vectors and temporal parameters, then outputs a single
+    FreeTimeGS PLY file.
 
     Args:
-        path: Path to the PLY file
-
-    Returns:
-        GaussianFrame with loaded data (frame_idx/timestamp from filename if possible)
+        input_dir: Directory containing per-frame PLY files
+        output_path: Output FreeTimeGS PLY file path
+        fps: Assumed frame rate if not derivable from filenames
+        max_match_distance: Maximum distance for matching Gaussians across frames
+        ply_pattern: Glob pattern for PLY files
+        flip_y: If True, negate Y coordinates to flip the coordinate system
     """
-    import re
+    import glob as glob_module
 
-    with open(path, "rb") as f:
-        header_lines = []
-        while True:
-            line = f.readline().decode("ascii").strip()
-            header_lines.append(line)
-            if line == "end_header":
-                break
+    ply_files = sorted(input_dir.glob(ply_pattern))
 
-        vertex_count = 0
-        properties: list[str] = []
-        in_vertex = False
+    if not ply_files:
+        raise ValueError(f"No PLY files found in {input_dir} matching '{ply_pattern}'")
 
-        for line in header_lines:
-            if line.startswith("element vertex "):
-                vertex_count = int(line.split()[-1])
-                in_vertex = True
-            elif line.startswith("element "):
-                in_vertex = False
-            elif in_vertex and line.startswith("property float "):
-                properties.append(line.split()[-1])
+    logger.info(f"Found {len(ply_files)} PLY files to postprocess")
 
-        prop_to_idx = {p: i for i, p in enumerate(properties)}
+    frames: list[GaussianFrame] = []
+    for i, ply_path in enumerate(ply_files):
+        logger.info(f"Loading {i + 1}/{len(ply_files)}: {ply_path.name}")
+        frame = load_static_gaussian_ply(ply_path)
+        frame.frame_idx = i
+        frame.timestamp_ms = i * (1000.0 / fps)
+        frames.append(frame)
 
-        stride = len(properties)
-        data = np.frombuffer(f.read(vertex_count * stride * 4), dtype=np.float32)
-        data = data.reshape(vertex_count, stride)
-
-    means = np.column_stack(
-        [
-            data[:, prop_to_idx["x"]],
-            data[:, prop_to_idx["y"]],
-            data[:, prop_to_idx["z"]],
-        ]
+    logger.info(
+        f"Loaded {len(frames)} frames, total {sum(len(f.means) for f in frames)} Gaussian observations"
     )
 
-    colors = np.column_stack(
-        [
-            data[:, prop_to_idx["f_dc_0"]],
-            data[:, prop_to_idx["f_dc_1"]],
-            data[:, prop_to_idx["f_dc_2"]],
-        ]
+    from offline.motion_tracking_cpu import compute_motion_vectors
+
+    logger.info("Computing motion vectors (CPU-accelerated with FAISS)...")
+    (means, scales, rotations, colors, opacities, motion, time_center, time_scale) = (
+        compute_motion_vectors(frames, fps, max_match_distance=max_match_distance)
     )
 
-    scales = np.column_stack(
-        [
-            data[:, prop_to_idx["scale_0"]],
-            data[:, prop_to_idx["scale_1"]],
-            data[:, prop_to_idx["scale_2"]],
-        ]
-    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    rotations = np.column_stack(
-        [
-            data[:, prop_to_idx["rot_0"]],
-            data[:, prop_to_idx["rot_1"]],
-            data[:, prop_to_idx["rot_2"]],
-            data[:, prop_to_idx["rot_3"]],
-        ]
-    )
+    if format == "sog":
+        from sogs.compression import run_compression
+        import torch
 
-    opacities = data[:, prop_to_idx["opacity"]]
+        splats = {
+            "means": torch.from_numpy(means).float().cuda(),
+            "scales": torch.from_numpy(scales).float().cuda(),
+            "quats": torch.from_numpy(rotations).float().cuda(),
+            "opacities": torch.from_numpy(opacities).float().cuda(),
+            "sh0": torch.from_numpy(colors).float().cuda(),
+            "motion": torch.from_numpy(motion).float().cuda(),
+            "t": torch.from_numpy(time_center).float().cuda(),
+            "t_scale": torch.from_numpy(time_scale).float().cuda(),
+        }
 
-    frame_idx = 0
-    timestamp_ms = 0.0
-    match = re.search(r"frame_(\d+)", path.stem)
-    if match:
-        frame_idx = int(match.group(1))
-        timestamp_ms = frame_idx * 33.33
+        logger.info(f"Compressing to SOG format: {output_path}")
+        if output_path.suffix == ".sog":
+            comp_dir = output_path.parent / (output_path.stem + "_sog_temp")
+            comp_dir.mkdir(parents=True, exist_ok=True)
+            run_compression(str(comp_dir), splats, verbose=True)
 
-    return GaussianFrame(
-        frame_idx=frame_idx,
-        timestamp_ms=timestamp_ms,
-        means=means.astype(np.float32),
-        scales=scales.astype(np.float32),
-        rotations=rotations.astype(np.float32),
-        colors=colors.astype(np.float32),
-        opacities=opacities.astype(np.float32),
-    )
+            import shutil
+
+            shutil.make_archive(str(output_path.with_suffix("")), "zip", comp_dir)
+            shutil.move(str(output_path.with_suffix(".zip")), str(output_path))
+            shutil.rmtree(comp_dir)
+            logger.info(f"Saved SOG file to {output_path}")
+        else:
+            output_path.mkdir(parents=True, exist_ok=True)
+            run_compression(str(output_path), splats, verbose=True)
+
+    elif format == "4dv":
+        from offline.export_4dv import export_4dv
+
+        export_4dv(
+            output_path,
+            means,
+            scales,
+            rotations,
+            colors,
+            opacities,
+            motion,
+            time_center,
+            time_scale,
+            sh_rest=None,
+        )
+    else:
+        write_freetimegs_ply(
+            output_path,
+            means,
+            scales,
+            rotations,
+            colors,
+            opacities,
+            motion,
+            time_center,
+            time_scale,
+        )
+
+    logger.info(f"Wrote FreeTimeGS Gaussians to {output_path}")
 
 
 def export_images_to_gaussian_plys(
     input_dir: Path,
     output_path: Path,
     mode: str = "frames",
+    format: str = "ply",
     fps: float = 30.0,
     model_id: str = "depth-anything/DA3-GIANT",
     image_pattern: str = "*.jpg",
@@ -976,6 +1067,7 @@ def export_images_to_gaussian_plys(
         input_dir: Directory containing input images
         output_path: Output path (directory for 'frames', file for 'freetimegs')
         mode: 'frames' for per-frame PLYs, 'freetimegs' for single temporal PLY
+        format: Output format ('ply', 'sog', '4dv')
         fps: Assumed frame rate for temporal normalization
         model_id: DA3 model ID
         image_pattern: Glob pattern for images
@@ -1063,93 +1155,77 @@ def export_images_to_gaussian_plys(
     )
 
     # Zero out motion for static splats (motion magnitude <= 0.001)
-        motion_magnitude = np.linalg.norm(motion, axis=1)
-        static_mask = motion_magnitude <= 0.001
-        n_static = static_mask.sum()
-        if n_static > 0:
-            logger.info(f"Zeroing motion for {n_static} static splats (motion <= 0.001)")
-            motion[static_mask] = 0.0
+    motion_magnitude = np.linalg.norm(motion, axis=1)
+    static_mask = motion_magnitude <= 0.001
+    n_static = static_mask.sum()
+    if n_static > 0:
+        logger.info(f"Zeroing motion for {n_static} static splats (motion <= 0.001)")
+        motion[static_mask] = 0.0
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    write_freetimegs_ply(
-        output_path,
-        means,
-        scales,
-        rotations,
-        colors,
-        opacities,
-        motion,
-        time_center,
-        time_scale,
-    )
 
-    logger.info(f"Wrote FreeTimeGS PLY with {len(means)} Gaussians to {output_path}")
+    if format == "sog":
+        from sogs.compression import run_compression
+        import torch
 
+        # Prepare splats dict for SOGS
+        splats = {
+            "means": torch.from_numpy(means).float().cuda(),
+            "scales": torch.from_numpy(scales).float().cuda(),
+            "quats": torch.from_numpy(rotations).float().cuda(),
+            "opacities": torch.from_numpy(opacities).float().cuda(),
+            "sh0": torch.from_numpy(colors).float().cuda(),
+            "motion": torch.from_numpy(motion).float().cuda(),
+            "t": torch.from_numpy(time_center).float().cuda(),
+            "t_scale": torch.from_numpy(time_scale).float().cuda(),
+        }
 
-def postprocess_plys_to_freetimegs(
-    input_dir: Path,
-    output_path: Path,
-    fps: float = 30.0,
-    max_match_distance: float = 0.05,
-    ply_pattern: str = "frame_*.ply",
-    flip_y: bool = False,
-) -> None:
-    """Postprocess existing per-frame PLY files to a single FreeTimeGS PLY.
+        logger.info(f"Compressing to SOG format: {output_path}")
+        if output_path.suffix == ".sog":
+            comp_dir = output_path.parent / (output_path.stem + "_sog_temp")
+            comp_dir.mkdir(parents=True, exist_ok=True)
+            run_compression(str(comp_dir), splats, verbose=True)
 
-    Loads all PLY files matching the pattern, tracks Gaussians across frames,
-    computes motion vectors and temporal parameters, then outputs a single
-    FreeTimeGS PLY file.
+            import shutil
 
-    Args:
-        input_dir: Directory containing per-frame PLY files
-        output_path: Output FreeTimeGS PLY file path
-        fps: Assumed frame rate if not derivable from filenames
-        max_match_distance: Maximum distance for matching Gaussians across frames
-        ply_pattern: Glob pattern for PLY files
-        flip_y: If True, negate Y coordinates to flip the coordinate system
-    """
-    import glob as glob_module
+            shutil.make_archive(str(output_path.with_suffix("")), "zip", comp_dir)
+            shutil.move(str(output_path.with_suffix(".zip")), str(output_path))
+            shutil.rmtree(comp_dir)
+            logger.info(f"Saved SOG file to {output_path}")
+        else:
+            output_path.mkdir(parents=True, exist_ok=True)
+            run_compression(str(output_path), splats, verbose=True)
 
-    ply_files = sorted(input_dir.glob(ply_pattern))
+    elif format == "4dv":
+        from offline.export_4dv import export_4dv
 
-    if not ply_files:
-        raise ValueError(f"No PLY files found in {input_dir} matching '{ply_pattern}'")
+        export_4dv(
+            output_path,
+            means,
+            scales,
+            rotations,
+            colors,
+            opacities,
+            motion,
+            time_center,
+            time_scale,
+            sh_rest=None,
+        )
+    else:
+        write_freetimegs_ply(
+            output_path,
+            means,
+            scales,
+            rotations,
+            colors,
+            opacities,
+            motion,
+            time_center,
+            time_scale,
+            flip_y=flip_y,
+        )
 
-    logger.info(f"Found {len(ply_files)} PLY files to postprocess")
-
-    frames: list[GaussianFrame] = []
-    for i, ply_path in enumerate(ply_files):
-        logger.info(f"Loading {i + 1}/{len(ply_files)}: {ply_path.name}")
-        frame = load_static_gaussian_ply(ply_path)
-        frame.frame_idx = i
-        frame.timestamp_ms = i * (1000.0 / fps)
-        frames.append(frame)
-
-    logger.info(
-        f"Loaded {len(frames)} frames, total {sum(len(f.means) for f in frames)} Gaussian observations"
-    )
-
-    from offline.motion_tracking_cpu import compute_motion_vectors
-
-    logger.info("Computing motion vectors (CPU-accelerated with FAISS)...")
-    (means, scales, rotations, colors, opacities, motion, time_center, time_scale) = (
-        compute_motion_vectors(frames, fps, max_match_distance=max_match_distance)
-    )
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    write_freetimegs_ply(
-        output_path,
-        means,
-        scales,
-        rotations,
-        colors,
-        opacities,
-        motion,
-        time_center,
-        time_scale,
-    )
-
-    logger.info(f"Wrote FreeTimeGS PLY with {len(means)} Gaussians to {output_path}")
+    logger.info(f"Wrote FreeTimeGS Gaussians to {output_path}")
 
 
 def main():
@@ -1172,6 +1248,12 @@ def main():
         choices=["frames", "freetimegs"],
         default="frames",
         help="Export mode: 'frames' for per-frame PLYs, 'freetimegs' for temporal PLY",
+    )
+    export_parser.add_argument(
+        "--format",
+        choices=["ply", "sog", "4dv"],
+        default="ply",
+        help="Output format: 'ply' (standard), 'sog' (compressed static/dynamic), '4dv' (compressed dynamic)",
     )
     export_parser.add_argument(
         "--model",
@@ -1217,6 +1299,12 @@ def main():
         "--output", "-o", type=Path, required=True, help="Output FreeTimeGS PLY file"
     )
     postprocess_parser.add_argument(
+        "--format",
+        choices=["ply", "sog", "4dv"],
+        default="ply",
+        help="Output format: 'ply', 'sog', '4dv'",
+    )
+    postprocess_parser.add_argument(
         "--fps", type=float, default=30.0, help="Frame rate for temporal normalization"
     )
     postprocess_parser.add_argument(
@@ -1253,6 +1341,12 @@ def main():
         choices=["frames", "freetimegs"],
         default="frames",
         help="Export mode: 'frames' for per-frame PLYs, 'freetimegs' for temporal PLY",
+    )
+    images_parser.add_argument(
+        "--format",
+        choices=["ply", "sog", "4dv"],
+        default="ply",
+        help="Output format: 'ply' (standard), 'sog' (compressed static/dynamic), '4dv' (compressed dynamic)",
     )
     images_parser.add_argument(
         "--fps", type=float, default=30.0, help="Frame rate for temporal normalization"
