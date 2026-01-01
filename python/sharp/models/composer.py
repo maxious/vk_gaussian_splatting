@@ -4,6 +4,8 @@ For licensing see accompanying LICENSE file.
 Copyright (C) 2025 Apple Inc. All Rights Reserved.
 """
 
+# type: ignore  # Suppress type checking for vendored ML library
+
 from __future__ import annotations
 
 import torch
@@ -63,9 +65,9 @@ class GaussianComposer(nn.Module):
         self.min_scale = min_scale  # type: ignore[attr-defined]
         self.color_activation_type = color_activation_type  # type: ignore[attr-defined]
         self.opacity_activation_type = opacity_activation_type  # type: ignore[attr-defined]
-        self.color_space = color_space
-        self.scale_factor = scale_factor
-        self.base_scale_on_predicted_mean = base_scale_on_predicted_mean
+        self.color_space = color_space  # type: ignore[attr-defined]
+        self.scale_factor = scale_factor  # type: ignore[attr-defined]
+        self.base_scale_on_predicted_mean = base_scale_on_predicted_mean  # type: ignore[attr-defined]
 
     def upsample_delta_value(self, delta: torch.Tensor, scale_factor: int = 1):
         """Upsample the delta value.
