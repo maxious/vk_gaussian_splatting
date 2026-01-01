@@ -110,7 +110,7 @@ def match_gaussians_sliding_window_faiss(
     for means in all_means:
         means = np.ascontiguousarray(means, dtype=np.float32)
         index = faiss.IndexFlatL2(3)  # type: ignore[attr-defined]
-        index.add(means)
+        index.add(means)  # type: ignore
         indices.append(index)
 
     all_matches: list[tuple[int, int, int, int]] = []

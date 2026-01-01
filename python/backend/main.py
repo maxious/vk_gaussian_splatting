@@ -24,8 +24,8 @@ def create_app() -> FastAPI:
     logging.basicConfig(level=settings.log_level)
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 
-    app.add_middleware(  # type: ignore[arg-type]
-        CORSMiddleware,
+    app.add_middleware(
+        CORSMiddleware,  # type: ignore[arg-type]
         allow_origins=settings.cors_origins,
         allow_credentials=True,
         allow_methods=["*"],

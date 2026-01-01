@@ -91,7 +91,7 @@ class DA3GaussianProcessor(GaussianProcessor):
             with torch.autocast("cuda", dtype=self.dtype):
                 images = [str(p) for p in frame_paths]
 
-                predictions = self.model.inference(
+                predictions = self.model.inference(  # type: ignore[attr-defined]
                     images,
                     process_res=self.process_res,
                     ref_view_strategy="saddle_balanced",
@@ -151,7 +151,7 @@ class DA3GaussianProcessor(GaussianProcessor):
 
             with torch.no_grad():
                 with torch.autocast("cuda", dtype=self.dtype):
-                    predictions = self.model.inference(
+                    predictions = self.model.inference(  # type: ignore[attr-defined]
                         [str(frame_path)],
                         process_res=self.process_res,
                         ref_view_strategy="first",

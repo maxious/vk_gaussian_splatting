@@ -179,7 +179,7 @@ class TestSogsCompression:
         assert set(expected_structure.keys()) == required_keys
 
         # Check asset structure
-        assert "generator" in expected_structure["asset"]
+        assert "generator" in expected_structure["asset"]  # type: ignore[operator]
         assert expected_structure["version"] == 2
 
     def test_full_compression_pipeline(self, real_data_subset, tmp_path):

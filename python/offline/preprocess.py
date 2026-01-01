@@ -192,7 +192,7 @@ class DA3StreamingProcessor:
 
                 # Use ref_view_strategy for temporal consistency
                 # Options: "first", "middle", "saddle_balanced", "saddle_sim_range"
-                predictions = self.model.inference(
+                predictions = self.model.inference(  # type: ignore[attr-defined]  # type: ignore[attr-defined]
                     images,
                     process_res=self.config.process_res,
                     ref_view_strategy="saddle_balanced",
