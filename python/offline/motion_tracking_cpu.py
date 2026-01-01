@@ -8,6 +8,8 @@ Install dependencies:
     pip install faiss-cpu
 """
 
+# type: ignore  # Suppress FAISS type checking issues
+
 from __future__ import annotations
 
 import logging
@@ -57,8 +59,8 @@ def match_gaussians_faiss(
     means_a = np.ascontiguousarray(means_a, dtype=np.float32)
     means_b = np.ascontiguousarray(means_b, dtype=np.float32)
 
-    index_a = faiss.IndexFlatL2(3)
-    index_b = faiss.IndexFlatL2(3)
+    index_a = faiss.IndexFlatL2(3)  # type: ignore[possibly-missing-attribute]
+    index_b = faiss.IndexFlatL2(3)  # type: ignore[possibly-missing-attribute]
 
     index_a.add(means_a)  # type: ignore
     index_b.add(means_b)  # type: ignore
@@ -107,7 +109,7 @@ def match_gaussians_sliding_window_faiss(
     indices = []
     for means in all_means:
         means = np.ascontiguousarray(means, dtype=np.float32)
-        index = faiss.IndexFlatL2(3)
+        index = faiss.IndexFlatL2(3)  # type: ignore[attr-defined]
         index.add(means)
         indices.append(index)
 
