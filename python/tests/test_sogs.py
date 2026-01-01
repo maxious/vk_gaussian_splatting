@@ -6,8 +6,8 @@ import torch
 import numpy as np
 from pathlib import Path
 
-from .test_sogs_utils import generate_synthetic_gaussians, create_test_ply_file
-from ..sogs.compression import read_ply, morton_order_sort, kmeans_1d, write_webp_image
+from test_sogs_utils import generate_synthetic_gaussians, create_test_ply_file
+from sogs.compression import read_ply, morton_order_sort, kmeans_1d, write_webp_image
 import numpy as np
 import json
 
@@ -160,7 +160,7 @@ class TestSogsCompression:
 
     def test_full_compression_pipeline(self, synthetic_data, tmp_path):
         """Integration test for the complete SOG compression pipeline."""
-        from ..sogs.compression import run_compression
+        from sogs.compression import run_compression
 
         output_path = tmp_path / "test_output.sog"
 
