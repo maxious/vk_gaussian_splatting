@@ -8,6 +8,7 @@ from pathlib import Path
 
 from test_sogs_utils import generate_synthetic_gaussians, create_test_ply_file
 from sogs.compression import read_ply, morton_order_sort, kmeans_1d, write_webp_image
+import cv2
 import numpy as np
 import json
 
@@ -155,6 +156,36 @@ class TestSogsCompression:
 
         assert filepath.exists()
         assert filepath.stat().st_size > 0  # File has content
+
+    def test_write_webp_image_lossless(self, tmp_path):
+        """Test that WebP encoding is truly lossless (round-trip preserves data)."""
+        # Create random RGBA data with various alpha values
+        width, height = 16, 16
+        rng = np.random.default_rng(42)
+        original_data = rng.integers(0, 256, size=(height, width, 4), dtype=np.uint8)
+
+        # Include some low alpha values to test edge cases
+        original_data[0, 0, 3] = 0  # Will be clamped to 1
+        original_data[0, 1, 3] = 1
+        original_data[0, 2, 3] = 2
+
+        filepath = tmp_path / "test_lossless.webp"
+        write_webp_image(str(filepath), original_data.flatten(), width, height)
+
+        # Read back and verify
+        decoded = cv2.imread(str(filepath), cv2.IMREAD_UNCHANGED)
+        assert decoded is not None, "Failed to read WebP file"
+
+        # Convert BGRA back to RGBA
+        decoded_rgba = cv2.cvtColor(decoded, cv2.COLOR_BGRA2RGBA)
+
+        # Expected: alpha=0 should be clamped to 1, everything else preserved
+        expected = original_data.copy()
+        expected[:, :, 3] = np.maximum(expected[:, :, 3], 1)
+
+        assert np.array_equal(decoded_rgba, expected), (
+            f"Lossless encoding failed! Max diff: {np.abs(decoded_rgba.astype(int) - expected.astype(int)).max()}"
+        )
 
     def test_metadata_generation(self):
         """Test that metadata JSON has the expected structure and values."""
