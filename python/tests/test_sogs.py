@@ -21,6 +21,30 @@ class TestSogsCompression:
         return generate_synthetic_gaussians(n_gaussians=1000, seed=12345)
 
     @pytest.fixture
+    def real_data_subset(self):
+        """Load a subset of real Gaussian data from test files for testing."""
+        # Use frame_000000.ply from sharp_sequence
+        data_path = Path(__file__).parent / "data" / "sharp_sequence" / "frame_000000.ply"
+        if not data_path.exists():
+            # Fallback to synthetic if real data not available
+            return generate_synthetic_gaussians(n_gaussians=1000, seed=12345)
+
+        full_data = read_ply(str(data_path))
+        # Take subset of 1000 points for speed
+        subset_size = min(1000, full_data["means"].shape[0])
+
+        subset_data = {}
+        for key, tensor in full_data.items():
+            if tensor.dim() == 1:
+                subset_data[key] = tensor[:subset_size]
+            elif tensor.dim() == 2:
+                subset_data[key] = tensor[:subset_size, :]
+            elif tensor.dim() == 3:
+                subset_data[key] = tensor[:subset_size, :, :]
+
+        return subset_data
+
+    @pytest.fixture
     def temp_ply_file(self, synthetic_data):
         """Create a temporary PLY file with synthetic data."""
         with tempfile.NamedTemporaryFile(suffix=".ply", delete=False) as f:
@@ -158,14 +182,14 @@ class TestSogsCompression:
         assert "generator" in expected_structure["asset"]
         assert expected_structure["version"] == 2
 
-    def test_full_compression_pipeline(self, synthetic_data, tmp_path):
+    def test_full_compression_pipeline(self, real_data_subset, tmp_path):
         """Integration test for the complete SOG compression pipeline."""
         from sogs.compression import run_compression
 
         output_path = tmp_path / "test_output.sog"
 
         # Run compression
-        run_compression(str(output_path), synthetic_data)
+        run_compression(str(output_path), real_data_subset)
 
         # Check that output file was created
         assert output_path.exists()
@@ -192,4 +216,4 @@ class TestSogsCompression:
                 metadata = json.load(f)
                 assert metadata["version"] == 2
                 assert "count" in metadata
-                assert metadata["count"] == len(synthetic_data["means"])
+                assert metadata["count"] == len(real_data_subset["means"])
