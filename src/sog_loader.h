@@ -41,8 +41,8 @@ public:
                    SplatSet&                           output,
                    std::function<void(float)>          progressCallback = nullptr);
 
-private:
-  // Internal structures for meta.json parsing
+public:
+  // Internal structures for meta.json parsing (exposed for external use)
   struct MeansInfo
   {
     std::vector<float>       mins;
@@ -79,6 +79,10 @@ private:
     CodebookInfo t_scale;
   };
 
+  // Parse meta.json content
+  static bool parseMeta(const std::vector<uint8_t>& jsonData, SogMeta& meta);
+
+private:
   // WebP image data
   struct WebPImage
   {
@@ -89,9 +93,6 @@ private:
 
   // File provider interface for reading files from ZIP or filesystem
   using FileReader = std::function<std::vector<uint8_t>(const std::string& filename)>;
-
-  // Parse meta.json content
-  static bool parseMeta(const std::vector<uint8_t>& jsonData, SogMeta& meta);
 
   // Decode WebP image to RGBA
   static bool decodeWebP(const std::vector<uint8_t>& webpData, WebPImage& output);

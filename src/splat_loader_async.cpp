@@ -42,6 +42,42 @@
 
 using namespace vk_gaussian_splatting;
 
+// Type alias for SogMeta used in SuperSplat download
+using SogMeta = SogLoader::SogMeta;
+
+// Helper to extract ID from SuperSplat URL
+std::string extractSuperSplatId(const std::string& url)
+{
+  // Support formats:
+  // https://superspl.at/view?id=bd964899
+  // https://superspl.at/s?id=bd964899
+  
+  std::string idKey = "?id=";
+  size_t pos = url.find(idKey);
+  if (pos == std::string::npos) return "";
+  
+  std::string id = url.substr(pos + idKey.length());
+  // Truncate at next parameter if any
+  size_t endPos = id.find('&');
+  if (endPos != std::string::npos)
+  {
+    id = id.substr(0, endPos);
+  }
+  return id;
+}
+
+// Helper to read file into vector
+std::vector<uint8_t> readFileLocal(const std::filesystem::path& path)
+{
+  std::ifstream file(path, std::ios::binary | std::ios::ate);
+  if(!file) return {};
+  std::streamsize size = file.tellg();
+  file.seekg(0, std::ios::beg);
+  std::vector<uint8_t> buffer(size);
+  if(!file.read(reinterpret_cast<char*>(buffer.data()), size)) return {};
+  return buffer;
+}
+
 #ifdef _WIN32
 namespace {
 bool downloadFile(const std::string& url, const std::filesystem::path& destPath)
@@ -297,34 +333,126 @@ bool SplatLoaderAsync::innerLoad(std::filesystem::path filename, SplatSet& outpu
   if (pathStr.find("http://") == 0 || pathStr.find("https://") == 0)
   {
 #ifdef _WIN32
-    std::filesystem::path tempDir = std::filesystem::temp_directory_path();
-    std::string tempFileName = "downloaded_scene";
+    std::string superSplatId = extractSuperSplatId(pathStr);
+    std::filesystem::path cacheDir = std::filesystem::temp_directory_path() / "vk_gaussian_splatting_cache";
     
-    size_t lastDot = pathStr.find_last_of('.');
-    if (lastDot != std::string::npos && lastDot < pathStr.length() - 1) {
-        std::string ext = pathStr.substr(lastDot);
-        if (ext.length() <= 5) {
-            tempFileName += ext;
-        } else {
-             tempFileName += ".sog";
-        }
-    } else {
-        tempFileName += ".sog";
+    if (!std::filesystem::exists(cacheDir)) {
+        std::filesystem::create_directories(cacheDir);
     }
-    
-    std::filesystem::path destPath = tempDir / tempFileName;
-    
-    LOGI("Downloading %s to %s...\n", pathStr.c_str(), destPath.string().c_str());
-    
-    if (downloadFile(pathStr, destPath))
+
+    if (!superSplatId.empty())
     {
-       filename = destPath;
-       LOGI("Download complete. Proceeding to load...\n");
+        LOGI("Detected SuperSplat ID: %s\n", superSplatId.c_str());
+        std::filesystem::path sceneDir = cacheDir / superSplatId;
+        if (!std::filesystem::exists(sceneDir)) {
+            std::filesystem::create_directories(sceneDir);
+        }
+
+        std::filesystem::path metaPath = sceneDir / "meta.json";
+        
+        // Try v3, v2, v1 in order - this is the versioned content path for SuperSplat
+        std::vector<std::string> versions = {"v3", "v2", "v1"};
+        std::string successVersion;
+        
+        for (const auto& version : versions)
+        {
+            std::string metaUrl = "https://d28zzqy0iyovbz.cloudfront.net/" + superSplatId + "/" + version + "/meta.json";
+            LOGI("Trying %s meta.json from %s...\n", version.c_str(), metaUrl.c_str());
+            
+            if (downloadFile(metaUrl, metaPath))
+            {
+                successVersion = version;
+                LOGI("Successfully downloaded meta.json using %s format.\n", version.c_str());
+                break;
+            }
+        }
+        
+        if (successVersion.empty())
+        {
+            LOGE("Failed to download meta.json from SuperSplat (tried v3, v2, v1).\n");
+            return false;
+        }
+
+        std::vector<uint8_t> metaData = readFileLocal(metaPath);
+        SogMeta meta;
+        if (SogLoader::parseMeta(metaData, meta))
+        {
+            std::vector<std::string> filesToDownload;
+            auto addFiles = [&](const std::vector<std::string>& files) {
+                filesToDownload.insert(filesToDownload.end(), files.begin(), files.end());
+            };
+            
+            addFiles(meta.means.files);
+            addFiles(meta.scales.files);
+            addFiles(meta.quats.files);
+            addFiles(meta.sh0.files);
+            addFiles(meta.shN.files);
+            addFiles(meta.motion.files);
+            addFiles(meta.t.files);
+            addFiles(meta.t_scale.files);
+
+            int total = static_cast<int>(filesToDownload.size());
+            int current = 0;
+            for (const auto& file : filesToDownload)
+            {
+                current++;
+                std::filesystem::path localFilePath = sceneDir / file;
+                
+                if (std::filesystem::exists(localFilePath)) {
+                    continue;
+                }
+
+                std::string fileUrl = "https://d28zzqy0iyovbz.cloudfront.net/" + superSplatId + "/" + successVersion + "/" + file;
+                LOGI("Downloading %s (%d/%d)...\n", file.c_str(), current, total);
+                
+                setProgress(static_cast<float>(current) / static_cast<float>(total));
+
+                if (!downloadFile(fileUrl, localFilePath))
+                {
+                    LOGE("Failed to download file: %s\n", file.c_str());
+                    return false;
+                }
+            }
+            
+            filename = metaPath;
+            LOGI("SuperSplat scene download complete.\n");
+        }
+        else
+        {
+            LOGE("Failed to parse downloaded meta.json.\n");
+            return false;
+        }
     }
     else
     {
-       LOGE("Failed to download file from URL.\n");
-       return false;
+        std::string tempFileName = "downloaded_scene";
+        
+        size_t lastDot = pathStr.find_last_of('.');
+        if (lastDot != std::string::npos && lastDot < pathStr.length() - 1) {
+            std::string ext = pathStr.substr(lastDot);
+            if (ext.length() <= 5) {
+                tempFileName += ext;
+            } else {
+                 tempFileName += ".sog";
+            }
+        } else {
+            tempFileName += ".sog";
+        }
+        
+        std::filesystem::path destPath = cacheDir / tempFileName;
+        
+        LOGI("Downloading %s to %s...\n", pathStr.c_str(), destPath.string().c_str());
+        
+        if (downloadFile(pathStr, destPath))
+        {
+           filename = destPath;
+           LOGI("Download complete. Proceeding to load...\n");
+        }
+        else
+        {
+           LOGE("Failed to download file from URL.\n");
+           return false;
+        }
     }
 #else
     LOGE("URL loading is currently only supported on Windows.\n");
