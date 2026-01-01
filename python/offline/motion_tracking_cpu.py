@@ -16,7 +16,14 @@ import logging
 from dataclasses import dataclass
 
 import numpy as np
-from numba import jit, prange
+from numba import jit
+
+from .union_find import (
+    union_find_components,
+    union_find_find,
+    union_find_init,
+    union_find_union,
+)
 
 # Suppress verbose Numba debug logging
 logging.getLogger("numba").setLevel(logging.WARNING)
@@ -47,44 +54,6 @@ class TrajectoryData:
     colors: np.ndarray  # (total_observations, 3)
     opacities: np.ndarray  # (total_observations,)
     n_trajectories: int
-
-
-# Numba-optimized Union-Find with path compression (based on fufpy pattern)
-@jit(nopython=True)
-def union_find_init(n: int) -> tuple[np.ndarray, np.ndarray]:
-    """Initialize Union-Find data structures."""
-    parent = np.arange(n, dtype=np.int_)
-    rank = np.zeros(n, dtype=np.int_)
-    return parent, rank
-
-
-@jit(nopython=True)
-def union_find_find(parent: np.ndarray, x: int) -> int:
-    """Find with path halving (simpler than full path compression)."""
-    while x != parent[x]:
-        # Path halving: point to grandparent
-        parent[x] = parent[parent[x]]
-        x = parent[x]
-    return x
-
-
-@jit(nopython=True)
-def union_find_union(parent: np.ndarray, rank: np.ndarray, x: int, y: int) -> None:
-    """Union by rank."""
-    xr = union_find_find(parent, x)
-    yr = union_find_find(parent, y)
-
-    if xr == yr:
-        return
-
-    # Union by rank
-    if rank[xr] > rank[yr]:
-        parent[yr] = xr
-    elif rank[xr] < rank[yr]:
-        parent[xr] = yr
-    else:
-        parent[yr] = xr
-        rank[xr] += 1
 
 
 @jit(nopython=True)
@@ -124,34 +93,6 @@ def apply_matches_to_union_find(
             gap_bridged += 1
 
     return gap_bridged
-
-
-@jit(nopython=True)
-def finalize_trajectory_ids(parent: np.ndarray, total_gaussians: int) -> tuple[np.ndarray, int]:
-    """Finalize trajectory IDs after union-find.
-
-    Returns:
-        trajectory_ids: Array mapping each observation to trajectory ID
-        n_trajectories: Number of unique trajectories
-    """
-    # First pass: find all roots
-    roots = np.empty(total_gaussians, dtype=np.int_)
-    for i in range(total_gaussians):
-        roots[i] = union_find_find(parent, i)
-
-    # Second pass: assign sequential IDs
-    trajectory_ids = np.empty(total_gaussians, dtype=np.int_)
-    root_to_id = np.full(total_gaussians, -1, dtype=np.int_)
-    next_id = 0
-
-    for i in range(total_gaussians):
-        root = roots[i]
-        if root_to_id[root] == -1:
-            root_to_id[root] = next_id
-            next_id += 1
-        trajectory_ids[i] = root_to_id[root]
-
-    return trajectory_ids, next_id
 
 
 def match_gaussians_faiss(
@@ -397,7 +338,7 @@ def build_trajectories(
             apply_matches_to_union_find(parent, rank, matches_arr, frame_offsets_arr)
 
     # Finalize trajectory IDs using optimized function
-    trajectory_ids, n_trajectories = finalize_trajectory_ids(parent, total_gaussians)
+    trajectory_ids, n_trajectories = union_find_components(parent)
     logger.info(f"Found {n_trajectories} unique trajectories")
 
     frame_indices = np.zeros(total_gaussians, dtype=np.int32)
