@@ -231,6 +231,7 @@ def run_compression(
     Args:
         output_path: Output .sog file path (will be created as zip)
         splats: Dictionary with keys: 'means', 'opacities', 'scales', 'quats', 'sh0'
+                Optional: 'motion', 't', 't_scale' for FreeTimeGS support
         iterations: K-means iterations (default: 10)
     """
     if verbose:
@@ -242,6 +243,18 @@ def run_compression(
     scales = splats["scales"].cpu().numpy()  # (N, 3)
     quats = splats["quats"].cpu().numpy()  # (N, 4)
     sh0 = splats["sh0"].cpu().numpy()  # (N, 1, 3)
+
+    # Extract FreeTimeGS data if present
+    motion = splats.get("motion")
+    time_center = splats.get("t")
+    time_scale = splats.get("t_scale")
+
+    if motion is not None:
+        motion = motion.cpu().numpy()  # (N, 3)
+    if time_center is not None:
+        time_center = time_center.cpu().numpy()  # (N,)
+    if time_scale is not None:
+        time_scale = time_scale.cpu().numpy()  # (N,)
 
     num_gaussians = len(means)
     if verbose:
@@ -348,6 +361,71 @@ def run_compression(
 
         write_webp_image(os.path.join(temp_dir, "sh0.webp"), sh0_data.flatten(), width, height)
 
+        # Write motion vectors (k-means clustered) if present
+        motion_centroids = None
+        motion_labels_3d = None
+        if motion is not None:
+            motion_centroids, motion_labels = kmeans_1d(motion.reshape(-1, 3), 256, iterations)
+            motion_labels_3d = motion_labels.reshape(-1, 3)
+
+            motion_data = np.zeros((height, width, 4), dtype=np.uint8)
+            for i in range(num_gaussians):
+                y, x = divmod(i, width)
+                motion_data[y, x] = [
+                    motion_labels_3d[i, 0],
+                    motion_labels_3d[i, 1],
+                    motion_labels_3d[i, 2],
+                    255,
+                ]
+
+            write_webp_image(
+                os.path.join(temp_dir, "motion.webp"), motion_data.flatten(), width, height
+            )
+
+        # Write time center (t) - direct 16-bit encoding
+        t_centroids = None
+        t_labels = None
+        if time_center is not None:
+            num_t_clusters = min(256, len(np.unique(time_center)))
+            t_centroids, t_labels = kmeans_1d(
+                time_center.reshape(-1, 1), num_t_clusters, iterations
+            )
+
+            t_data = np.zeros((height, width, 4), dtype=np.uint8)
+            for i in range(num_gaussians):
+                y, x = divmod(i, width)
+                t_data[y, x] = [
+                    t_labels[i],
+                    0,  # Unused
+                    0,  # Unused
+                    255,  # Alpha
+                ]
+
+            write_webp_image(os.path.join(temp_dir, "t.webp"), t_data.flatten(), width, height)
+
+        # Write time scale (t_scale) - direct 16-bit encoding
+        t_scale_centroids = None
+        t_scale_labels = None
+        if time_scale is not None:
+            num_t_scale_clusters = min(256, len(np.unique(time_scale)))
+            t_scale_centroids, t_scale_labels = kmeans_1d(
+                time_scale.reshape(-1, 1), num_t_scale_clusters, iterations
+            )
+
+            t_scale_data = np.zeros((height, width, 4), dtype=np.uint8)
+            for i in range(num_gaussians):
+                y, x = divmod(i, width)
+                t_scale_data[y, x] = [
+                    t_scale_labels[i],
+                    0,  # Unused
+                    0,  # Unused
+                    255,  # Alpha
+                ]
+
+            write_webp_image(
+                os.path.join(temp_dir, "t_scale.webp"), t_scale_data.flatten(), width, height
+            )
+
         # Create metadata
         metadata = {
             "version": 2,
@@ -362,6 +440,17 @@ def run_compression(
             "quats": {"files": ["quats.webp"]},
             "sh0": {"codebook": colors_centroids.tolist(), "files": ["sh0.webp"]},
         }
+
+        # Add FreeTimeGS fields if present
+        if motion_centroids is not None:
+            metadata["motion"] = {"codebook": motion_centroids.tolist(), "files": ["motion.webp"]}
+        if t_centroids is not None:
+            metadata["t"] = {"codebook": t_centroids.tolist(), "files": ["t.webp"]}
+        if t_scale_centroids is not None:
+            metadata["t_scale"] = {
+                "codebook": t_scale_centroids.tolist(),
+                "files": ["t_scale.webp"],
+            }
 
         with open(os.path.join(temp_dir, "meta.json"), "w") as f:
             json.dump(metadata, f, indent=2)

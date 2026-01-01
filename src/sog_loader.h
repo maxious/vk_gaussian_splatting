@@ -73,6 +73,10 @@ private:
     CodebookInfo quats;
     CodebookInfo sh0;
     ShNInfo      shN;
+    // FreeTimeGS fields
+    CodebookInfo motion;
+    CodebookInfo t;
+    CodebookInfo t_scale;
   };
 
   // WebP image data
@@ -106,6 +110,15 @@ private:
 
   // Decode higher-order SH coefficients (optional)
   static void decodeShN(const WebPImage& centroids, const WebPImage& labels, const ShNInfo& shN, uint32_t count, SplatSet& output);
+
+  // Decode FreeTimeGS motion vectors
+  static void decodeMotion(const WebPImage& motion, const std::vector<float>& codebook, uint32_t count, SplatSet& output);
+
+  // Decode FreeTimeGS time center
+  static void decodeTimeCenter(const WebPImage& t, const std::vector<float>& codebook, uint32_t count, SplatSet& output);
+
+  // Decode FreeTimeGS time scale
+  static void decodeTimeScale(const WebPImage& t_scale, const std::vector<float>& codebook, uint32_t count, SplatSet& output);
 
   // Load from bundled .sog (ZIP archive)
   static bool loadBundled(const std::filesystem::path& sogPath, SplatSet& output, std::function<void(float)> progressCallback);

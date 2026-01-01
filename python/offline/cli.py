@@ -231,6 +231,7 @@ def main():
             max_match_distance=args.max_match_distance,
             ply_pattern=args.pattern,
             flip_y=getattr(args, "flip_y", False),
+            format=args.format,
         )
     elif args.command == "images":
         export_images_to_gaussian_plys(

@@ -382,6 +382,34 @@ bool SogLoader::parseMeta(const std::vector<uint8_t>& jsonData, SogMeta& meta)
         meta.shN.files = shN["files"].get<std::vector<std::string>>();
     }
 
+    // Parse optional FreeTimeGS fields
+    if(j.contains("motion"))
+    {
+      auto& motion = j["motion"];
+      if(motion.contains("codebook"))
+        meta.motion.codebook = motion["codebook"].get<std::vector<float>>();
+      if(motion.contains("files"))
+        meta.motion.files = motion["files"].get<std::vector<std::string>>();
+    }
+
+    if(j.contains("t"))
+    {
+      auto& t = j["t"];
+      if(t.contains("codebook"))
+        meta.t.codebook = t["codebook"].get<std::vector<float>>();
+      if(t.contains("files"))
+        meta.t.files = t["files"].get<std::vector<std::string>>();
+    }
+
+    if(j.contains("t_scale"))
+    {
+      auto& t_scale = j["t_scale"];
+      if(t_scale.contains("codebook"))
+        meta.t_scale.codebook = t_scale["codebook"].get<std::vector<float>>();
+      if(t_scale.contains("files"))
+        meta.t_scale.files = t_scale["files"].get<std::vector<std::string>>();
+    }
+
     return true;
   }
   catch(const std::exception& e)
@@ -596,6 +624,49 @@ void SogLoader::decodeShN(const WebPImage& centroids, const WebPImage& labels, c
   });
 }
 
+void SogLoader::decodeMotion(const WebPImage& motion, const std::vector<float>& codebook, uint32_t count, SplatSet& output)
+{
+  output.motion.resize(count * 3);
+  nvutils::parallel_ranges_pooled<1024>(count, [&](uint64_t start, uint64_t end, uint32_t threadIdx) {
+    for(uint64_t i = start; i < end; i++)
+    {
+      const uint32_t offset = static_cast<uint32_t>(i * 4);
+      uint8_t xIdx = motion.rgba[offset + 0];
+      uint8_t yIdx = motion.rgba[offset + 1];
+      uint8_t zIdx = motion.rgba[offset + 2];
+      output.motion[i * 3 + 0] = codebook[xIdx];
+      output.motion[i * 3 + 1] = codebook[yIdx];
+      output.motion[i * 3 + 2] = codebook[zIdx];
+    }
+  });
+}
+
+void SogLoader::decodeTimeCenter(const WebPImage& t, const std::vector<float>& codebook, uint32_t count, SplatSet& output)
+{
+  output.time.resize(count);
+  nvutils::parallel_ranges_pooled<1024>(count, [&](uint64_t start, uint64_t end, uint32_t threadIdx) {
+    for(uint64_t i = start; i < end; i++)
+    {
+      const uint32_t offset = static_cast<uint32_t>(i * 4);
+      uint8_t idx = t.rgba[offset + 0];
+      output.time[i] = codebook[idx];
+    }
+  });
+}
+
+void SogLoader::decodeTimeScale(const WebPImage& t_scale, const std::vector<float>& codebook, uint32_t count, SplatSet& output)
+{
+  output.time_scale.resize(count);
+  nvutils::parallel_ranges_pooled<1024>(count, [&](uint64_t start, uint64_t end, uint32_t threadIdx) {
+    for(uint64_t i = start; i < end; i++)
+    {
+      const uint32_t offset = static_cast<uint32_t>(i * 4);
+      uint8_t idx = t_scale.rgba[offset + 0];
+      output.time_scale[i] = codebook[idx];
+    }
+  });
+}
+
 bool SogLoader::loadWithReader(const SogMeta& meta, FileReader reader, SplatSet& output, std::function<void(float)> progressCallback)
 {
   const uint32_t count = meta.count;
@@ -608,7 +679,7 @@ bool SogLoader::loadWithReader(const SogMeta& meta, FileReader reader, SplatSet&
   if(progressCallback)
     progressCallback(0.1f);
 
-  std::future<WebPImage> meansL_fut, meansU_fut, quats_fut, scales_fut, sh0_fut, centroids_fut, labels_fut;
+  std::future<WebPImage> meansL_fut, meansU_fut, quats_fut, scales_fut, sh0_fut, centroids_fut, labels_fut, motion_fut, t_fut, t_scale_fut;
 
   if(meta.means.files.size() >= 2)
   {
@@ -665,6 +736,33 @@ bool SogLoader::loadWithReader(const SogMeta& meta, FileReader reader, SplatSet&
     });
   }
 
+  if(!meta.motion.files.empty() && !meta.motion.codebook.empty())
+  {
+    motion_fut = std::async(std::launch::async, [&]() {
+      WebPImage img;
+      decodeWebP(reader(meta.motion.files[0]), img);
+      return img;
+    });
+  }
+
+  if(!meta.t.files.empty() && !meta.t.codebook.empty())
+  {
+    t_fut = std::async(std::launch::async, [&]() {
+      WebPImage img;
+      decodeWebP(reader(meta.t.files[0]), img);
+      return img;
+    });
+  }
+
+  if(!meta.t_scale.files.empty() && !meta.t_scale.codebook.empty())
+  {
+    t_scale_fut = std::async(std::launch::async, [&]() {
+      WebPImage img;
+      decodeWebP(reader(meta.t_scale.files[0]), img);
+      return img;
+    });
+  }
+
   if(meansL_fut.valid() && meansU_fut.valid())
   {
     WebPImage mL = meansL_fut.get();
@@ -710,11 +808,48 @@ bool SogLoader::loadWithReader(const SogMeta& meta, FileReader reader, SplatSet&
       decodeShN(centroids, labels, meta.shN, count, output);
   }
 
+  if(motion_fut.valid())
+  {
+    WebPImage img = motion_fut.get();
+    if(!img.rgba.empty())
+    {
+      decodeMotion(img, meta.motion.codebook, count, output);
+      output.has_time_data = true;
+    }
+  }
+
+  if(t_fut.valid())
+  {
+    WebPImage img = t_fut.get();
+    if(!img.rgba.empty())
+    {
+      decodeTimeCenter(img, meta.t.codebook, count, output);
+      output.has_time_data = true;
+    }
+  }
+
+  if(t_scale_fut.valid())
+  {
+    WebPImage img = t_scale_fut.get();
+    if(!img.rgba.empty())
+    {
+      decodeTimeScale(img, meta.t_scale.codebook, count, output);
+      output.has_time_data = true;
+    }
+  }
+
   if(progressCallback)
     progressCallback(1.0f);
 
   output.convertCoordinates(spz::CoordinateSystem::RDF, spz::CoordinateSystem::RUB);
-  LOGI("Loaded SOG file: %u splats (parallelized, linearized DC)\n", count);
+  if(output.has_time_data)
+  {
+    LOGI("Loaded SOG file: %u splats (parallelized, linearized DC, temporal)\n", count);
+  }
+  else
+  {
+    LOGI("Loaded SOG file: %u splats (parallelized, linearized DC)\n", count);
+  }
   return true;
 }
 

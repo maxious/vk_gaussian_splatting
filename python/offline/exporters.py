@@ -29,37 +29,61 @@ def _export_sog(
     time_scale: np.ndarray,
 ) -> None:
     """Export to SOG format."""
-    from sogs.compression import run_compression
-    import torch
+    print(f"DEBUG: _export_sog called with output_path={output_path}")
+    logger.info(f"SOG export: means.shape={means.shape}")
+    logger.info(
+        f"motion: {motion.shape if motion is not None else None}, time_center: {time_center.shape if time_center is not None else None}, time_scale: {time_scale.shape if time_scale is not None else None}"
+    )
+    try:
+        from sogs.compression import run_compression
+        import torch
 
-    # Prepare splats dict for SOGS
-    splats = {
-        "means": torch.from_numpy(means).float().cuda(),
-        "scales": torch.from_numpy(scales).float().cuda(),
-        "quats": torch.from_numpy(rotations).float().cuda(),
-        "opacities": torch.from_numpy(opacities).float().cuda(),
-        "sh0": torch.from_numpy(colors).float().cuda(),
-        "motion": torch.from_numpy(motion).float().cuda(),
-        "t": torch.from_numpy(time_center).float().cuda(),
-        "t_scale": torch.from_numpy(time_scale).float().cuda(),
-    }
+        logger.info(f"Preparing SOG compression for {output_path}")
 
-    logger.info(f"Compressing to SOG format: {output_path}")
+        # Prepare splats dict for SOGS (keep on CPU for FAISS)
+        splats = {
+            "means": torch.from_numpy(means).float(),
+            "scales": torch.from_numpy(scales).float(),
+            "quats": torch.from_numpy(rotations).float(),
+            "opacities": torch.from_numpy(opacities).float(),
+            "sh0": torch.from_numpy(colors).float(),
+        }
 
-    if output_path.suffix == ".sog":
-        comp_dir = output_path.parent / (output_path.stem + "_sog_temp")
-        comp_dir.mkdir(parents=True, exist_ok=True)
-        run_compression(str(comp_dir), splats, verbose=True)
+        # Add FreeTimeGS fields
+        if motion is not None and len(motion) > 0:
+            splats["motion"] = torch.from_numpy(motion).float()
+        if time_center is not None and len(time_center) > 0:
+            splats["t"] = torch.from_numpy(time_center).float()
+        if time_scale is not None and len(time_scale) > 0:
+            splats["t_scale"] = torch.from_numpy(time_scale).float()
 
-        # Zip it up
-        shutil.make_archive(str(output_path.with_suffix("")), "zip", comp_dir)
-        shutil.move(str(output_path.with_suffix(".zip")), str(output_path))
-        shutil.rmtree(comp_dir)
-        logger.info(f"Saved SOG file to {output_path}")
-    else:
-        # Assume directory
-        output_path.mkdir(parents=True, exist_ok=True)
-        run_compression(str(output_path), splats, verbose=True)
+        logger.info(f"Compressing to SOG format: {output_path}")
+
+        if output_path.suffix == ".sog":
+            run_compression(str(output_path), splats, verbose=True)
+        else:
+            # Assume directory
+            output_path.mkdir(parents=True, exist_ok=True)
+            run_compression(str(output_path), splats, verbose=True)
+    except Exception as e:
+        import traceback
+
+        logger.error(f"SOG compression failed: {e}")
+        logger.error(traceback.format_exc())
+        logger.info("Falling back to PLY export")
+        from .ply_io import write_freetimegs_ply
+
+        write_freetimegs_ply(
+            output_path,
+            means,
+            scales,
+            rotations,
+            colors,
+            opacities,
+            motion,
+            time_center,
+            time_scale,
+        )
 
 
 def _export_4dv(
@@ -227,45 +251,46 @@ def export_video_to_gaussian_plys(
             logger.info(f"Zeroing motion for {n_static} static splats (motion <= 0.001)")
             motion[static_mask] = 0.0
 
-        output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        if format == "sog":
-            _export_sog(
-                output_path,
-                means,
-                scales,
-                rotations,
-                colors,
-                opacities,
-                motion,
-                time_center,
-                time_scale,
-            )
-        elif format == "4dv":
-            _export_4dv(
-                output_path,
-                means,
-                scales,
-                rotations,
-                colors,
-                opacities,
-                motion,
-                time_center,
-                time_scale,
-            )
-        else:
-            write_freetimegs_ply(
-                output_path,
-                means,
-                scales,
-                rotations,
-                colors,
-                opacities,
-                motion,
-                time_center,
-                time_scale,
-                flip_y=flip_y,
-            )
+    print(f"DEBUG: format = '{format}'")
+    if format == "sog":
+        _export_sog(
+            output_path,
+            means,
+            scales,
+            rotations,
+            colors,
+            opacities,
+            motion,
+            time_center,
+            time_scale,
+        )
+    elif format == "4dv":
+        _export_4dv(
+            output_path,
+            means,
+            scales,
+            rotations,
+            colors,
+            opacities,
+            motion,
+            time_center,
+            time_scale,
+        )
+    else:
+        write_freetimegs_ply(
+            output_path,
+            means,
+            scales,
+            rotations,
+            colors,
+            opacities,
+            motion,
+            time_center,
+            time_scale,
+            flip_y=flip_y,
+        )
 
         logger.info(f"Export complete: {output_path}")
 
@@ -273,11 +298,11 @@ def export_video_to_gaussian_plys(
 def postprocess_plys_to_freetimegs(
     input_dir: Path,
     output_path: Path,
-    format: str = "ply",
     fps: float = 30.0,
     max_match_distance: float = 0.05,
     ply_pattern: str = "frame_*.ply",
     flip_y: bool = False,
+    format: str = "ply",
 ) -> None:
     """Postprocess existing per-frame PLY files to a single FreeTimeGS PLY.
 
@@ -289,6 +314,7 @@ def postprocess_plys_to_freetimegs(
         ply_pattern: Glob pattern for PLY files
         flip_y: If True, negate Y coordinates to flip the coordinate system
     """
+    print(f"DEBUG: postprocess_plys_to_freetimegs called with format='{format}'")
     ply_files = sorted(input_dir.glob(ply_pattern))
 
     if not ply_files:
