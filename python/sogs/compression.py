@@ -234,7 +234,7 @@ def write_webp_image(filename: str, data: np.ndarray, width: int, height: int) -
 
 
 def run_compression(
-    output_path: str, splats: Dict[str, torch.Tensor], iterations: int = 10
+    output_path: str, splats: Dict[str, torch.Tensor], iterations: int = 10, verbose: bool = False
 ) -> None:
     """
     Compress Gaussian splats to SOG format.
@@ -244,7 +244,8 @@ def run_compression(
         splats: Dictionary with keys: 'means', 'opacities', 'scales', 'quats', 'sh0'
         iterations: K-means iterations (default: 10)
     """
-    print(f"Compressing {len(splats['means'])} Gaussians to SOG format...")
+    if verbose:
+        print(f"Compressing {len(splats['means'])} Gaussians to SOG format...")
 
     # Extract data
     means = splats["means"].cpu().numpy()  # (N, 3)
@@ -254,7 +255,8 @@ def run_compression(
     sh0 = splats["sh0"].cpu().numpy()  # (N, 1, 3)
 
     num_gaussians = len(means)
-    print(f"Input: {num_gaussians} Gaussians")
+    if verbose:
+        print(f"Input: {num_gaussians} Gaussians")
 
     # Sort by Morton order
     indices = morton_order_sort(means)

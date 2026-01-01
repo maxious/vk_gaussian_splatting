@@ -209,7 +209,7 @@ class DepthExtractor:
         
         with torch.no_grad():
             if self.config.use_amp:
-                with torch.amp.autocast("cuda", dtype=self.dtype):
+                with torch.autocast("cuda", dtype=self.dtype):
                     predictions = self.model.inference(
                         images,
                         process_res=self.config.process_res,

@@ -69,7 +69,7 @@ try:
     t0 = time.time()
     
     with torch.no_grad():
-        with torch.amp.autocast("cuda", dtype=torch.float16):
+        with torch.autocast("cuda", dtype=torch.float16):
             # DA3-LARGE with camera decoder outputs extrinsics/intrinsics
             predictions = model.inference(
                 [str(p) for p in frame_paths],

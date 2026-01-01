@@ -93,7 +93,7 @@ class DA3GaussianProcessor(GaussianProcessor):
         logger.info(f"Processing {len(frame_paths)} frames merged with infer_gs=True")
 
         with torch.no_grad():
-            with torch.amp.autocast("cuda", dtype=self.dtype):
+            with torch.autocast("cuda", dtype=self.dtype):
                 images = [str(p) for p in frame_paths]
 
                 predictions = self.model.inference(
@@ -155,7 +155,7 @@ class DA3GaussianProcessor(GaussianProcessor):
             logger.info(f"Processing frame {i + 1}/{len(frame_paths)}: {frame_path.name}")
 
             with torch.no_grad():
-                with torch.amp.autocast("cuda", dtype=self.dtype):
+                with torch.autocast("cuda", dtype=self.dtype):
                     predictions = self.model.inference(
                         [str(frame_path)],
                         process_res=self.process_res,

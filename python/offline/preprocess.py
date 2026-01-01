@@ -205,7 +205,7 @@ class DA3StreamingProcessor:
         logger.info(f"Processing chunk {chunk_idx}: {len(frame_paths)} frames")
 
         with torch.no_grad():
-            with torch.amp.autocast("cuda", dtype=self.dtype):
+            with torch.autocast("cuda", dtype=self.dtype):
                 # DA3 accepts list of paths or PIL images
                 images = [str(p) for p in frame_paths]
 

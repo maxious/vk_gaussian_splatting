@@ -1,4 +1,5 @@
 """Inspect DA3 Gaussian output structure."""
+
 from pathlib import Path
 from offline.export_gaussian_ply import extract_video_frames, DA3GaussianProcessor
 
@@ -19,7 +20,7 @@ model = model.to("cuda").eval()
 print("\nRunning inference with infer_gs=True...", flush=True)
 
 with torch.no_grad():
-    with torch.amp.autocast("cuda", dtype=torch.float16):
+    with torch.autocast("cuda", dtype=torch.float16):
         images = [str(p) for p in frames]
         predictions = model.inference(
             images,
@@ -30,8 +31,12 @@ with torch.no_grad():
 
 print("\n=== Prediction structure ===")
 print(f"depth shape: {predictions.depth.shape}")
-print(f"extrinsics shape: {predictions.extrinsics.shape if predictions.extrinsics is not None else None}")
-print(f"intrinsics shape: {predictions.intrinsics.shape if predictions.intrinsics is not None else None}")
+print(
+    f"extrinsics shape: {predictions.extrinsics.shape if predictions.extrinsics is not None else None}"
+)
+print(
+    f"intrinsics shape: {predictions.intrinsics.shape if predictions.intrinsics is not None else None}"
+)
 
 if predictions.gaussians is not None:
     g = predictions.gaussians
@@ -41,7 +46,7 @@ if predictions.gaussians is not None:
     print(f"rotations shape: {g.rotations.shape}")
     print(f"harmonics shape: {g.harmonics.shape}")
     print(f"opacities shape: {g.opacities.shape}")
-    
+
     # Check if batch dimension corresponds to frames
     if g.means.dim() >= 2:
         print(f"\nBatch size (first dim): {g.means.shape[0]}")
