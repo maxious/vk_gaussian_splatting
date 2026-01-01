@@ -44,7 +44,7 @@ def generate_synthetic_gaussians(n_gaussians: int = 100, seed: int = 42) -> Dict
         "opacities": opacities.cuda(),
         "scales": scales.cuda(),
         "quats": quats.cuda(),
-        "sh0": sh0.unsqueeze(-1).cuda(),  # (N, 1, 3)
+        "sh0": sh0.unsqueeze(1).cuda(),  # (N, 1, 3)
     }
 
 
@@ -63,7 +63,7 @@ def create_test_ply_file(data: Dict[str, torch.Tensor], filepath: Path) -> None:
     opacities = data["opacities"].cpu().numpy()
     scales = data["scales"].cpu().numpy()
     quats = data["quats"].cpu().numpy()
-    sh0 = data["sh0"].cpu().numpy().squeeze(-2)  # (N, 3)
+    sh0 = data["sh0"].cpu().numpy().squeeze(1)  # (N, 3)
 
     # Create PLY data structure
     vertex_data = []

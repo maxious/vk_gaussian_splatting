@@ -18,7 +18,7 @@ class TestSogsCompression:
     @pytest.fixture
     def synthetic_data(self):
         """Generate synthetic Gaussian data for testing."""
-        return generate_synthetic_gaussians(n_gaussians=50, seed=12345)
+        return generate_synthetic_gaussians(n_gaussians=1000, seed=12345)
 
     @pytest.fixture
     def temp_ply_file(self, synthetic_data):
