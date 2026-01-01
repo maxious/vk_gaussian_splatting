@@ -28,10 +28,7 @@ except ImportError:
         return decorator
 
 
-try:
-    from tqdm import tqdm
-except ImportError:
-    tqdm = None
+from tqdm import tqdm
 
 # Import FAISS for k-means clustering (mandatory)
 import faiss

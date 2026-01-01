@@ -36,7 +36,7 @@ class SharpGaussianProcessor(GaussianProcessor):
         from sharp.models import create_predictor, PredictorParams
 
         # Disable SSL verification for model download if needed
-        ssl._create_default_https_context = ssl._create_unverified_context
+        ssl._create_default_https_context = ssl._create_unverified_context  # type: ignore[assignment]
 
         logger.info(f"Initializing SHARP model with preset: {self.vit_preset}...")
         params = PredictorParams()

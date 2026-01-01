@@ -103,7 +103,8 @@ def test_freetimegs_ply_export():
 def test_motion_vector_computation():
     """Test motion vector computation from frame sequence."""
     import numpy as np
-    from offline.export_gaussian_ply import GaussianFrame, compute_motion_vectors
+    from offline.export_gaussian_ply import GaussianFrame
+    from offline.motion_tracking_cpu import compute_motion_vectors  # type: ignore[import]
 
     frames = []
     n_points = 50
