@@ -44,10 +44,10 @@ class SharpGaussianProcessor(GaussianProcessor):
         # Configure model backbone preset
         # Note: These attributes are Literal types in SHARP, but we pass str here.
         # This causes type checker warnings but works at runtime if the string is valid.
-        params.monodepth.patch_encoder_preset = self.vit_preset
-        params.monodepth.image_encoder_preset = self.vit_preset
-        params.gaussian_decoder.patch_encoder_preset = self.vit_preset
-        params.gaussian_decoder.image_encoder_preset = self.vit_preset
+        params.monodepth.patch_encoder_preset = self.vit_preset  # type: ignore[assignment]
+        params.monodepth.image_encoder_preset = self.vit_preset  # type: ignore[assignment]
+        params.gaussian_decoder.patch_encoder_preset = self.vit_preset  # type: ignore[assignment]
+        params.gaussian_decoder.image_encoder_preset = self.vit_preset  # type: ignore[assignment]
 
         self.predictor = create_predictor(params)
 

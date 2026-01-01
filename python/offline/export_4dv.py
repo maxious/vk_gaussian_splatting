@@ -95,6 +95,7 @@ def export_4dv(
     has_sh = sh_rest is not None and sh_rest.shape[1] > 0
     sh_data = None
     if has_sh:
+        assert sh_rest is not None  # Type guard for mypy/ty
         # Quantize SH to [-1, 1] -> [0, 255]
         # C++ loader assumes: output = (val / 255.0) * 2.0 - 1.0
         # Inverse: val = (output + 1.0) / 2.0 * 255.0
@@ -424,6 +425,7 @@ def export_4dv(
         # sh_data is (N, 45) uint8
         # We need a structured array of shape (N,)
 
+        assert sh_data is not None  # Type guard for mypy/ty
         sh_struct = np.zeros(num_splats, dtype=sh_dtype)
         for i in range(45):
             sh_struct[f"f_rest_{i}"] = sh_data[:, i]

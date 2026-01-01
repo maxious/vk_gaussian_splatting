@@ -60,11 +60,11 @@ def match_gaussians_faiss(
     index_a = faiss.IndexFlatL2(3)
     index_b = faiss.IndexFlatL2(3)
 
-    index_a.add(means_a)
-    index_b.add(means_b)
+    index_a.add(means_a)  # type: ignore
+    index_b.add(means_b)  # type: ignore
 
-    dist_a_to_b, idx_a_to_b = index_b.search(means_a, 1)
-    dist_b_to_a, idx_b_to_a = index_a.search(means_b, 1)
+    dist_a_to_b, idx_a_to_b = index_b.search(means_a, 1)  # type: ignore
+    dist_b_to_a, idx_b_to_a = index_a.search(means_b, 1)  # type: ignore
 
     dist_a_to_b = np.sqrt(dist_a_to_b[:, 0])
     idx_a_to_b = idx_a_to_b[:, 0]
@@ -242,19 +242,17 @@ def build_trajectories(
     all_means = [f.means for f in frames]
 
     # Choose best available matching method
+    sliding_matches = None
+    all_matches = None
     if check_faiss_available():
         logger.info(f"Using FAISS sliding window matching (window_size={window_size})")
         sliding_matches = match_gaussians_sliding_window_faiss(all_means, max_distance, window_size)
         use_sliding_format = True
     else:
         logger.info("FAISS not available, using scipy KDTree (pairwise only)")
-        from offline.export_gaussian_ply import match_gaussians_bidirectional
-
         all_matches = []
         for i in range(len(frames) - 1):
-            matches = match_gaussians_bidirectional(
-                frames[i].means, frames[i + 1].means, max_distance
-            )
+            matches = match_gaussians_faiss(frames[i].means, frames[i + 1].means, max_distance)
             all_matches.append(matches)
         use_sliding_format = False
 
@@ -282,6 +280,7 @@ def build_trajectories(
 
     # Apply matches to union-find
     if use_sliding_format:
+        assert sliding_matches is not None  # Type guard for mypy/ty
         # Sliding window format: (frame_a, idx_a, frame_b, idx_b)
         gap_bridged = 0
         for frame_a, idx_a, frame_b, idx_b in sliding_matches:
@@ -292,6 +291,7 @@ def build_trajectories(
                 gap_bridged += 1
         logger.info(f"Total matches: {len(sliding_matches)}, gap-bridged: {gap_bridged}")
     else:
+        assert all_matches is not None  # Type guard for mypy/ty
         # Pairwise format: list of lists
         for frame_idx, matches in enumerate(all_matches):
             offset_a = frame_offsets[frame_idx]

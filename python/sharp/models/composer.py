@@ -58,11 +58,11 @@ class GaussianComposer(nn.Module):
             base_scale_on_predicted_mean: Whether to account z offsets for estimating base scale.
         """
         super().__init__()
-        self.delta_factor = delta_factor
-        self.max_scale = max_scale
-        self.min_scale = min_scale
-        self.color_activation_type = color_activation_type
-        self.opacity_activation_type = opacity_activation_type
+        self.delta_factor = delta_factor  # type: ignore[attr-defined]
+        self.max_scale = max_scale  # type: ignore[attr-defined]
+        self.min_scale = min_scale  # type: ignore[attr-defined]
+        self.color_activation_type = color_activation_type  # type: ignore[attr-defined]
+        self.opacity_activation_type = opacity_activation_type  # type: ignore[attr-defined]
         self.color_space = color_space
         self.scale_factor = scale_factor
         self.base_scale_on_predicted_mean = base_scale_on_predicted_mean

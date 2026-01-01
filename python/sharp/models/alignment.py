@@ -63,10 +63,10 @@ class LearnedAlignment(nn.Module):
             activation_type: Activation type for the alignment output.
         """
         super().__init__()
-        self.activation = math_utils.create_activation_pair(activation_type)
-        bias_value = self.activation.inverse(torch.tensor(1.0))
+        self.activation = math_utils.create_activation_pair(activation_type)  # type: ignore[attr-defined]
+        bias_value = self.activation.inverse(torch.tensor(1.0)).item()
 
-        self.depth_decoder_features = depth_decoder_features
+        self.depth_decoder_features = depth_decoder_features  # type: ignore[attr-defined]
         if depth_decoder_features:
             dim_in = 2 + depth_decoder_dim
         else:
@@ -91,6 +91,7 @@ class LearnedAlignment(nn.Module):
         )
         self.conv_out = nn.Conv2d(widths[0], 1, 1, bias=True)
         nn.init.zeros_(self.conv_out.weight)
+        assert self.conv_out.bias is not None  # Since bias=True
         nn.init.constant_(self.conv_out.bias, bias_value)
 
     def forward(
@@ -106,9 +107,10 @@ class LearnedAlignment(nn.Module):
         tensor_tgt = 1.0 / tensor_tgt.clamp(min=1e-4)
         tensor_input = torch.cat([tensor_src, tensor_tgt], dim=1)
         if self.depth_decoder_features:
+            assert depth_decoder_features is not None  # Since self.depth_decoder_features is True
             height, width = tensor_src.shape[-2:]
             upsampled_encodings = F.interpolate(
-                depth_decoder_features,
+                depth_decoder_features,  # type: ignore[arg-type]
                 size=(height, width),
                 mode="bilinear",
             )
@@ -116,6 +118,7 @@ class LearnedAlignment(nn.Module):
         features = self.encoder(tensor_input)
         output = self.conv_out(self.decoder(features))
         alignment_map_lowres = self.activation.forward(output)
+        alignment_map = alignment_map_lowres
         if alignment_map_lowres.shape[-2:] != tensor_src.shape[-2]:
             alignment_map = F.interpolate(
                 alignment_map_lowres,
@@ -123,4 +126,4 @@ class LearnedAlignment(nn.Module):
                 mode="bilinear",
                 align_corners=False,
             )
-        return alignment_map
+        return alignment_map  # type: ignore[possibly-unbound]

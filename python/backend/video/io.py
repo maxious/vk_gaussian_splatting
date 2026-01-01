@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator, Optional
 
-import av
+import av  # type: ignore[import-untyped]
 import numpy as np
 import threading
 
@@ -120,7 +120,11 @@ class FrameDecoder:
             frames_examined += 1
             actual_time = info.time_ms if info.time_ms >= 0 else time_ms
             self._last_frame_time_ms = actual_time
-            if info.time_ms < 0 or actual_time >= time_ms or frames_examined >= self.MAX_SCAN_FRAMES:
+            if (
+                info.time_ms < 0
+                or actual_time >= time_ms
+                or frames_examined >= self.MAX_SCAN_FRAMES
+            ):
                 return frame.to_ndarray(format="rgb24"), info
 
 
@@ -141,7 +145,7 @@ class DecoderPool:
             while not self._free_decoders:
                 self._cond.wait()
             decoder = self._free_decoders.pop()
-        
+
         try:
             return decoder.metadata()
         finally:
@@ -154,7 +158,7 @@ class DecoderPool:
         with self._cond:
             while not self._free_decoders:
                 self._cond.wait()
-            
+
             # Smart Scheduling: Find a decoder that is close to the target time
             # to avoid expensive seeking.
             best_decoder = None
@@ -162,11 +166,11 @@ class DecoderPool:
                 if d.should_stream_forward(time_ms):
                     best_decoder = d
                     break
-            
+
             # If no suitable decoder found, pick the most recently used one (LIFO)
             # to keep "hot" decoders active, or just any.
             if best_decoder is None:
-                best_decoder = self._free_decoders.pop() # Pop from end (LIFO)
+                best_decoder = self._free_decoders.pop()  # Pop from end (LIFO)
             else:
                 self._free_decoders.remove(best_decoder)
 

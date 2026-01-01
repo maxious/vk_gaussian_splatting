@@ -1,4 +1,5 @@
 import torch
+import torch
 import numpy as np
 import cv2
 import ssl
@@ -6,7 +7,7 @@ from sharp.models import create_predictor, PredictorParams
 from sharp.cli.predict import predict_image
 
 # Disable SSL verification
-ssl._create_default_https_context = ssl._create_unverified_context
+ssl._create_default_https_context = ssl._create_unverified_context  # type: ignore[assignment]
 
 
 def inspect_sharp_output():
@@ -36,24 +37,24 @@ def inspect_sharp_output():
 
     print("Running inference...")
     with torch.no_grad():
-        gaussians = predict_image(predictor, image, f_px, device="cuda")
+        gaussians = predict_image(predictor, image, f_px, device=torch.device("cuda"))
 
     print("Output Type:", type(gaussians))
     print("Attributes:", dir(gaussians))
 
     if hasattr(gaussians, "means"):
-        print("Means shape:", gaussians.means.shape)
+        print("Means shape:", gaussians.means.shape)  # type: ignore[attr-defined]
     if hasattr(gaussians, "colors"):
-        print("Colors shape:", gaussians.colors.shape)
+        print("Colors shape:", gaussians.colors.shape)  # type: ignore[attr-defined]
     if hasattr(gaussians, "scales"):
-        print("Scales shape:", gaussians.scales.shape)
+        print("Scales shape:", gaussians.scales.shape)  # type: ignore[attr-defined]
     if hasattr(gaussians, "rotations"):
-        print("Rotations shape:", gaussians.rotations.shape)
+        print("Rotations shape:", gaussians.rotations.shape)  # type: ignore[attr-defined]
     if hasattr(gaussians, "opacities"):
-        print("Opacities shape:", gaussians.opacities.shape)
+        print("Opacities shape:", gaussians.opacities.shape)  # type: ignore[attr-defined]
 
     # Check color space utils
-    from sharp.utils import cs_utils
+    from sharp.utils import cs_utils  # type: ignore[attr-defined]
 
     print("cs_utils available:", dir(cs_utils))
 

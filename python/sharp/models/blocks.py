@@ -61,7 +61,7 @@ class ResidualBlock(nn.Module):
         """Initialize ResidualBlock."""
         super().__init__()
         self.residual = residual
-        self.shortcut = shortcut
+        self.shortcut = shortcut  # type: ignore[attr-defined]
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Apply residual block."""

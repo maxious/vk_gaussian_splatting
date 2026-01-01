@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import List
 
 from pydantic import Field
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings  # type: ignore[import-untyped]
 
 
 class Settings(BaseSettings):
@@ -26,7 +26,10 @@ class Settings(BaseSettings):
     depth_height: int = 360
     torch_dtype: str = "float16"
     depth_header_magic: bytes = b"VDZ1"
-    cors_origins: List[str] = Field(default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"], validation_alias="VIDEO_DEPTH_CORS_ORIGINS")
+    cors_origins: List[str] = Field(
+        default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"],
+        validation_alias="VIDEO_DEPTH_CORS_ORIGINS",
+    )
     profile_depth_timing: bool = Field(default=False, validation_alias="VIDEO_DEPTH_PROFILE_TIMING")
     depth_downsample_factor: int = Field(default=1, validation_alias="VIDEO_DEPTH_DOWNSAMPLE")
     depth_compression_level: int = Field(default=0, validation_alias="VIDEO_DEPTH_COMPRESSION")

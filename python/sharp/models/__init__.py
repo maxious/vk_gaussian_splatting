@@ -60,7 +60,8 @@ def create_predictor(params: PredictorParams) -> RGBGaussianPredictor:
         params.initializer,
     )
     prediction_head = DirectPredictionHead(
-        feature_dim=gaussian_decoder.dim_out, num_layers=initializer.num_layers
+        feature_dim=gaussian_decoder.dim_out,
+        num_layers=initializer.num_layers,  # type: ignore[arg-type]
     )
     decoder_dim = monodepth_model.decoder.dims_decoder[-1]
     return RGBGaussianPredictor(
