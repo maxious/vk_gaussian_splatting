@@ -18,25 +18,32 @@ import torch.nn.functional as F
 from PIL import Image
 
 try:
+    from numba import jit
+except ImportError:
+    # Fallback if numba not available
+    def jit(*args, **kwargs):
+        def decorator(func):
+            return func
+
+        return decorator
+
+
+try:
     from tqdm import tqdm
 except ImportError:
     tqdm = None
 
-# Import FAISS for k-means clustering
-try:
-    import faiss
-
-    FAISS_AVAILABLE = True
-except ImportError:
-    FAISS_AVAILABLE = False
-    print("Warning: FAISS not available. K-means clustering will be limited.")
+# Import FAISS for k-means clustering (mandatory)
+import faiss
 
 
+@jit(nopython=True)
 def log_transform(value: float) -> float:
     """Log transform for means (sign(x) * log(|x| + 1))."""
     return math.copysign(math.log(abs(value) + 1), value)
 
 
+@jit(nopython=True)
 def sigmoid(x: float) -> float:
     """Sigmoid function for opacity."""
     return 1 / (1 + math.exp(-x))
@@ -58,7 +65,7 @@ def linear_to_srgb(c: float) -> float:
         return 1.055 * (c ** (1 / 2.4)) - 0.055
 
 
-def pack_quaternion(q: np.ndarray) -> Tuple[np.ndarray, int]:
+def pack_quaternion(q: np.ndarray):
     """
     Pack quaternion into RGBA format.
 
@@ -67,27 +74,44 @@ def pack_quaternion(q: np.ndarray) -> Tuple[np.ndarray, int]:
         max_comp: Index of largest component (0-3)
     """
     # Normalize quaternion
-    norm = np.linalg.norm(q)
+    norm = np.sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3])
+    if norm == 0:
+        return np.array([0, 0, 0, 0], dtype=np.uint8), 0
+
     q = q / norm
 
-    # Find max component and ensure it's positive
-    max_comp = int(np.argmax(np.abs(q)))
-    if q[max_comp] < 0:
-        q = -q
+    # Find largest component
+    abs_q = np.abs(q)
+    max_comp = int(np.argmax(abs_q))
 
-    # Scale by sqrt(2) to fit in [-1, 1] range
-    q = q * math.sqrt(2)
+    # Create 3-component vector by dropping largest component
+    indices = np.array([0, 1, 2, 3])
+    mask = indices != max_comp
+    abc = q[mask]  # This will be length 3
 
-    # Reorder components (drop the largest)
-    indices = [0, 1, 2, 3]
-    indices.remove(max_comp)
-    rgb = q[indices]
+    # Normalize to [-1, 1] and scale to [-127, 127]
+    norm_abc = np.sqrt(abc[0] * abc[0] + abc[1] * abc[1] + abc[2] * abc[2])
+    if norm_abc > 0:
+        abc = abc / norm_abc
 
-    # Map from [-1, 1] to [0, 1] to [0, 255]
-    rgb = ((rgb * 0.5 + 0.5) * 255).clip(0, 255).astype(np.uint8)
+    # Quantize to 8 bits each, with sign bit
+    qa = int(abc[0] * 127) & 0xFF
+    qb = int(abc[1] * 127) & 0xFF
+    qc = int(abc[2] * 127) & 0xFF
 
-    # Alpha channel encodes which component was largest
-    alpha = 252 + max_comp
+    # Pack into RGB
+    rgb = np.array([qa, qb, qc], dtype=np.uint8)
+
+    # Apply octahedral encoding for better precision
+    if rgb[0] & 0x80:
+        rgb[0] &= 0x7F
+        rgb[1] = (rgb[1] | 0x80) if rgb[1] & 0x80 else (rgb[1] & 0x7F)
+    if rgb[1] & 0x80:
+        rgb[1] &= 0x7F
+        rgb[2] |= 0x80
+
+    # Alpha channel stores max component index
+    alpha = (max_comp << 6) & 0xFF
 
     rgba = np.array([rgb[0], rgb[1], rgb[2], alpha], dtype=np.uint8)
     return rgba, max_comp
@@ -172,35 +196,17 @@ def kmeans_1d(
         centroids: (n_clusters,) centroids
         labels: (N,) cluster labels
     """
-    if not FAISS_AVAILABLE:
-        # Fallback: simple uniform quantization
-        print("Warning: FAISS not available, using simple quantization")
-        data_flat = data.flatten() if data.ndim > 1 else data
-        min_val, max_val = data_flat.min(), data_flat.max()
-        centroids = np.linspace(min_val, max_val, n_clusters)
-        labels = np.digitize(data_flat, centroids[:-1]) - 1
-        labels = np.clip(labels, 0, n_clusters - 1)
-        return centroids, labels
-
-    # Use FAISS for k-means
+    # Use FAISS for k-means (mandatory)
     data_flat = data.flatten() if data.ndim > 1 else data
     data_2d = data_flat.reshape(-1, 1).astype(np.float32)
 
-    if FAISS_AVAILABLE:
-        import faiss  # type: ignore
-
-        kmeans = faiss.Kmeans(
-            d=data_2d.shape[1], k=n_clusters, niter=iterations, verbose=False, gpu=False
-        )
-        kmeans.train(data_2d)
-        centroids = kmeans.centroids.flatten()  # type: ignore
-        _, labels = kmeans.index.search(data_2d, 1)  # type: ignore
-        labels = labels.flatten().astype(np.int32)
-    else:
-        # Fallback to simple uniform quantization
-        centroids = np.linspace(data_flat.min(), data_flat.max(), n_clusters).astype(np.float32)
-        labels = np.digitize(data_flat, centroids[:-1]).astype(np.int32) - 1
-        labels = np.clip(labels, 0, n_clusters - 1)
+    kmeans = faiss.Kmeans(
+        d=data_2d.shape[1], k=n_clusters, niter=iterations, verbose=False, gpu=False
+    )
+    kmeans.train(data_2d)
+    centroids = kmeans.centroids.flatten()  # type: ignore
+    _, labels = kmeans.index.search(data_2d, 1)  # type: ignore
+    labels = labels.flatten().astype(np.int32)
 
     # Sort centroids from smallest to largest
     sort_indices = np.argsort(centroids)
