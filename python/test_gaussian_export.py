@@ -143,21 +143,13 @@ def test_da3_gaussian_inference():
 
     This test is skipped if CUDA is not available.
     """
-    try:
-        import torch
+    import torch
 
-        if not torch.cuda.is_available():
-            logger.warning("CUDA not available, skipping DA3 inference test")
-            return True
-    except ImportError:
-        logger.warning("PyTorch not installed, skipping DA3 inference test")
+    if not torch.cuda.is_available():
+        logger.warning("CUDA not available, skipping DA3 inference test")
         return True
 
-    try:
-        from depth_anything_3.api import DepthAnything3
-    except ImportError:
-        logger.warning("depth-anything-3 not installed, skipping DA3 inference test")
-        return True
+    from depth_anything_3.api import DepthAnything3
 
     video_path = Path(
         r"D:\maxio\Documents\GitHub\vk_gaussian_splatting\_downloaded_resources\166915-835670849_small.mp4"

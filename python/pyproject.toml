@@ -16,6 +16,7 @@ dependencies = [
     "torch>=2.4",
     "torchvision>=0.19",
     "numba>=0.59",
+    "depth-anything-3 @ git+https://github.com/ByteDance-Seed/Depth-Anything-3@main",
 ]
 
 [project.optional-dependencies]
@@ -38,7 +39,6 @@ inference = [
     "einops>=0.8",
     "safetensors>=0.4",
     "triton-windows>=3.2; sys_platform == 'win32'",
-    "depth-anything-3 @ git+https://github.com/ByteDance-Seed/Depth-Anything-3@main",
     # "sharp @ git+https://github.com/apple/ml-sharp@main",  # Vendored in python/sharp
     "timm>=1.0.0",
 ]
