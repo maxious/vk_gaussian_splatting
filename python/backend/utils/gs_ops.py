@@ -11,11 +11,23 @@ from PIL import Image
 from backend.models.depth_model import get_depth_model
 from offline.formats import write_gs_ply_header, write_gs_ply_points
 
+try:
+    from numba import jit
+except ImportError:
+    # Fallback if numba not available
+    def jit(*args, **kwargs):
+        def decorator(func):
+            return func
+
+        return decorator
+
+
 logger = logging.getLogger(__name__)
 
 SH_C0 = 0.28209479177387814
 
 
+@jit(nopython=True)
 def rgb_to_sh(rgb: np.ndarray) -> np.ndarray:
     """Convert RGB (0-1) to SH DC coefficients."""
     return (rgb - 0.5) / SH_C0
