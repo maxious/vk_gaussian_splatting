@@ -210,8 +210,12 @@ void GaussianSplatting::renderMultiviewRaster(VkCommandBuffer cmd, uint32_t spla
     if(multiviewPipeline != VK_NULL_HANDLE)
     {
       vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, multiviewPipeline);
-      uint32_t dynamicOffset = static_cast<uint32_t>(m_frameIndex * m_indirectStride);
-      vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_descriptorSet, 1, &dynamicOffset);
+      // Dynamic offsets: [FrameInfo, Indirect]
+      uint32_t indirectOffset = static_cast<uint32_t>(m_frameIndex * m_indirectStride);
+      uint32_t frameInfoOffset = m_lastFrameInfoOffset;
+      uint32_t dynamicOffsets[2] = {frameInfoOffset, indirectOffset};
+      
+      vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_descriptorSet, 2, dynamicOffsets);
       
       m_pcRaster.modelMatrix                = m_splatSetVk.transform;
 

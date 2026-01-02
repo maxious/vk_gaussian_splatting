@@ -121,9 +121,13 @@ void GaussianSplatting::processSortingOnGPU(VkCommandBuffer cmd, const uint32_t 
     auto timerSection = m_profilerGpuTimer.cmdFrameSection(cmd, "GPU Dist");
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_computePipelineGsDistCull);
-    // Bind descriptor set with dynamic offset for the indirect buffer
-    uint32_t dynamicOffset = static_cast<uint32_t>(m_frameIndex * m_indirectStride);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipelineLayout, 0, 1, &m_descriptorSet, 1, &dynamicOffset);
+    // Bind descriptor set with dynamic offsets
+    // Order: [FrameInfo, Indirect]
+    uint32_t indirectOffset = static_cast<uint32_t>(m_frameIndex * m_indirectStride);
+    uint32_t frameInfoOffset = m_lastFrameInfoOffset;
+    uint32_t dynamicOffsets[2] = {frameInfoOffset, indirectOffset};
+    
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipelineLayout, 0, 1, &m_descriptorSet, 2, dynamicOffsets);
 
     // Model transform
     m_pcRaster.modelMatrix        = m_splatSetVk.transform;
@@ -177,9 +181,13 @@ void GaussianSplatting::drawSplatPrimitives(VkCommandBuffer cmd, const uint32_t 
   if(prmSelectedPipeline == PIPELINE_VERT)
   {  // Pipeline using vertex shader
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipelineGsVert);
-    // Bind descriptor set with dynamic offset
-    uint32_t dynamicOffset = static_cast<uint32_t>(m_frameIndex * m_indirectStride);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_descriptorSet, 1, &dynamicOffset);
+    // Bind descriptor set with dynamic offsets
+    // Order: [FrameInfo, Indirect]
+    uint32_t indirectOffset = static_cast<uint32_t>(m_frameIndex * m_indirectStride);
+    uint32_t frameInfoOffset = m_lastFrameInfoOffset;
+    uint32_t dynamicOffsets[2] = {frameInfoOffset, indirectOffset};
+    
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_descriptorSet, 2, dynamicOffsets);
 
     // overrides the pipeline setup for depth test/write
     vkCmdSetDepthWriteEnable(cmd, (VkBool32)needDepth);
@@ -210,9 +218,13 @@ void GaussianSplatting::drawSplatPrimitives(VkCommandBuffer cmd, const uint32_t 
     if(prmSelectedPipeline == PIPELINE_MESH_3DGUT || prmSelectedPipeline == PIPELINE_HYBRID_3DGUT)
       vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline3dgutMesh);
 
-    // Bind descriptor set with dynamic offset
-    uint32_t dynamicOffset = static_cast<uint32_t>(m_frameIndex * m_indirectStride);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_descriptorSet, 1, &dynamicOffset);
+    // Bind descriptor set with dynamic offsets
+    // Order: [FrameInfo, Indirect]
+    uint32_t indirectOffset = static_cast<uint32_t>(m_frameIndex * m_indirectStride);
+    uint32_t frameInfoOffset = m_lastFrameInfoOffset;
+    uint32_t dynamicOffsets[2] = {frameInfoOffset, indirectOffset};
+    
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_descriptorSet, 2, dynamicOffsets);
 
     // overrides the pipeline setup for depth test/write
     vkCmdSetDepthWriteEnable(cmd, (VkBool32)needDepth);
@@ -243,9 +255,13 @@ void GaussianSplatting::drawMeshPrimitives(VkCommandBuffer cmd)
 
   // Drawing all triangles
   vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipelineMesh);
-  // Bind descriptor set with dynamic offset (using current frame index for consistency, though mesh shader might not use indirect buffer)
-  uint32_t dynamicOffset = static_cast<uint32_t>(m_frameIndex * m_indirectStride);
-  vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_descriptorSet, 1, &dynamicOffset);
+  // Bind descriptor set with dynamic offsets
+  // Order: [FrameInfo, Indirect]
+  uint32_t indirectOffset = static_cast<uint32_t>(m_frameIndex * m_indirectStride);
+  uint32_t frameInfoOffset = m_lastFrameInfoOffset;
+  uint32_t dynamicOffsets[2] = {frameInfoOffset, indirectOffset};
+  
+  vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_descriptorSet, 2, dynamicOffsets);
   // overrides the pipeline setup for depth test/write
   vkCmdSetDepthWriteEnable(cmd, (VkBool32) true);
   vkCmdSetDepthTestEnable(cmd, (VkBool32) true);
@@ -276,9 +292,13 @@ void GaussianSplatting::drawVdzMesh(VkCommandBuffer cmd)
   VkDeviceSize offset{0};
 
   vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipelineVdzMesh);
-  // Bind descriptor set with dynamic offset
-  uint32_t dynamicOffset = static_cast<uint32_t>(m_frameIndex * m_indirectStride);
-  vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_descriptorSet, 1, &dynamicOffset);
+  // Bind descriptor set with dynamic offsets
+  // Order: [FrameInfo, Indirect]
+  uint32_t indirectOffset = static_cast<uint32_t>(m_frameIndex * m_indirectStride);
+  uint32_t frameInfoOffset = m_lastFrameInfoOffset;
+  uint32_t dynamicOffsets[2] = {frameInfoOffset, indirectOffset};
+  
+  vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_descriptorSet, 2, dynamicOffsets);
 
   if(prmFrame.vdzWorldSpaceMode)
   {

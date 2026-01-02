@@ -436,6 +436,9 @@ protected:
   nvvk::Buffer             m_indirect;              // indirect parameter buffer
   VkDeviceSize             m_indirectStride = 0;    // Stride for double-buffering
   uint32_t                 m_frameIndex = 0;        // Current frame index (0 or 1)
+  uint32_t                 m_currentFrameInfoOffset = 0; // Current offset in FrameInfo buffer for dynamic update
+  uint32_t                 m_lastFrameInfoOffset = 0; // Last used offset for binding (to avoid race conditions)
+  VkDeviceSize             m_frameInfoStride = 0;   // Stride for FrameInfo UBO dynamic alignment
   nvvk::Buffer             m_indirectReadbackHost;  // buffer for readback
 
   shaderio::IndirectParams m_indirectReadback;      // readback values

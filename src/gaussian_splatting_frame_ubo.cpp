@@ -203,13 +203,23 @@ void GaussianSplatting::updateAndUploadFrameInfoUBO(VkCommandBuffer  cmd,
   }
   else
   {
-    prmFrame.dlssJitter = glm::vec2(0.0f, 0.0f);
+  prmFrame.dlssJitter = glm::vec2(0.0f, 0.0f);
   }
 #endif
 
-  vkCmdUpdateBuffer(cmd, m_frameInfoBuffer.buffer, 0, sizeof(shaderio::FrameInfo), &prmFrame);
+  // Use dynamic buffering for FrameInfo
+  uint32_t dynamicOffset = m_currentFrameInfoOffset;
+
+  vkCmdUpdateBuffer(cmd, m_frameInfoBuffer.buffer, dynamicOffset, sizeof(shaderio::FrameInfo), &prmFrame);
+
+  // Store the offset we just used, so subsequent draw calls bind the correct data
+  m_lastFrameInfoOffset = dynamicOffset;
+  
+  // Advance the offset for the next update
+  m_currentFrameInfoOffset += (uint32_t)m_frameInfoStride;
 
   VkMemoryBarrier barrier = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+
   barrier.srcAccessMask   = VK_ACCESS_TRANSFER_WRITE_BIT;
   barrier.dstAccessMask   = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT;
 

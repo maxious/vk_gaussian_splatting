@@ -28,7 +28,7 @@ void GaussianSplatting::initPipelines()
 
   nvvk::DescriptorBindings bindings;
 
-  bindings.addBinding(BINDING_FRAME_INFO_UBO, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL);
+  bindings.addBinding(BINDING_FRAME_INFO_UBO, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1, VK_SHADER_STAGE_ALL);
   bindings.addBinding(BINDING_DISTANCES_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
   bindings.addBinding(BINDING_INDICES_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
   bindings.addBinding(BINDING_INDIRECT_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1, VK_SHADER_STAGE_ALL);
@@ -110,8 +110,15 @@ void GaussianSplatting::initPipelines()
   nvvk::WriteSetContainer writeContainer;
 
   // add common buffers
-  writeContainer.append(bindings.getWriteSet(BINDING_FRAME_INFO_UBO, m_descriptorSet), m_frameInfoBuffer);
+  // Dynamic offset for Frame Info UBO
+  VkDescriptorBufferInfo frameInfoDesc{m_frameInfoBuffer.buffer, 0, sizeof(shaderio::FrameInfo)};
+  VkWriteDescriptorSet   frameInfoWrite = bindings.getWriteSet(BINDING_FRAME_INFO_UBO, m_descriptorSet);
+  frameInfoWrite.pBufferInfo            = &frameInfoDesc;
+  // Use direct update to handle dynamic buffer properly
+  vkUpdateDescriptorSets(m_device, 1, &frameInfoWrite, 0, nullptr);
+
   writeContainer.append(bindings.getWriteSet(BINDING_DISTANCES_BUFFER, m_descriptorSet), m_splatDistancesDevice);
+
   writeContainer.append(bindings.getWriteSet(BINDING_INDICES_BUFFER, m_descriptorSet), m_splatIndicesDevice);
   
   // Dynamic offset for indirect buffer (range is size of one struct)
@@ -568,10 +575,13 @@ void GaussianSplatting::initRendererBuffers()
   m_app->submitAndWaitTempCmdBuffer(cmd);
 
   // Uniform buffer
-  m_alloc.createBuffer(m_frameInfoBuffer, sizeof(shaderio::FrameInfo),
+  // Allocate 4 slots per frame (Sort, Draw/Multiview, Left, Right) to avoid UBO races
+  m_frameInfoStride = nvutils::align_up(sizeof(shaderio::FrameInfo), m_physicalDeviceInfo.properties10.limits.minUniformBufferOffsetAlignment);
+  m_alloc.createBuffer(m_frameInfoBuffer, m_frameInfoStride * frameCount * 4,
                        VK_BUFFER_USAGE_2_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_2_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT,
                        VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE);
   NVVK_DBG_NAME(m_frameInfoBuffer.buffer);
+
 }
 
 void GaussianSplatting::deinitRendererBuffers()

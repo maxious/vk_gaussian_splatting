@@ -57,6 +57,11 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
 
   // Sync frame index with application frame cycle
   m_frameIndex = m_app->getFrameCycleIndex();
+  
+  // Reset dynamic UBO offset counter for this frame
+  // Base offset is determined by frame index to avoid inter-frame races
+  // We allocate 4 slots per frame (Sort, Draw/Multiview, Left, Right)
+  m_currentFrameInfoOffset = m_frameIndex * 4 * (uint32_t)m_frameInfoStride;
 
 #ifdef WITH_OPENXR
   // Handle OpenXR frame lifecycle

@@ -37,6 +37,8 @@ void GaussianSplatting::initRtDescriptorSet()
   m_rtDescriptorBindings.addBinding(RTX_BINDING_AUX1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_RAYGEN_BIT_KHR);
   m_rtDescriptorBindings.addBinding(RTX_BINDING_OUTDEPTH, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_RAYGEN_BIT_KHR);
 
+  // Note: BINDING_FRAME_INFO_UBO is in Set 0 (m_descriptorSet), so we don't need to add it here (Set 1).
+  
   m_rtDescriptorBindings.addBinding(RTX_BINDING_TLAS_SPLATS, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1,
                                     VK_SHADER_STAGE_RAYGEN_BIT_KHR);
   m_rtDescriptorBindings.addBinding(RTX_BINDING_TLAS_MESH, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1,
@@ -90,6 +92,9 @@ void GaussianSplatting::initRtDescriptorSet()
 
   // splats TLAS
   if(m_splatSetVk.rtAccelerationStructures.tlas.accel != NULL)
+
+
+
     writeContainer.append(m_rtDescriptorBindings.getWriteSet(RTX_BINDING_TLAS_SPLATS, m_rtDescriptorSet),
                           m_splatSetVk.rtAccelerationStructures.tlas);
   // mesh TLAS
@@ -116,7 +121,10 @@ void GaussianSplatting::initRtDescriptorSet()
 #endif
 
   // actually write
-  vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writeContainer.size()), writeContainer.data(), 0, nullptr);
+  if (writeContainer.size() > 0) {
+
+    vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writeContainer.size()), writeContainer.data(), 0, nullptr);
+  }
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -132,15 +140,16 @@ void GaussianSplatting::updateRtDescriptorSet()
   {
     nvvk::WriteSetContainer writeContainer;
 
-    // Output image buffer
-    writeContainer.append(m_rtDescriptorBindings.getWriteSet(RTX_BINDING_OUTIMAGE, m_rtDescriptorSet),
-                          m_gBuffers.getColorImageView(COLOR_MAIN), VK_IMAGE_LAYOUT_GENERAL);
-    writeContainer.append(m_rtDescriptorBindings.getWriteSet(RTX_BINDING_AUX1, m_rtDescriptorSet),
-                          m_gBuffers.getColorImageView(COLOR_AUX1), VK_IMAGE_LAYOUT_GENERAL);
-    writeContainer.append(m_rtDescriptorBindings.getWriteSet(RTX_BINDING_OUTDEPTH, m_rtDescriptorSet),
-                          m_gBuffers.getDepthImageView(), VK_IMAGE_LAYOUT_GENERAL);
+  // Output image buffer
+  writeContainer.append(m_rtDescriptorBindings.getWriteSet(RTX_BINDING_OUTIMAGE, m_rtDescriptorSet),
+                        m_gBuffers.getColorImageView(COLOR_MAIN), VK_IMAGE_LAYOUT_GENERAL);
+  writeContainer.append(m_rtDescriptorBindings.getWriteSet(RTX_BINDING_AUX1, m_rtDescriptorSet),
+                        m_gBuffers.getColorImageView(COLOR_AUX1), VK_IMAGE_LAYOUT_GENERAL);
+  writeContainer.append(m_rtDescriptorBindings.getWriteSet(RTX_BINDING_OUTDEPTH, m_rtDescriptorSet),
+                        m_gBuffers.getDepthImageView(), VK_IMAGE_LAYOUT_GENERAL);
 
 #ifdef WITH_DLSS_RR
+
     // DLSS-RR G-buffer outputs
     writeContainer.append(m_rtDescriptorBindings.getWriteSet(RTX_BINDING_DLSS_DIFFUSE_ALBEDO, m_rtDescriptorSet),
                           m_gBuffers.getColorImageView(COLOR_DLSS_DIFFUSE_ALBEDO), VK_IMAGE_LAYOUT_GENERAL);
@@ -157,7 +166,9 @@ void GaussianSplatting::updateRtDescriptorSet()
 #endif
 
     // let's update
-    vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writeContainer.size()), writeContainer.data(), 0, nullptr);
+    if (writeContainer.size() > 0) {
+      vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writeContainer.size()), writeContainer.data(), 0, nullptr);
+    }
   }
 }
 
@@ -353,10 +364,40 @@ void GaussianSplatting::raytrace(const VkCommandBuffer& cmdBuf, bool meshDepthOn
   m_pcRay.meshDepthOnly              = meshDepthOnly;
   m_pcRay.viewportOffset             = viewportOffset;
 
+  // Dynamic offsets for descriptor sets:
+  // Set 0 (Raster): [FrameInfo, Indirect] - But wait, initRtPipeline set up descSets{m_descriptorSet, m_rtDescriptorSet}
+  // m_descriptorSet layout has FrameInfo at binding 0, Indirect at binding 3.
+  // m_rtDescriptorSet layout has FrameInfo at binding BINDING_FRAME_INFO_UBO.
+  //
+  // However, vkCmdBindDescriptorSets takes ONE array of dynamic offsets that applies to all dynamic descriptors in the specified sets sequentially.
+  // We are binding TWO sets: Set 0 (m_descriptorSet) and Set 1 (m_rtDescriptorSet).
+  // Set 0 has 2 dynamic buffers: FrameInfo (binding 0) and Indirect (binding 3).
+  // Set 1 has 1 dynamic buffer: FrameInfo (binding BINDING_FRAME_INFO_UBO).
+  //
+  // The offsets array must contain offsets for ALL dynamic buffers in the bound sets, in set order, then binding order.
+  // Order: Set 0 Binding 0, Set 0 Binding 3, Set 1 Binding BINDING_FRAME_INFO_UBO.
+  
+  uint32_t frameInfoOffset = m_currentFrameInfoOffset; 
+  // We need to use the offset that was just written to.
+  // Since raytrace() is called after updateAndUploadFrameInfoUBO(), and update... increments the offset,
+  // we should use m_lastFrameInfoOffset which stores the offset used for the current frame/pass.
+  uint32_t currentFrameInfoOffset = m_lastFrameInfoOffset;
+  
+  uint32_t indirectOffset = static_cast<uint32_t>(m_frameIndex * m_indirectStride);
+  
+  // Combined offsets for Set 0 (Set 1 has no dynamic buffers)
+  std::vector<uint32_t> dynamicOffsets = {
+      currentFrameInfoOffset, // Set 0, Binding 0 (FrameInfo)
+      indirectOffset          // Set 0, Binding 3 (Indirect)
+  };
+
   std::vector<VkDescriptorSet> descSets{m_descriptorSet, m_rtDescriptorSet};
   vkCmdBindPipeline(cmdBuf, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, m_rtPipeline);
+  
+  // Bind both sets at once with the combined dynamic offsets array
   vkCmdBindDescriptorSets(cmdBuf, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, m_rtPipelineLayout, 0,
-                          (uint32_t)descSets.size(), descSets.data(), 0, nullptr);
+                          (uint32_t)descSets.size(), descSets.data(), 
+                          (uint32_t)dynamicOffsets.size(), dynamicOffsets.data());
 
   m_pcRay.vertexAddress = m_splatSetVk.m_splatModel.vertexBuffer.address;
   m_pcRay.indexAddress  = m_splatSetVk.m_splatModel.indexBuffer.address;
@@ -427,10 +468,24 @@ void GaussianSplatting::raytraceMultiview(const VkCommandBuffer& cmdBuf, bool me
   m_pcRay.meshDepthOnly = meshDepthOnly;
   m_pcRay.viewportOffset = glm::ivec2(0, 0);
 
+  // Dynamic offsets
+  uint32_t indirectOffset = static_cast<uint32_t>(m_frameIndex * m_indirectStride);
+  uint32_t currentFrameInfoOffset = m_lastFrameInfoOffset;
+
+  // Combined offsets for Set 0 (Set 1 has no dynamic buffers)
+  std::vector<uint32_t> dynamicOffsets = {
+      currentFrameInfoOffset, // Set 0: FrameInfo
+      indirectOffset          // Set 0: Indirect
+  };
+
   std::vector<VkDescriptorSet> descSets{m_descriptorSet, m_rtDescriptorSet};
   vkCmdBindPipeline(cmdBuf, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, m_rtPipeline);
+
+  
+  // Bind both sets at once
   vkCmdBindDescriptorSets(cmdBuf, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, m_rtPipelineLayout, 0,
-                          (uint32_t)descSets.size(), descSets.data(), 0, nullptr);
+                          (uint32_t)descSets.size(), descSets.data(), 
+                          (uint32_t)dynamicOffsets.size(), dynamicOffsets.data());
 
   m_pcRay.vertexAddress = m_splatSetVk.m_splatModel.vertexBuffer.address;
   m_pcRay.indexAddress = m_splatSetVk.m_splatModel.indexBuffer.address;
