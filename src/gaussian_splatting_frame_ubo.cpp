@@ -85,11 +85,12 @@ void GaussianSplatting::updateAndUploadFrameInfoUBO(VkCommandBuffer cmd, const u
   prmFrame.focusDist = camera.focusDist;
   prmFrame.aperture  = camera.aperture;
 
-  // Disable multiview mode for mono rendering (ensures clean state after XR is disabled)
-  prmFrame.multiviewEnabled = 0;
+  // prmFrame.multiviewEnabled is now managed by the caller (onRender)
+  // Do not reset it here, as it might have been set for OpenXR
 
   // the buffer is small so we use vkCmdUpdateBuffer for the transfer
   vkCmdUpdateBuffer(cmd, m_frameInfoBuffer.buffer, 0, sizeof(shaderio::FrameInfo), &prmFrame);
+
 
   // sync with end of copy to device
   VkMemoryBarrier barrier = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
@@ -165,10 +166,11 @@ void GaussianSplatting::updateAndUploadFrameInfoUBO(VkCommandBuffer  cmd,
   prmFrame.focusDist = camera.focusDist;
   prmFrame.aperture  = camera.aperture;
 
-  // Disable multiview mode for stereo SBS rendering (ensures clean state after XR is disabled)
-  prmFrame.multiviewEnabled = 0;
+  // prmFrame.multiviewEnabled is now managed by the caller (onRender)
+  // Do not reset it here, as it might have been set for OpenXR
 
 #ifdef WITH_DLSS_RR
+
   // Store previous frame matrices for motion vector calculation
   static glm::mat4 s_prevViewMatrix = view;
   static glm::mat4 s_prevProjMatrix = proj;

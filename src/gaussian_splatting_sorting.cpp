@@ -100,7 +100,8 @@ void GaussianSplatting::processSortingOnGPU(VkCommandBuffer cmd, const uint32_t 
   // 1. reset the draw indirect parameters and counters, will be updated by compute shader
   {
     const shaderio::IndirectParams drawIndexedIndirectParams;
-    vkCmdUpdateBuffer(cmd, m_indirect.buffer, 0, sizeof(shaderio::IndirectParams), (void*)&drawIndexedIndirectParams);
+    VkDeviceSize indirectOffset = m_frameIndex * m_indirectStride;
+    vkCmdUpdateBuffer(cmd, m_indirect.buffer, indirectOffset, sizeof(shaderio::IndirectParams), (void*)&drawIndexedIndirectParams);
 
     VkMemoryBarrier barrier = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
     barrier.srcAccessMask   = VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -120,7 +121,9 @@ void GaussianSplatting::processSortingOnGPU(VkCommandBuffer cmd, const uint32_t 
     auto timerSection = m_profilerGpuTimer.cmdFrameSection(cmd, "GPU Dist");
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_computePipelineGsDistCull);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipelineLayout, 0, 1, &m_descriptorSet, 0, nullptr);
+    // Bind descriptor set with dynamic offset for the indirect buffer
+    uint32_t dynamicOffset = static_cast<uint32_t>(m_frameIndex * m_indirectStride);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipelineLayout, 0, 1, &m_descriptorSet, 1, &dynamicOffset);
 
     // Model transform
     m_pcRaster.modelMatrix        = m_splatSetVk.transform;
@@ -140,9 +143,10 @@ void GaussianSplatting::processSortingOnGPU(VkCommandBuffer cmd, const uint32_t 
   // 3. invoke the radix sort from vrdx lib
   {
     auto timerSection = m_profilerGpuTimer.cmdFrameSection(cmd, "GPU Sort");
+    VkDeviceSize indirectOffset = m_frameIndex * m_indirectStride;
 
     vrdxCmdSortKeyValueIndirect(cmd, m_gpuSorter, splatCount, m_indirect.buffer,
-                                offsetof(shaderio::IndirectParams, instanceCount), m_splatDistancesDevice.buffer, 0,
+                                indirectOffset + offsetof(shaderio::IndirectParams, instanceCount), m_splatDistancesDevice.buffer, 0,
                                 m_splatIndicesDevice.buffer, 0, m_vrdxStorageDevice.buffer, 0, 0, 0);
 
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_TRANSFER_BIT,
@@ -173,7 +177,9 @@ void GaussianSplatting::drawSplatPrimitives(VkCommandBuffer cmd, const uint32_t 
   if(prmSelectedPipeline == PIPELINE_VERT)
   {  // Pipeline using vertex shader
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipelineGsVert);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_descriptorSet, 0, nullptr);
+    // Bind descriptor set with dynamic offset
+    uint32_t dynamicOffset = static_cast<uint32_t>(m_frameIndex * m_indirectStride);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_descriptorSet, 1, &dynamicOffset);
 
     // overrides the pipeline setup for depth test/write
     vkCmdSetDepthWriteEnable(cmd, (VkBool32)needDepth);
@@ -191,7 +197,8 @@ void GaussianSplatting::drawSplatPrimitives(VkCommandBuffer cmd, const uint32_t 
     else
     {
       vkCmdBindVertexBuffers(cmd, 1, 1, &m_splatIndicesDevice.buffer, &offsets);
-      vkCmdDrawIndexedIndirect(cmd, m_indirect.buffer, 0, 1, sizeof(VkDrawIndexedIndirectCommand));
+      VkDeviceSize indirectOffset = m_frameIndex * m_indirectStride;
+      vkCmdDrawIndexedIndirect(cmd, m_indirect.buffer, indirectOffset, 1, sizeof(VkDrawIndexedIndirectCommand));
     }
   }
   else
@@ -203,7 +210,9 @@ void GaussianSplatting::drawSplatPrimitives(VkCommandBuffer cmd, const uint32_t 
     if(prmSelectedPipeline == PIPELINE_MESH_3DGUT || prmSelectedPipeline == PIPELINE_HYBRID_3DGUT)
       vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline3dgutMesh);
 
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_descriptorSet, 0, nullptr);
+    // Bind descriptor set with dynamic offset
+    uint32_t dynamicOffset = static_cast<uint32_t>(m_frameIndex * m_indirectStride);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_descriptorSet, 1, &dynamicOffset);
 
     // overrides the pipeline setup for depth test/write
     vkCmdSetDepthWriteEnable(cmd, (VkBool32)needDepth);
@@ -218,7 +227,8 @@ void GaussianSplatting::drawSplatPrimitives(VkCommandBuffer cmd, const uint32_t 
     else
     {
       // run the workgroups
-      vkCmdDrawMeshTasksIndirectEXT(cmd, m_indirect.buffer, offsetof(shaderio::IndirectParams, groupCountX), 1,
+      VkDeviceSize indirectOffset = m_frameIndex * m_indirectStride;
+      vkCmdDrawMeshTasksIndirectEXT(cmd, m_indirect.buffer, indirectOffset + offsetof(shaderio::IndirectParams, groupCountX), 1,
                                     sizeof(VkDrawMeshTasksIndirectCommandEXT));
     }
   }
@@ -233,7 +243,9 @@ void GaussianSplatting::drawMeshPrimitives(VkCommandBuffer cmd)
 
   // Drawing all triangles
   vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipelineMesh);
-  vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_descriptorSet, 0, nullptr);
+  // Bind descriptor set with dynamic offset (using current frame index for consistency, though mesh shader might not use indirect buffer)
+  uint32_t dynamicOffset = static_cast<uint32_t>(m_frameIndex * m_indirectStride);
+  vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_descriptorSet, 1, &dynamicOffset);
   // overrides the pipeline setup for depth test/write
   vkCmdSetDepthWriteEnable(cmd, (VkBool32) true);
   vkCmdSetDepthTestEnable(cmd, (VkBool32) true);
@@ -264,7 +276,9 @@ void GaussianSplatting::drawVdzMesh(VkCommandBuffer cmd)
   VkDeviceSize offset{0};
 
   vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipelineVdzMesh);
-  vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_descriptorSet, 0, nullptr);
+  // Bind descriptor set with dynamic offset
+  uint32_t dynamicOffset = static_cast<uint32_t>(m_frameIndex * m_indirectStride);
+  vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_descriptorSet, 1, &dynamicOffset);
 
   if(prmFrame.vdzWorldSpaceMode)
   {
@@ -316,7 +330,9 @@ void GaussianSplatting::readBackIndirectParametersIfNeeded(VkCommandBuffer cmd)
                          0, NULL, 0, NULL);
 
     // copy from device to host buffer
-    VkBufferCopy bc{.srcOffset = 0, .dstOffset = 0, .size = sizeof(shaderio::IndirectParams)};
+    // Read from the current frame's indirect buffer offset
+    VkDeviceSize indirectOffset = m_frameIndex * m_indirectStride;
+    VkBufferCopy bc{.srcOffset = indirectOffset, .dstOffset = 0, .size = sizeof(shaderio::IndirectParams)};
     vkCmdCopyBuffer(cmd, m_indirect.buffer, m_indirectReadbackHost.buffer, 1, &bc);
 
     m_canCollectReadback = true;

@@ -19,18 +19,22 @@
 
 // This file is included from gaussian_splatting.cpp - do not compile separately
 
+#include <nvutils/alignment.hpp> // Ensure this is included
+
 namespace vk_gaussian_splatting {
 
 void GaussianSplatting::initPipelines()
 {
+
   nvvk::DescriptorBindings bindings;
 
   bindings.addBinding(BINDING_FRAME_INFO_UBO, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL);
   bindings.addBinding(BINDING_DISTANCES_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
   bindings.addBinding(BINDING_INDICES_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
-  bindings.addBinding(BINDING_INDIRECT_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
+  bindings.addBinding(BINDING_INDIRECT_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1, VK_SHADER_STAGE_ALL);
 
   if(prmData.dataStorage == STORAGE_TEXTURES)
+
   {
     bindings.addBinding(BINDING_CENTERS_TEXTURE, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_ALL);
     bindings.addBinding(BINDING_SCALES_TEXTURE, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_ALL);
@@ -109,9 +113,17 @@ void GaussianSplatting::initPipelines()
   writeContainer.append(bindings.getWriteSet(BINDING_FRAME_INFO_UBO, m_descriptorSet), m_frameInfoBuffer);
   writeContainer.append(bindings.getWriteSet(BINDING_DISTANCES_BUFFER, m_descriptorSet), m_splatDistancesDevice);
   writeContainer.append(bindings.getWriteSet(BINDING_INDICES_BUFFER, m_descriptorSet), m_splatIndicesDevice);
-  writeContainer.append(bindings.getWriteSet(BINDING_INDIRECT_BUFFER, m_descriptorSet), m_indirect);
-
+  
+  // Dynamic offset for indirect buffer (range is size of one struct)
+  VkDescriptorBufferInfo indirectInfo{m_indirect.buffer, 0, sizeof(shaderio::IndirectParams)};
+  VkWriteDescriptorSet   indirectWrite = bindings.getWriteSet(BINDING_INDIRECT_BUFFER, m_descriptorSet);
+  indirectWrite.pBufferInfo            = &indirectInfo;
+  
+  // Directly update descriptor set to avoid WriteSetContainer append issue with custom write
+  vkUpdateDescriptorSets(m_device, 1, &indirectWrite, 0, nullptr);
+  
   if(prmData.dataStorage == STORAGE_TEXTURES)
+
   {
     // add data texture maps
     writeContainer.append(bindings.getWriteSet(BINDING_CENTERS_TEXTURE, m_descriptorSet), m_splatSetVk.centersMap);
@@ -445,12 +457,15 @@ void GaussianSplatting::deinitPipelines()
   TEST_DESTROY_AND_RESET(m_pipelineLayout, vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr));
   TEST_DESTROY_AND_RESET(m_descriptorSetLayout, vkDestroyDescriptorSetLayout(m_device, m_descriptorSetLayout, nullptr));
   TEST_DESTROY_AND_RESET(m_descriptorPool, vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr));
+  m_descriptorSet = VK_NULL_HANDLE;
 
   // RTX TODO move this in rtDeinitPipeline and invoke in proper location
   TEST_DESTROY_AND_RESET(m_rtPipeline, vkDestroyPipeline(m_device, m_rtPipeline, nullptr));
 
   TEST_DESTROY_AND_RESET(m_rtPipelineLayout, vkDestroyPipelineLayout(m_device, m_rtPipelineLayout, nullptr));
   TEST_DESTROY_AND_RESET(m_rtDescriptorPool, vkDestroyDescriptorPool(m_device, m_rtDescriptorPool, nullptr));
+  m_rtDescriptorSet = VK_NULL_HANDLE;
+
   TEST_DESTROY_AND_RESET(m_rtDescriptorSetLayout, vkDestroyDescriptorSetLayout(m_device, m_rtDescriptorSetLayout, nullptr));
 
   m_alloc.destroyBuffer(m_rtSBTBuffer);
@@ -461,6 +476,8 @@ void GaussianSplatting::deinitPipelines()
 
   TEST_DESTROY_AND_RESET(m_pipelineLayoutPostProcess, vkDestroyPipelineLayout(m_device, m_pipelineLayoutPostProcess, nullptr));
   TEST_DESTROY_AND_RESET(m_descriptorPoolPostProcess, vkDestroyDescriptorPool(m_device, m_descriptorPoolPostProcess, nullptr));
+  m_descriptorSetPostProcess = VK_NULL_HANDLE;
+
   TEST_DESTROY_AND_RESET(m_descriptorSetLayoutPostProcess,
                          vkDestroyDescriptorSetLayout(m_device, m_descriptorSetLayoutPostProcess, nullptr));
 
@@ -510,12 +527,18 @@ void GaussianSplatting::initRendererBuffers()
   }
 
   // create the device buffer for indirect parameters
-  m_alloc.createBuffer(m_indirect, sizeof(shaderio::IndirectParams),
+  // Double-buffered to prevent race conditions during heavy load (OpenXR)
+  // Use the application's frame cycle size to determine buffer count
+  uint32_t frameCount = m_app->getFrameCycleSize();
+  m_indirectStride = nvutils::align_up(sizeof(shaderio::IndirectParams), 
+                                         m_physicalDeviceInfo.properties10.limits.minStorageBufferOffsetAlignment);
+  m_alloc.createBuffer(m_indirect, m_indirectStride * frameCount,
                        VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_TRANSFER_SRC_BIT
                            | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT | VK_BUFFER_USAGE_2_INDIRECT_BUFFER_BIT,
                        VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE);
 
   // for statistics readback
+
   m_alloc.createBuffer(m_indirectReadbackHost, sizeof(shaderio::IndirectParams),
                        VK_BUFFER_USAGE_2_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT, VMA_MEMORY_USAGE_AUTO_PREFER_HOST,
                        VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);

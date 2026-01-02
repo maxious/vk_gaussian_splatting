@@ -434,7 +434,10 @@ protected:
 
   // IndirectParams structure defined in shaderio.h
   nvvk::Buffer             m_indirect;              // indirect parameter buffer
+  VkDeviceSize             m_indirectStride = 0;    // Stride for double-buffering
+  uint32_t                 m_frameIndex = 0;        // Current frame index (0 or 1)
   nvvk::Buffer             m_indirectReadbackHost;  // buffer for readback
+
   shaderio::IndirectParams m_indirectReadback;      // readback values
   bool m_canCollectReadback = false;  // tells wether readback will be available in Host buffer at next frame
 

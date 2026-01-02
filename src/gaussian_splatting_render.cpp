@@ -55,8 +55,12 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
 {
   NVVK_DBG_SCOPE(cmd);
 
+  // Sync frame index with application frame cycle
+  m_frameIndex = m_app->getFrameCycleIndex();
+
 #ifdef WITH_OPENXR
   // Handle OpenXR frame lifecycle
+
   bool xrFrameActive = false;
   bool xrShouldRender = false;
   if(m_xrInitialized && m_xr && m_xr->isValid())
@@ -199,7 +203,9 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
 
     if(m_renderSBS)
     {
+      prmFrame.multiviewEnabled = 0;
       const float     fovRad         = cameraManip->getRadFov();
+
       const float     halfAspect     = (float(m_viewSize.x) * 0.5f) / float(m_viewSize.y);
       const glm::vec2 clipPlanes     = cameraManip->getClipPlanes();
       const float     halfSeparation = m_stereoSeparation * 0.5f;
@@ -243,7 +249,9 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
     }
     else
     {
+      prmFrame.multiviewEnabled = 0;
       updateAndUploadFrameInfoUBO(cmd, splatCount, viewMatrix, projMatrix, m_eye, glm::vec2(m_viewSize.x, m_viewSize.y));
+
       raytrace(cmd);
 
 #ifdef WITH_DLSS_RR
@@ -346,8 +354,14 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
       // Get both eye data
       GsOpenXr::EyeData leftEye = m_xr->getEyeData(0);
       GsOpenXr::EyeData rightEye = m_xr->getEyeData(1);
-      
-      // Update center eye for sorting
+
+      // Update IPD from OpenXR device
+      float realIPD = glm::distance(leftEye.eyePos, rightEye.eyePos);
+      if (realIPD > 0.001f)
+      {
+        m_stereoSeparation = realIPD;
+      }
+
       m_eye = (leftEye.eyePos + rightEye.eyePos) * 0.5f;
       viewMatrix = leftEye.view;
       projMatrix = leftEye.proj;
@@ -398,6 +412,13 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
 
       GsOpenXr::EyeData leftEye = m_xr->getEyeData(0);
       GsOpenXr::EyeData rightEye = m_xr->getEyeData(1);
+
+      float realIPD = glm::distance(leftEye.eyePos, rightEye.eyePos);
+      if (realIPD > 0.001f)
+      {
+        m_stereoSeparation = realIPD;
+      }
+
       m_eye = (leftEye.eyePos + rightEye.eyePos) * 0.5f;
       viewMatrix = leftEye.view;
       projMatrix = leftEye.proj;
@@ -506,10 +527,22 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
   {
     collectReadBackValuesIfNeeded();
 
+#ifdef WITH_OPENXR
+    if (useXrMultiview && m_xr) {
+        VkExtent2D perEye = m_xr->getPerEyeExtent();
+        // Use XR viewport size for sorting/culling precision
+        updateAndUploadFrameInfoUBO(cmd, splatCount, viewMatrix, projMatrix, m_eye, glm::vec2(perEye.width, perEye.height));
+    } else {
+        // Sort based on Center Eye (Mono or stereo center)
+        updateAndUploadFrameInfoUBO(cmd, splatCount, viewMatrix, projMatrix, m_eye, glm::vec2(m_viewSize.x, m_viewSize.y));
+    }
+#else
     // Sort based on Center Eye (Mono or stereo center)
     updateAndUploadFrameInfoUBO(cmd, splatCount, viewMatrix, projMatrix, m_eye, glm::vec2(m_viewSize.x, m_viewSize.y));
+#endif
 
     if(prmRaster.sortingMethod == SORTING_GPU_SYNC_RADIX)
+
     {
       m_profilerTimeline->asyncRemoveTimer("CPU Dist");
       m_profilerTimeline->asyncRemoveTimer("CPU Sort");
@@ -624,7 +657,9 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
   {
     const auto& view = views[viewIndex];
 
+    prmFrame.multiviewEnabled = 0;
     updateAndUploadFrameInfoUBO(cmd, splatCount, view.view, view.proj, view.eye,
+
                                 {view.viewport.width, view.viewport.height},
                                 {view.viewport.x, view.viewport.y},
                                 view.stereoShift);

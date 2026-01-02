@@ -210,9 +210,11 @@ void GaussianSplatting::renderMultiviewRaster(VkCommandBuffer cmd, uint32_t spla
     if(multiviewPipeline != VK_NULL_HANDLE)
     {
       vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, multiviewPipeline);
-      vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_descriptorSet, 0, nullptr);
+      uint32_t dynamicOffset = static_cast<uint32_t>(m_frameIndex * m_indirectStride);
+      vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_descriptorSet, 1, &dynamicOffset);
       
       m_pcRaster.modelMatrix                = m_splatSetVk.transform;
+
       m_pcRaster.modelMatrixInverse         = m_splatSetVk.transformInverse;
       m_pcRaster.modelMatrixRotScaleInverse = glm::inverse(glm::mat3(m_splatSetVk.transform));
       vkCmdPushConstants(cmd, m_pipelineLayout, VK_SHADER_STAGE_ALL_GRAPHICS, 0, sizeof(shaderio::PushConstant), &m_pcRaster);
@@ -228,14 +230,17 @@ void GaussianSplatting::renderMultiviewRaster(VkCommandBuffer cmd, uint32_t spla
         VkBuffer     buffers[2] = {m_quadVertices.buffer, m_splatIndicesDevice.buffer};
         vkCmdBindVertexBuffers(cmd, 0, 2, buffers, offsets);
         vkCmdBindIndexBuffer(cmd, m_quadIndices.buffer, 0, VK_INDEX_TYPE_UINT32);
-        vkCmdDrawIndexedIndirect(cmd, m_indirect.buffer, 0, 1, 0);
+        VkDeviceSize indirectOffset = m_frameIndex * m_indirectStride;
+        vkCmdDrawIndexedIndirect(cmd, m_indirect.buffer, indirectOffset, 1, sizeof(VkDrawIndexedIndirectCommand));
       }
       else
       {
         // Mesh shader path
+        VkDeviceSize indirectOffset = m_frameIndex * m_indirectStride;
         vkCmdDrawMeshTasksIndirectEXT(cmd, m_indirect.buffer,
-                                      offsetof(shaderio::IndirectParams, groupCountX), 1, 0);
+                                      indirectOffset + offsetof(shaderio::IndirectParams, groupCountX), 1, sizeof(VkDrawMeshTasksIndirectCommandEXT));
       }
+
     }
   }
 
