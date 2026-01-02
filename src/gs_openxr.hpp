@@ -100,7 +100,8 @@ public:
   BeginFrameResult beginFrame();
   
   // Locate views - call after beginFrame()
-  void locateViews(float nearZ, float farZ);
+  // Returns true if views were successfully located and are valid for rendering
+  bool locateViews(float nearZ, float farZ);
   
   // Get per-eye view/projection data
   EyeData getEyeData(uint32_t eyeIndex) const;
@@ -261,6 +262,10 @@ private:
   bool m_snapTurnLeftTriggered  = false;
   bool m_snapTurnRightTriggered = false;
   static constexpr float SNAP_TURN_THRESHOLD = 0.7f;
+  
+  // Tracking state
+  uint32_t m_trackingLossFrameCount = 0;
+  static constexpr uint32_t MAX_TRACKING_LOSS_FRAMES = 60;
 };
 
 }  // namespace vk_gaussian_splatting

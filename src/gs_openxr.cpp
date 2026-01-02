@@ -635,7 +635,7 @@ GsOpenXr::BeginFrameResult GsOpenXr::beginFrame()
   return m_shouldRender ? BeginFrameResult::RenderFully : BeginFrameResult::SkipRender;
 }
 
-void GsOpenXr::locateViews(float nearZ, float farZ)
+bool GsOpenXr::locateViews(float nearZ, float farZ)
 {
   m_nearZ = nearZ;
   m_farZ  = farZ;
@@ -648,11 +648,44 @@ void GsOpenXr::locateViews(float nearZ, float farZ)
   XrViewState viewState{XR_TYPE_VIEW_STATE};
   uint32_t    viewCount = VIEW_COUNT;
 
-  XrResult result = xrLocateViews(m_session, &locateInfo, &viewState, VIEW_COUNT, &viewCount, m_locatedViews.data());
+  // Use a temporary buffer to avoid overwriting valid data with invalid data
+  std::array<XrView, VIEW_COUNT> newViews;
+  for(auto& view : newViews)
+  {
+    view.type = XR_TYPE_VIEW;
+    view.next = nullptr;
+  }
+
+  XrResult result = xrLocateViews(m_session, &locateInfo, &viewState, VIEW_COUNT, &viewCount, newViews.data());
   if(XR_FAILED(result))
   {
     LOGE("xrLocateViews failed (result=%d)\n", (int)result);
+    m_shouldRender = false;
+    return false;
   }
+
+  // Check if position and orientation are valid
+  if((viewState.viewStateFlags & XR_VIEW_STATE_POSITION_VALID_BIT) == 0 ||
+     (viewState.viewStateFlags & XR_VIEW_STATE_ORIENTATION_VALID_BIT) == 0)
+  {
+    m_trackingLossFrameCount++;
+
+    if(m_trackingLossFrameCount <= MAX_TRACKING_LOSS_FRAMES)
+    {
+      // Grace period: use last known valid views
+      // We do NOT update m_locatedViews with newViews (which might be garbage)
+      return true;
+    }
+
+    // Tracking is lost or invalid, do not render this frame to avoid glitches/motion sickness
+    m_shouldRender = false;
+    return false;
+  }
+
+  // Tracking is valid, update views and reset counter
+  m_locatedViews = newViews;
+  m_trackingLossFrameCount = 0;
+  return true;
 }
 
 GsOpenXr::EyeData GsOpenXr::getEyeData(uint32_t eyeIndex) const

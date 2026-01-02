@@ -109,7 +109,14 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
 
     // Locate views with current clip planes
     glm::vec2 clipPlanes = cameraManip->getClipPlanes();
-    m_xr->locateViews(clipPlanes.x, clipPlanes.y);
+    if(!m_xr->locateViews(clipPlanes.x, clipPlanes.y))
+    {
+      processUpdateRequests();
+      // Ensure swapchain images are released since we acquired them but won't render
+      m_xr->releaseSwapchainImages(); 
+      m_xr->endFrame();
+      return;
+    }
 
     // Update locomotion from controller input (must be after beginFrame for valid time)
     auto now = std::chrono::steady_clock::now();
