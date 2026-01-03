@@ -347,7 +347,6 @@ private:
   // Extension availability flags (set during instance creation)
   bool m_extPerformanceMetricsAvailable = false;
   bool m_extColorSpaceAvailable = false;
-  bool m_extPassthroughAvailable = false;
   bool m_extSpaceWarpAvailable = false;
   bool m_extEnvironmentDepthAvailable = false;
   bool m_extDepthExtensionAvailable = false;
@@ -503,31 +502,6 @@ private:
 
   void initSpaceWarp();
 
-  // XR_FB_passthrough support
-  bool m_passthroughSupported = false;
-  bool m_passthroughEnabled = false;
-  bool m_passthroughRunning = false;
-
-  XrPassthroughFB m_passthrough = XR_NULL_HANDLE;
-  XrPassthroughLayerFB m_passthroughLayer = XR_NULL_HANDLE;
-
-  using PFN_xrCreatePassthroughFB = XrResult(XRAPI_PTR*)(XrSession, const XrPassthroughCreateInfoFB*, XrPassthroughFB*);
-  using PFN_xrDestroyPassthroughFB = XrResult(XRAPI_PTR*)(XrPassthroughFB);
-  using PFN_xrPassthroughStartFB = XrResult(XRAPI_PTR*)(XrPassthroughFB);
-  using PFN_xrPassthroughPauseFB = XrResult(XRAPI_PTR*)(XrPassthroughFB);
-  using PFN_xrCreatePassthroughLayerFB = XrResult(XRAPI_PTR*)(XrSession, const XrPassthroughLayerCreateInfoFB*, XrPassthroughLayerFB*);
-  using PFN_xrDestroyPassthroughLayerFB = XrResult(XRAPI_PTR*)(XrPassthroughLayerFB);
-
-  PFN_xrCreatePassthroughFB m_xrCreatePassthroughFB = nullptr;
-  PFN_xrDestroyPassthroughFB m_xrDestroyPassthroughFB = nullptr;
-  PFN_xrPassthroughStartFB m_xrPassthroughStartFB = nullptr;
-  PFN_xrPassthroughPauseFB m_xrPassthroughPauseFB = nullptr;
-  PFN_xrCreatePassthroughLayerFB m_xrCreatePassthroughLayerFB = nullptr;
-  PFN_xrDestroyPassthroughLayerFB m_xrDestroyPassthroughLayerFB = nullptr;
-
-  void initPassthrough();
-  void destroyPassthrough();
-
   // XR_META_environment_depth support
   bool m_environmentDepthSupported = false;
   bool m_environmentDepthEnabled = false;
@@ -552,10 +526,6 @@ private:
   void destroyEnvironmentDepth();
 
 public:
-  bool isPassthroughSupported() const { return m_passthroughSupported; }
-  bool isPassthroughEnabled() const { return m_passthroughEnabled; }
-  void setPassthroughEnabled(bool enabled);
-
   bool isEnvironmentDepthSupported() const { return m_environmentDepthSupported; }
   bool isEnvironmentDepthEnabled() const { return m_environmentDepthEnabled; }
 

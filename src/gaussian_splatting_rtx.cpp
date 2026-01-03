@@ -122,14 +122,10 @@ void GaussianSplatting::initRtDescriptorSet()
   writeContainer.append(m_rtDescriptorBindings.getWriteSet(RTX_BINDING_DLSS_SPEC_HIT_DIST, m_rtDescriptorSet),
                         m_gBuffers.getColorImageView(COLOR_DLSS_SPEC_HIT_DIST), VK_IMAGE_LAYOUT_GENERAL);
 #else
-  // If Space Warp is enabled, we still need to bind the motion buffer
-  // We check if the image exists (it should if configured correctly in onAttach)
-  // Note: We use RTX_BINDING_DLSS_MOTION as the binding index for motion vectors
-  if (m_gBuffers.getColorFormats().size() > COLOR_MOTION)
-  {
-      writeContainer.append(m_rtDescriptorBindings.getWriteSet(RTX_BINDING_DLSS_MOTION, m_rtDescriptorSet),
-                            m_gBuffers.getColorImageView(COLOR_MOTION), VK_IMAGE_LAYOUT_GENERAL);
-  }
+  // Bind motion buffer for Space Warp support
+  // COLOR_MOTION (index 2) is always present in the GBuffer color formats
+  writeContainer.append(m_rtDescriptorBindings.getWriteSet(RTX_BINDING_DLSS_MOTION, m_rtDescriptorSet),
+                        m_gBuffers.getColorImageView(COLOR_MOTION), VK_IMAGE_LAYOUT_GENERAL);
 #endif
 
   // actually write
@@ -176,11 +172,10 @@ void GaussianSplatting::updateRtDescriptorSet()
     writeContainer.append(m_rtDescriptorBindings.getWriteSet(RTX_BINDING_DLSS_SPEC_HIT_DIST, m_rtDescriptorSet),
                           m_gBuffers.getColorImageView(COLOR_DLSS_SPEC_HIT_DIST), VK_IMAGE_LAYOUT_GENERAL);
 #else
-    if (m_gBuffers.getColorFormats().size() > COLOR_MOTION)
-    {
-        writeContainer.append(m_rtDescriptorBindings.getWriteSet(RTX_BINDING_DLSS_MOTION, m_rtDescriptorSet),
-                              m_gBuffers.getColorImageView(COLOR_MOTION), VK_IMAGE_LAYOUT_GENERAL);
-    }
+    // Bind motion buffer for Space Warp support
+    // COLOR_MOTION (index 2) is always present in the GBuffer color formats
+    writeContainer.append(m_rtDescriptorBindings.getWriteSet(RTX_BINDING_DLSS_MOTION, m_rtDescriptorSet),
+                          m_gBuffers.getColorImageView(COLOR_MOTION), VK_IMAGE_LAYOUT_GENERAL);
 #endif
 
     // let's update

@@ -195,7 +195,6 @@ bool GsOpenXr::initialize(VkInstance       vkInstance,
 
   initPerformanceMetrics();
   initColorSpace();
-  initPassthrough();
   initSpaceWarp();
   initEnvironmentDepth();
 
@@ -224,13 +223,6 @@ bool GsOpenXr::createInstance()
     }
     return false;
   };
-
-  if (isExtensionAvailable("XR_FB_passthrough")) {
-    extensions.push_back("XR_FB_passthrough");
-    m_extPassthroughAvailable = true;
-  } else {
-    LOGW("XR_FB_passthrough extension not available\n");
-  }
 
   if (isExtensionAvailable("XR_FB_color_space")) {
     extensions.push_back("XR_FB_color_space");
@@ -342,16 +334,6 @@ void GsOpenXr::loadXrFunctions()
   if(m_colorSpaceSupported)
   {
     LOGI("XR_FB_color_space extension available\n");
-  }
-
-  // Load XR_FB_passthrough functions
-  if (m_extPassthroughAvailable) {
-    xrGetInstanceProcAddr(m_instance, "xrCreatePassthroughFB", (PFN_xrVoidFunction*)&m_xrCreatePassthroughFB);
-    xrGetInstanceProcAddr(m_instance, "xrDestroyPassthroughFB", (PFN_xrVoidFunction*)&m_xrDestroyPassthroughFB);
-    xrGetInstanceProcAddr(m_instance, "xrPassthroughStartFB", (PFN_xrVoidFunction*)&m_xrPassthroughStartFB);
-    xrGetInstanceProcAddr(m_instance, "xrPassthroughPauseFB", (PFN_xrVoidFunction*)&m_xrPassthroughPauseFB);
-    xrGetInstanceProcAddr(m_instance, "xrCreatePassthroughLayerFB", (PFN_xrVoidFunction*)&m_xrCreatePassthroughLayerFB);
-    xrGetInstanceProcAddr(m_instance, "xrDestroyPassthroughLayerFB", (PFN_xrVoidFunction*)&m_xrDestroyPassthroughLayerFB);
   }
 
   // Load XR_META_environment_depth functions
@@ -1148,37 +1130,15 @@ void GsOpenXr::endFrame()
   layer.viewCount  = VIEW_COUNT;
   layer.views      = projectionViews.data();
 
-  // Prepare layers list
-  std::vector<const XrCompositionLayerBaseHeader*> layers;
-
-  // If passthrough is enabled, add it as the background layer
-  XrCompositionLayerPassthroughFB passthroughCompLayer{XR_TYPE_COMPOSITION_LAYER_PASSTHROUGH_FB};
-  if(m_passthroughEnabled && m_passthroughSupported && m_passthroughLayer != XR_NULL_HANDLE)
-  {
-    passthroughCompLayer.layerHandle = m_passthroughLayer;
-    passthroughCompLayer.flags       = 0;
-    passthroughCompLayer.space       = XR_NULL_HANDLE;
-    layers.push_back(reinterpret_cast<XrCompositionLayerBaseHeader*>(&passthroughCompLayer));
-  }
-
-  layers.push_back(reinterpret_cast<XrCompositionLayerBaseHeader*>(&layer));
-
   XrFrameEndInfo frameEndInfo{XR_TYPE_FRAME_END_INFO};
   frameEndInfo.displayTime          = m_predictedDisplayTime;
-  
-  if(m_passthroughEnabled && m_passthroughSupported)
-  {
-    frameEndInfo.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_ALPHA_BLEND;
-  }
-  else
-  {
-    frameEndInfo.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
-  }
+  frameEndInfo.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
 
+  const XrCompositionLayerBaseHeader* layerPtr = reinterpret_cast<XrCompositionLayerBaseHeader*>(&layer);
   if(m_swapchainImageState == SwapchainImageState::RELEASED && m_shouldRender)
   {
-    frameEndInfo.layerCount = static_cast<uint32_t>(layers.size());
-    frameEndInfo.layers     = layers.data();
+    frameEndInfo.layerCount = 1;
+    frameEndInfo.layers     = &layerPtr;
   }
   else
   {
@@ -2094,95 +2054,6 @@ const char* GsOpenXr::colorSpaceToString(ColorSpace cs)
     case ColorSpace::P3:        return "P3-D65";
     case ColorSpace::AdobeRGB:  return "Adobe RGB";
     default:                    return "Unknown";
-  }
-}
-
-void GsOpenXr::initPassthrough()
-{
-  if (!m_xrCreatePassthroughFB || m_session == XR_NULL_HANDLE)
-  {
-    return;
-  }
-
-  XrPassthroughCreateInfoFB createInfo{XR_TYPE_PASSTHROUGH_CREATE_INFO_FB};
-  // flags = 0 means default behavior
-
-  XrResult result = m_xrCreatePassthroughFB(m_session, &createInfo, &m_passthrough);
-  if (XR_FAILED(result))
-  {
-    LOGW("Failed to create passthrough handle (result=%d)\n", (int)result);
-    return;
-  }
-
-  XrPassthroughLayerCreateInfoFB layerInfo{XR_TYPE_PASSTHROUGH_LAYER_CREATE_INFO_FB};
-  layerInfo.passthrough = m_passthrough;
-  layerInfo.purpose = XR_PASSTHROUGH_LAYER_PURPOSE_RECONSTRUCTION_FB;
-  // usage member does not exist in this version of the struct
-
-  result = m_xrCreatePassthroughLayerFB(m_session, &layerInfo, &m_passthroughLayer);
-  if (XR_FAILED(result))
-  {
-    LOGW("Failed to create passthrough layer (result=%d)\n", (int)result);
-    m_xrDestroyPassthroughFB(m_passthrough);
-    m_passthrough = XR_NULL_HANDLE;
-    return;
-  }
-
-  // Start passthrough immediately, but we control visibility via layer submission
-  result = m_xrPassthroughStartFB(m_passthrough);
-  if (XR_FAILED(result))
-  {
-    LOGW("Failed to start passthrough (result=%d)\n", (int)result);
-    m_xrDestroyPassthroughLayerFB(m_passthroughLayer);
-    m_xrDestroyPassthroughFB(m_passthrough);
-    m_passthroughLayer = XR_NULL_HANDLE;
-    m_passthrough = XR_NULL_HANDLE;
-    return;
-  }
-
-  m_passthroughSupported = true;
-  m_passthroughRunning = true;
-  
-  // Default to enabled if supported
-  m_passthroughEnabled = true;
-  LOGI("XR Passthrough initialized and started\n");
-}
-
-void GsOpenXr::destroyPassthrough()
-{
-  if (m_passthroughRunning && m_xrPassthroughPauseFB && m_passthrough != XR_NULL_HANDLE)
-  {
-    m_xrPassthroughPauseFB(m_passthrough);
-  }
-
-  if (m_passthroughLayer != XR_NULL_HANDLE && m_xrDestroyPassthroughLayerFB)
-  {
-    m_xrDestroyPassthroughLayerFB(m_passthroughLayer);
-    m_passthroughLayer = XR_NULL_HANDLE;
-  }
-
-  if (m_passthrough != XR_NULL_HANDLE && m_xrDestroyPassthroughFB)
-  {
-    m_xrDestroyPassthroughFB(m_passthrough);
-    m_passthrough = XR_NULL_HANDLE;
-  }
-
-  m_passthroughRunning = false;
-  m_passthroughSupported = false;
-}
-
-void GsOpenXr::setPassthroughEnabled(bool enabled)
-{
-  if (m_passthroughSupported)
-  {
-    m_passthroughEnabled = enabled;
-    if (m_passthroughRunning)
-    {
-      if (enabled)
-         m_xrPassthroughStartFB(m_passthrough);
-      else
-         m_xrPassthroughPauseFB(m_passthrough);
-    }
   }
 }
 

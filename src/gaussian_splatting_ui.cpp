@@ -1689,15 +1689,6 @@ void GaussianSplattingUI::guiDrawRendererProperties()
     PE::Text("XR Status", "Connected");
     PE::Text("Per-eye resolution", "%dx%d", perEye.width, perEye.height);
     PE::Text("Controllers", m_xr->hasControllers() ? "Active" : "Not detected");
-    
-    if (m_xr->isPassthroughSupported())
-    {
-       bool passthrough = m_xr->isPassthroughEnabled();
-       if (PE::Checkbox("Passthrough", &passthrough, "Enable Mixed Reality Passthrough"))
-       {
-          m_xr->setPassthroughEnabled(passthrough);
-       }
-    }
 
     // Locomotion settings
 

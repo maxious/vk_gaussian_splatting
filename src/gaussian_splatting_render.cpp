@@ -652,14 +652,7 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
     colorAttachment.imageView                 = m_gBuffers.getColorImageView(colorBufferId);
     colorAttachment.loadOp                    = VK_ATTACHMENT_LOAD_OP_CLEAR;
     
-    VkClearColorValue clearColor = m_clearColor;
-#ifdef WITH_OPENXR
-    if(m_xr && m_xr->isValid() && m_xr->isPassthroughEnabled())
-    {
-      clearColor = {0.0f, 0.0f, 0.0f, 0.0f};
-    }
-#endif
-    colorAttachment.clearValue                = {clearColor};
+    colorAttachment.clearValue                = {m_clearColor};
 
     VkRenderingAttachmentInfo depthAttachment = DEFAULT_VkRenderingAttachmentInfo;
 

@@ -24,7 +24,7 @@
 [[vk::binding(POST_BINDING_MAIN_IMAGE, 0)]] RWTexture2D<float4>       mainColorImage;
 [[vk::binding(POST_BINDING_AUX1_IMAGE, 0)]] RWTexture2D<float4>       aux1ColorImage;
 [[vk::binding(POST_BINDING_DEPTH_TEXTURE, 0)]] Texture2D<float>      depthTexture;
-[[vk::binding(POST_BINDING_DEPTH_TEXTURE, 0)]] SamplerState           depthSampler;
+[[vk::binding(POST_BINDING_DEPTH_SAMPLER, 0)]] SamplerState           depthSampler;
 // clang-format on
 
 [numthreads(32, 32, 1)]

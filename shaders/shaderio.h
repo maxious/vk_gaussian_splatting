@@ -136,6 +136,7 @@
 #define POST_BINDING_MAIN_IMAGE 1  // the image that is presented
 #define POST_BINDING_AUX1_IMAGE 2  // optional aux image to be accumulated (for example)
 #define POST_BINDING_DEPTH_TEXTURE 3  // VDZ depth texture for visualization
+#define POST_BINDING_DEPTH_SAMPLER 4  // VDZ depth sampler
 
 
 
