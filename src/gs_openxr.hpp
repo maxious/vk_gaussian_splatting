@@ -138,6 +138,20 @@ typedef XrResult (XRAPI_PTR *PFN_xrSetEnvironmentDepthHandRemovalMETA)(XrEnviron
 
 #endif
 
+// Define hand tracking extension names if not available
+#ifndef XR_EXT_HAND_TRACKING_EXTENSION_NAME
+#define XR_EXT_HAND_TRACKING_EXTENSION_NAME "XR_EXT_hand_tracking"
+#endif
+#ifndef XR_FB_HAND_TRACKING_MESH_EXTENSION_NAME
+#define XR_FB_HAND_TRACKING_MESH_EXTENSION_NAME "XR_FB_hand_tracking_mesh"
+#endif
+#ifndef XR_FB_HAND_TRACKING_AIM_EXTENSION_NAME
+#define XR_FB_HAND_TRACKING_AIM_EXTENSION_NAME "XR_FB_hand_tracking_aim"
+#endif
+#ifndef XR_FB_HAND_TRACKING_CAPSULES_EXTENSION_NAME
+#define XR_FB_HAND_TRACKING_CAPSULES_EXTENSION_NAME "XR_FB_hand_tracking_capsules"
+#endif
+
 namespace vk_gaussian_splatting {
 
 class GsOpenXr
@@ -241,6 +255,7 @@ public:
 
   // Poll controller input - call after beginFrame()
   void pollControllerInput();
+  void pollHandInput();
   
   // Get controller data
   const ControllerInput& getLeftController() const { return m_leftController; }
@@ -249,6 +264,32 @@ public:
   
   // Check if controllers are available
   bool hasControllers() const { return m_hasControllers; }
+
+  // Hand tracking data
+  enum class Hand { Left = 0, Right = 1 };
+
+  struct HandJoint {
+    glm::vec3 position{0.0f};
+    glm::quat orientation{1,0,0,0};
+    bool      positionValid{false};
+    bool      orientationValid{false};
+  };
+
+  struct HandInput {
+    bool tracked{false};           // any joints valid
+    bool indexPinching{false};     // from FB aim
+    glm::vec3 wristPos{0.0f};      // XR_HAND_JOINT_WRIST_EXT
+    glm::quat wristRot{1,0,0,0};
+    glm::vec3 indexTipPos{0.0f};   // XR_HAND_JOINT_INDEX_TIP_EXT
+    glm::quat indexTipRot{1,0,0,0};
+
+    // Optional: expose all joints for rendering / advanced logic
+    std::array<HandJoint, XR_HAND_JOINT_COUNT_EXT> joints;
+  };
+
+  // Get hand input data
+  const HandInput& getHandInput(Hand hand) const;
+  bool handsSupported() const { return m_handTrackingSupported; }
 
   struct PerformanceMetrics
   {
@@ -344,6 +385,12 @@ private:
   PFN_xrGetVulkanInstanceExtensionsKHR    m_xrGetVulkanInstanceExtensionsKHR    = nullptr;
   PFN_xrGetVulkanDeviceExtensionsKHR      m_xrGetVulkanDeviceExtensionsKHR      = nullptr;
 
+  // Hand tracking function pointers
+  PFN_xrCreateHandTrackerEXT  m_xrCreateHandTrackerEXT  = nullptr;
+  PFN_xrDestroyHandTrackerEXT m_xrDestroyHandTrackerEXT = nullptr;
+  PFN_xrLocateHandJointsEXT   m_xrLocateHandJointsEXT   = nullptr;
+  PFN_xrGetHandMeshFB         m_xrGetHandMeshFB         = nullptr;
+
   // Extension availability flags (set during instance creation)
   bool m_extPerformanceMetricsAvailable = false;
   bool m_extColorSpaceAvailable = false;
@@ -351,6 +398,10 @@ private:
   bool m_extEnvironmentDepthAvailable = false;
   bool m_extDepthExtensionAvailable = false;
   bool m_extWin32PerfCounterAvailable = false;
+  bool m_extHandTrackingAvailable = false;
+  bool m_extHandTrackingMeshAvailable = false;
+  bool m_extHandTrackingAimAvailable = false;
+  bool m_extHandTrackingCapsulesAvailable = false;
 
 
   // Helper methods
@@ -506,6 +557,16 @@ private:
   bool m_environmentDepthSupported = false;
   bool m_environmentDepthEnabled = false;
   bool m_environmentDepthRunning = false;
+
+  // Hand tracking support
+  bool m_handTrackingSupported = false;
+  HandInput m_handInputs[2]; // [Left, Right]
+
+  // Hand trackers and buffers
+  XrHandTrackerEXT m_handTracker[2] = {XR_NULL_HANDLE, XR_NULL_HANDLE};
+  XrHandJointLocationEXT m_jointLocations[2][XR_HAND_JOINT_COUNT_EXT]{};
+  XrHandJointVelocityEXT m_jointVelocities[2][XR_HAND_JOINT_COUNT_EXT]{};
+  XrHandTrackingAimStateFB m_aimState[2]{};
 
   XrEnvironmentDepthProviderMETA m_environmentDepthProvider = XR_NULL_HANDLE;
   XrEnvironmentDepthSwapchainMETA m_environmentDepthSwapchain = XR_NULL_HANDLE;

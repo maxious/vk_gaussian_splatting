@@ -185,6 +185,9 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
     }
 
     // Update locomotion from controller input (must be after beginFrame for valid time)
+    m_xr->pollControllerInput();
+    m_xr->pollHandInput();
+
     auto now = std::chrono::steady_clock::now();
     if(!m_xrFirstFrame)
     {

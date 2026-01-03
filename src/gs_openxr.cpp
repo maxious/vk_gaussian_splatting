@@ -123,6 +123,14 @@ void GsOpenXr::shutdown()
     m_motionVectorSwapchain.images.clear();
   }
 
+  // Destroy hand trackers
+  for (int i = 0; i < 2; ++i) {
+    if (m_handTracker[i] != XR_NULL_HANDLE && m_xrDestroyHandTrackerEXT) {
+      m_xrDestroyHandTrackerEXT(m_handTracker[i]);
+      m_handTracker[i] = XR_NULL_HANDLE;
+    }
+  }
+
   if(m_referenceSpace != XR_NULL_HANDLE)
 
   {
@@ -259,6 +267,34 @@ bool GsOpenXr::createInstance()
     LOGW("XR_KHR_composition_layer_depth extension not available\n");
   }
 
+  if (isExtensionAvailable(XR_EXT_HAND_TRACKING_EXTENSION_NAME)) {
+    extensions.push_back(XR_EXT_HAND_TRACKING_EXTENSION_NAME);
+    m_extHandTrackingAvailable = true;
+  } else {
+    LOGW("XR_EXT_hand_tracking extension not available\n");
+  }
+
+  if (isExtensionAvailable(XR_FB_HAND_TRACKING_MESH_EXTENSION_NAME)) {
+    extensions.push_back(XR_FB_HAND_TRACKING_MESH_EXTENSION_NAME);
+    m_extHandTrackingMeshAvailable = true;
+  } else {
+    LOGW("XR_FB_hand_tracking_mesh extension not available\n");
+  }
+
+  if (isExtensionAvailable(XR_FB_HAND_TRACKING_AIM_EXTENSION_NAME)) {
+    extensions.push_back(XR_FB_HAND_TRACKING_AIM_EXTENSION_NAME);
+    m_extHandTrackingAimAvailable = true;
+  } else {
+    LOGW("XR_FB_hand_tracking_aim extension not available\n");
+  }
+
+  if (isExtensionAvailable(XR_FB_HAND_TRACKING_CAPSULES_EXTENSION_NAME)) {
+    extensions.push_back(XR_FB_HAND_TRACKING_CAPSULES_EXTENSION_NAME);
+    m_extHandTrackingCapsulesAvailable = true;
+  } else {
+    LOGW("XR_FB_hand_tracking_capsules extension not available\n");
+  }
+
 #ifdef _WIN32
   if (isExtensionAvailable("XR_KHR_win32_convert_performance_counter_time")) {
     extensions.push_back("XR_KHR_win32_convert_performance_counter_time");
@@ -349,6 +385,21 @@ void GsOpenXr::loadXrFunctions()
     xrGetInstanceProcAddr(m_instance, "xrEnumerateEnvironmentDepthSwapchainImagesMETA", (PFN_xrVoidFunction*)&m_xrEnumerateEnvironmentDepthSwapchainImagesMETA);
     xrGetInstanceProcAddr(m_instance, "xrSetEnvironmentDepthHandRemovalMETA", (PFN_xrVoidFunction*)&m_xrSetEnvironmentDepthHandRemovalMETA);
   }
+
+  // Load hand tracking functions
+  if (m_extHandTrackingAvailable) {
+    xrGetInstanceProcAddr(m_instance, "xrCreateHandTrackerEXT",
+                          (PFN_xrVoidFunction*)&m_xrCreateHandTrackerEXT);
+    xrGetInstanceProcAddr(m_instance, "xrDestroyHandTrackerEXT",
+                          (PFN_xrVoidFunction*)&m_xrDestroyHandTrackerEXT);
+    xrGetInstanceProcAddr(m_instance, "xrLocateHandJointsEXT",
+                          (PFN_xrVoidFunction*)&m_xrLocateHandJointsEXT);
+  }
+
+  if (m_extHandTrackingMeshAvailable) {
+    xrGetInstanceProcAddr(m_instance, "xrGetHandMeshFB",
+                          (PFN_xrVoidFunction*)&m_xrGetHandMeshFB);
+  }
 }
 
 bool GsOpenXr::queryRequiredVulkanExtensions(std::vector<std::string>& outInstanceExtensions,
@@ -435,7 +486,22 @@ bool GsOpenXr::getSystem()
   xrGetSystemProperties(m_instance, m_systemId, &systemProps);
   LOGI("XR System: %s (vendorId=0x%x)\n", systemProps.systemName, systemProps.vendorId);
   LOGI("  Max swapchain size: %dx%d, max layers: %d\n", systemProps.graphicsProperties.maxSwapchainImageWidth,
-       systemProps.graphicsProperties.maxSwapchainImageHeight, systemProps.graphicsProperties.maxLayerCount);
+        systemProps.graphicsProperties.maxSwapchainImageHeight, systemProps.graphicsProperties.maxLayerCount);
+
+  // Check hand tracking support
+  if (m_extHandTrackingAvailable) {
+    XrSystemHandTrackingPropertiesEXT handProps{XR_TYPE_SYSTEM_HAND_TRACKING_PROPERTIES_EXT};
+    systemProps.next = &handProps;
+    if (XR_SUCCEEDED(xrGetSystemProperties(m_instance, m_systemId, &systemProps))) {
+      m_handTrackingSupported = handProps.supportsHandTracking == XR_TRUE;
+      LOGI("Hand tracking supported: %s\n", m_handTrackingSupported ? "YES" : "NO");
+    } else {
+      m_handTrackingSupported = false;
+      LOGW("Failed to query hand tracking system properties\n");
+    }
+  } else {
+    m_handTrackingSupported = false;
+  }
 
   // Get view configuration
   uint32_t viewConfigCount = 0;
@@ -562,8 +628,27 @@ bool GsOpenXr::createSession(VkInstance       vkInstance,
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
 
-  LOGI("XR session started\n");
-  return true;
+   LOGI("XR session started\n");
+
+   // Create hand trackers if supported
+   if (m_handTrackingSupported && m_extHandTrackingAvailable && m_xrCreateHandTrackerEXT) {
+     for (int i = 0; i < 2; ++i) {
+       XrHandTrackerCreateInfoEXT ci{XR_TYPE_HAND_TRACKER_CREATE_INFO_EXT};
+       ci.next = nullptr;
+       ci.handJointSet = XR_HAND_JOINT_SET_DEFAULT_EXT;
+       ci.hand = (i == 0) ? XR_HAND_LEFT_EXT : XR_HAND_RIGHT_EXT;
+
+       XrResult result = m_xrCreateHandTrackerEXT(m_session, &ci, &m_handTracker[i]);
+       if (XR_FAILED(result)) {
+         LOGW("Failed to create hand tracker for %s hand: %d\n", (i == 0) ? "left" : "right", (int)result);
+         m_handTracker[i] = XR_NULL_HANDLE;
+       } else {
+         LOGI("Created hand tracker for %s hand\n", (i == 0) ? "left" : "right");
+       }
+     }
+   }
+
+   return true;
 }
 
 bool GsOpenXr::createSwapchains(VkFormat colorFormat, VkFormat depthFormat)
@@ -1507,6 +1592,146 @@ void GsOpenXr::pollControllerInput()
   }
 }
 
+void GsOpenXr::pollHandInput()
+{
+  if (!m_handTrackingSupported || !m_extHandTrackingAvailable ||
+      m_xrLocateHandJointsEXT == nullptr) {
+    // Clear state
+    m_handInputs[0] = HandInput{};
+    m_handInputs[1] = HandInput{};
+    return;
+  }
+
+  const XrTime time = m_predictedDisplayTime;
+  const XrSpace baseSpace = m_referenceSpace;
+
+  static int functionCallCount = 0;
+  functionCallCount++;
+  if (functionCallCount % 72 == 0) {
+    LOGI("pollHandInput called, time=%lld, baseSpace valid=%s", (long long)time, baseSpace != XR_NULL_HANDLE ? "YES" : "NO");
+  }
+
+  XrSpaceLocationFlags validFlags =
+    XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
+
+  for (int h = 0; h < 2; ++h) {
+    HandInput& out = m_handInputs[h];
+    out = HandInput{}; // reset
+
+    if (m_handTracker[h] == XR_NULL_HANDLE)
+      continue;
+
+    // Chain aim + velocities onto joint locations (like Meta sample)
+    XrHandJointVelocitiesEXT velocities{XR_TYPE_HAND_JOINT_VELOCITIES_EXT};
+    velocities.next = nullptr;
+    velocities.jointCount = XR_HAND_JOINT_COUNT_EXT;
+    velocities.jointVelocities = m_jointVelocities[h];
+
+    m_aimState[h].type = XR_TYPE_HAND_TRACKING_AIM_STATE_FB;
+    m_aimState[h].next = &velocities;
+
+    XrHandJointLocationsEXT locations{XR_TYPE_HAND_JOINT_LOCATIONS_EXT};
+    locations.next = &m_aimState[h];
+    locations.jointCount = XR_HAND_JOINT_COUNT_EXT;
+    locations.jointLocations = m_jointLocations[h];
+
+    // Also try without chaining to see if that works
+    /*
+    XrHandJointLocationsEXT locations{XR_TYPE_HAND_JOINT_LOCATIONS_EXT};
+    locations.next = nullptr;
+    locations.jointCount = XR_HAND_JOINT_COUNT_EXT;
+    locations.jointLocations = m_jointLocations[h];
+    */
+
+    XrHandJointsLocateInfoEXT locateInfo{XR_TYPE_HAND_JOINTS_LOCATE_INFO_EXT};
+    locateInfo.baseSpace = baseSpace;
+    locateInfo.time = time;
+
+    XrResult result = m_xrLocateHandJointsEXT(m_handTracker[h], &locateInfo, &locations);
+    if (XR_FAILED(result)) {
+      static int errorFrameCount = 0;
+      errorFrameCount++;
+      if (errorFrameCount % 72 == 0) {
+        LOGW("xrLocateHandJointsEXT failed for %s hand: %d", (h == 0) ? "left" : "right", (int)result);
+      }
+      continue;
+    }
+
+    if (locations.isActive == XR_FALSE) {
+      static int inactiveFrameCount = 0;
+      inactiveFrameCount++;
+      if (inactiveFrameCount % 72 == 0) {
+        LOGI("%s hand: isActive = false", (h == 0) ? "Left" : "Right");
+      }
+      continue;
+    }
+
+    bool anyTracked = false;
+    for (uint32_t i = 0; i < XR_HAND_JOINT_COUNT_EXT; ++i) {
+      const auto& jl = m_jointLocations[h][i];
+      HandJoint joint;
+      joint.positionValid =
+        (jl.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0;
+      joint.orientationValid =
+        (jl.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) != 0;
+
+      if (joint.positionValid) {
+        anyTracked = true;
+        joint.position = glm::vec3(jl.pose.position.x,
+                                   jl.pose.position.y,
+                                   jl.pose.position.z);
+      }
+      if (joint.orientationValid) {
+        joint.orientation = glm::quat(
+          jl.pose.orientation.w,
+          jl.pose.orientation.x,
+          jl.pose.orientation.y,
+          jl.pose.orientation.z);
+      }
+      out.joints[i] = joint;
+    }
+
+    out.tracked = anyTracked;
+
+    auto assignJoint = [&](int xrIndex, glm::vec3& pos, glm::quat& rot) {
+      const auto& j = out.joints[xrIndex];
+      if (j.positionValid) pos = j.position;
+      if (j.orientationValid) rot = j.orientation;
+    };
+
+    assignJoint(XR_HAND_JOINT_WRIST_EXT, out.wristPos, out.wristRot);
+    assignJoint(XR_HAND_JOINT_INDEX_TIP_EXT, out.indexTipPos, out.indexTipRot);
+
+    if (m_extHandTrackingAimAvailable) {
+      out.indexPinching =
+        (m_aimState[h].status & XR_HAND_TRACKING_AIM_INDEX_PINCHING_BIT_FB) != 0;
+    }
+  }
+
+  // Debug logging - log hand tracking status every ~1 second
+  static int frameCount = 0;
+  frameCount++;
+  if (frameCount % 72 == 0) {  // ~1 second at 72 fps
+    const auto& left = m_handInputs[0];
+    const auto& right = m_handInputs[1];
+
+    LOGI("Hand tracking status:");
+    LOGI("  Left hand: %s", left.tracked ? "TRACKED" : "NOT TRACKED");
+    if (left.tracked) {
+      LOGI("    Wrist pos: (%.3f, %.3f, %.3f)", left.wristPos.x, left.wristPos.y, left.wristPos.z);
+      LOGI("    Index tip pos: (%.3f, %.3f, %.3f)", left.indexTipPos.x, left.indexTipPos.y, left.indexTipPos.z);
+      LOGI("    Pinching: %s", left.indexPinching ? "YES" : "NO");
+    }
+
+    LOGI("  Right hand: %s", right.tracked ? "TRACKED" : "NOT TRACKED");
+    if (right.tracked) {
+      LOGI("    Wrist pos: (%.3f, %.3f, %.3f)", right.wristPos.x, right.wristPos.y, right.wristPos.z);
+      LOGI("    Index tip pos: (%.3f, %.3f, %.3f)", right.indexTipPos.x, right.indexTipPos.y, right.indexTipPos.z);
+      LOGI("    Pinching: %s", right.indexPinching ? "YES" : "NO");
+    }
+  }
+}
+
 void GsOpenXr::syncControllerActions()
 {
   XrActiveActionSet activeActionSet{};
@@ -1693,32 +1918,8 @@ void GsOpenXr::trackingThreadLoop()
         {
           size_t writeIdx = m_poseWriteIndex.load() % POSE_RING_BUFFER_SIZE;
 
-          bool positionTracked = (viewState.viewStateFlags & XR_VIEW_STATE_POSITION_TRACKED_BIT) != 0;
-          bool orientationTracked = (viewState.viewStateFlags & XR_VIEW_STATE_ORIENTATION_TRACKED_BIT) != 0;
-
           {
             std::lock_guard<std::mutex> lock(m_poseMutex);
-
-            if((!positionTracked || !orientationTracked) && m_poseCount.load() > 0)
-            {
-              size_t prevIdx = (writeIdx == 0) ? (POSE_RING_BUFFER_SIZE - 1) : (writeIdx - 1);
-              const auto& prevPose = m_poseRingBuffer[prevIdx];
-              if(prevPose.valid)
-              {
-                const auto& prevPos = prevPose.views[0].pose.position;
-                const auto& currPos = views[0].pose.position;
-                float dx = currPos.x - prevPos.x;
-                float dy = currPos.y - prevPos.y;
-                float dz = currPos.z - prevPos.z;
-                float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
-
-                LOGW("Tracking loss - inferred pose: prev=(%.4f, %.4f, %.4f) curr=(%.4f, %.4f, %.4f) delta=%.4fm [pos_tracked=%d, ori_tracked=%d]\n",
-                     prevPos.x, prevPos.y, prevPos.z,
-                     currPos.x, currPos.y, currPos.z,
-                     dist, positionTracked ? 1 : 0, orientationTracked ? 1 : 0);
-              }
-            }
-
             m_poseRingBuffer[writeIdx].timestamp = now;
             m_poseRingBuffer[writeIdx].views = views;
             m_poseRingBuffer[writeIdx].viewStateFlags = viewState.viewStateFlags;
