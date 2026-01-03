@@ -322,6 +322,10 @@ private:
   void destroyHandMeshes();
   void updateHandMeshes();
   void renderHandMesh(VkCommandBuffer cmd, const GaussianSplattingUI::HandMeshVk& mesh, const glm::mat4& wristTransform);
+#ifdef WITH_OPENXR
+  void onRenderMultiviewExtra(VkCommandBuffer cmd) override;
+  void renderHandMeshMultiview(VkCommandBuffer cmd, const GaussianSplattingUI::HandMeshVk& mesh, const glm::mat4& wristTransform);
+#endif
 
   // Wrist button for file picker
   struct WristButton {

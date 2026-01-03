@@ -40,21 +40,52 @@ FragmentOutput main(FragmentInput input)
   float3 normal = normalize(input.worldNrm);
   float3 viewDir = normalize(-input.viewDir);
 
+  // Main light for cel-shading
   float3 lightDir = normalize(float3(0.5, 1.0, 0.3));
   
-  float3 baseColor = float3(0.9, 0.75, 0.65);
+  // Cartoony skin tone - more saturated and vibrant
+  float3 skinColor = float3(1.0, 0.82, 0.72);
+  float3 shadowColor = float3(0.85, 0.55, 0.5);
   
-  float ambient = 0.3;
-  float diffuse = max(dot(normal, lightDir), 0.0) * 0.6;
+  // Cel-shading: quantize lighting into discrete bands
+  float NdotL = dot(normal, lightDir);
+  float lightIntensity;
   
+  // 3-band toon shading
+  if (NdotL > 0.5)
+    lightIntensity = 1.0;      // Fully lit
+  else if (NdotL > 0.0)
+    lightIntensity = 0.7;      // Mid-tone
+  else
+    lightIntensity = 0.45;     // Shadow
+  
+  // Blend between skin and shadow color based on band
+  float3 baseColor = lerp(shadowColor, skinColor, lightIntensity);
+  
+  // Cartoon specular highlight - sharp, stylized
   float3 halfVec = normalize(lightDir + viewDir);
-  float specular = pow(max(dot(normal, halfVec), 0.0), 32.0) * 0.2;
+  float spec = dot(normal, halfVec);
+  float3 specular = float3(0.0);
+  if (spec > 0.92)
+    specular = float3(1.0, 1.0, 1.0) * 0.5;  // Sharp white highlight
   
-  float rim = pow(1.0 - max(dot(normal, viewDir), 0.0), 3.0) * 0.15;
+  // Rim light for cartoon pop - crisp edge
+  float rim = 1.0 - max(dot(normal, viewDir), 0.0);
+  float3 rimColor = float3(0.0);
+  if (rim > 0.7)
+    rimColor = float3(1.0, 0.9, 0.85) * 0.35;
+  
+  float3 finalColor = baseColor + specular + rimColor;
+  
+  // Slightly boost saturation for cartoony look
+  float luminance = dot(finalColor, float3(0.299, 0.587, 0.114));
+  finalColor = lerp(float3(luminance), finalColor, 1.2);
+  finalColor = saturate(finalColor);
+  
+  // Fully opaque - no ghostly transparency
+  float alpha = 1.0;
 
-  float3 finalColor = baseColor * (ambient + diffuse) + float3(specular + rim);
-
-  output.color = float4(finalColor, 0.85);
+  output.color = float4(finalColor, alpha);
 
   return output;
 }

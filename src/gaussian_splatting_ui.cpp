@@ -4578,5 +4578,105 @@ void GaussianSplattingUI::renderHandMesh(VkCommandBuffer cmd, const GaussianSpla
     vkCmdDrawIndexed(cmd, static_cast<uint32_t>(mesh.indices.size()), 1, 0, 0, 0);
 }
 
+#ifdef WITH_OPENXR
+void GaussianSplattingUI::onRenderMultiviewExtra(VkCommandBuffer cmd)
+{
+    if (!m_xr || !m_xr->handsSupported() || !m_xrInitialized || m_descriptorSet == VK_NULL_HANDLE)
+        return;
+    if (m_handMeshReadyFrameDelay > 0)
+        return;
+    if (m_graphicsPipelineHandMeshMultiview == VK_NULL_HANDLE)
+        return;
+
+    auto poseToMatrix = [](const XrPosef& pose) -> glm::mat4 {
+        glm::quat q(pose.orientation.w, pose.orientation.x, pose.orientation.y, pose.orientation.z);
+        glm::vec3 t(pose.position.x, pose.position.y, pose.position.z);
+        return glm::translate(glm::mat4(1.0f), t) * glm::mat4_cast(q);
+    };
+
+    const auto& leftHand = m_xr->getHandInput(GsOpenXr::Hand::Left);
+    if (leftHand.tracked) {
+        glm::mat4 wristTransform = poseToMatrix(leftHand.jointPoses[XR_HAND_JOINT_WRIST_EXT]);
+        renderHandMeshMultiview(cmd, m_leftHandMesh, wristTransform);
+    }
+    else if (m_leftHandMesh.initialized && m_debugForceRenderHands) {
+        glm::mat4 debugTransform = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -0.5f));
+        renderHandMeshMultiview(cmd, m_leftHandMesh, debugTransform);
+    }
+
+    const auto& rightHand = m_xr->getHandInput(GsOpenXr::Hand::Right);
+    if (rightHand.tracked) {
+        glm::mat4 wristTransform = poseToMatrix(rightHand.jointPoses[XR_HAND_JOINT_WRIST_EXT]);
+        renderHandMeshMultiview(cmd, m_rightHandMesh, wristTransform);
+    }
+    else if (m_rightHandMesh.initialized && m_debugForceRenderHands) {
+        glm::mat4 debugTransform = glm::translate(glm::mat4(1.0f), glm::vec3(0.2f, 0.0f, -0.5f));
+        renderHandMeshMultiview(cmd, m_rightHandMesh, debugTransform);
+    }
+}
+
+void GaussianSplattingUI::renderHandMeshMultiview(VkCommandBuffer cmd, const GaussianSplattingUI::HandMeshVk& mesh, const glm::mat4& wristTransform)
+{
+    if (!mesh.initialized || !mesh.visible)
+        return;
+
+    if (m_graphicsPipelineHandMeshMultiview == VK_NULL_HANDLE)
+        return;
+    if (m_descriptorSet == VK_NULL_HANDLE || m_pipelineLayout == VK_NULL_HANDLE)
+        return;
+    if (mesh.jointMatricesBuffer.buffer == VK_NULL_HANDLE)
+        return;
+    if (mesh.vertexBuffer.buffer == VK_NULL_HANDLE || mesh.indexBuffer.buffer == VK_NULL_HANDLE)
+        return;
+
+    // Update descriptor set with this hand's joint matrices buffer
+    VkDescriptorBufferInfo bufferInfo{};
+    bufferInfo.buffer = mesh.jointMatricesBuffer.buffer;
+    bufferInfo.offset = 0;
+    bufferInfo.range = VK_WHOLE_SIZE;
+
+    VkWriteDescriptorSet write{};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = m_descriptorSet;
+    write.dstBinding = BINDING_JOINT_MATRICES;
+    write.dstArrayElement = 0;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    write.descriptorCount = 1;
+    write.pBufferInfo = &bufferInfo;
+
+    vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
+
+    // Bind hand mesh multiview pipeline
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipelineHandMeshMultiview);
+
+    // Rebind descriptor set after updating (with dynamic offsets for UBO)
+    uint32_t dynamicOffsets[] = {m_lastFrameInfoOffset, 0};
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_descriptorSet, 2, dynamicOffsets);
+
+    // Enable depth test and write
+    vkCmdSetDepthTestEnable(cmd, VK_TRUE);
+    vkCmdSetDepthWriteEnable(cmd, VK_TRUE);
+
+    // Push constants for model matrix
+    shaderio::PushConstant pc{};
+    pc.modelMatrix = wristTransform;
+    pc.modelMatrixInverse = glm::inverse(wristTransform);
+    pc.modelMatrixRotScaleInverse = glm::inverse(glm::mat4(glm::mat3(wristTransform)));
+    pc.objIndex = 0;
+    vkCmdPushConstants(cmd, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), &pc);
+
+    // Bind vertex buffer
+    VkBuffer vertexBuffers[] = {mesh.vertexBuffer.buffer};
+    VkDeviceSize offsets[] = {0};
+    vkCmdBindVertexBuffers(cmd, 0, 1, vertexBuffers, offsets);
+
+    // Bind index buffer
+    vkCmdBindIndexBuffer(cmd, mesh.indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT16);
+
+    // Draw the mesh
+    vkCmdDrawIndexed(cmd, static_cast<uint32_t>(mesh.indices.size()), 1, 0, 0, 0);
+}
+#endif
+
 }  // namespace vk_gaussian_splatting
 

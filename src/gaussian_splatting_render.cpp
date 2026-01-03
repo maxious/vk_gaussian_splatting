@@ -736,6 +736,32 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
 
     nvvk::cmdImageMemoryBarrier(cmd, {m_xrColorImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL});
 
+    // Copy multiview result to desktop GBuffer for mirror display
+    {
+      VkExtent2D perEye = m_xr->getPerEyeExtent();
+      
+      nvvk::cmdImageMemoryBarrier(cmd, {m_xrMultiviewColor.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                        {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 2}});
+      nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getColorImage(COLOR_MAIN), VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL});
+
+      // Blit both eye layers side-by-side to desktop GBuffer
+      VkImageBlit blitRegions[2] = {};
+      for(uint32_t eye = 0; eye < 2; ++eye)
+      {
+        blitRegions[eye].srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, eye, 1};
+        blitRegions[eye].srcOffsets[0] = {0, 0, 0};
+        blitRegions[eye].srcOffsets[1] = {static_cast<int32_t>(perEye.width), static_cast<int32_t>(perEye.height), 1};
+        blitRegions[eye].dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        int32_t dstX = static_cast<int32_t>(eye * m_viewSize.x / 2);
+        blitRegions[eye].dstOffsets[0] = {dstX, 0, 0};
+        blitRegions[eye].dstOffsets[1] = {dstX + static_cast<int32_t>(m_viewSize.x / 2), static_cast<int32_t>(m_viewSize.y), 1};
+      }
+      vkCmdBlitImage(cmd, m_xrMultiviewColor.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                     m_gBuffers.getColorImage(COLOR_MAIN), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 2, blitRegions, VK_FILTER_LINEAR);
+
+      nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getColorImage(COLOR_MAIN), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL});
+    }
+
     readBackIndirectParametersIfNeeded(cmd);
     updateRenderingMemoryStatistics(cmd, splatCount);
 

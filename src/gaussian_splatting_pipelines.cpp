@@ -501,6 +501,25 @@ void GaussianSplatting::initPipelines()
 
     creator.createGraphicsPipeline(m_device, nullptr, pipelineState, &m_graphicsPipelineHandMesh);
     NVVK_DBG_NAME(m_graphicsPipelineHandMesh);
+
+#ifdef WITH_OPENXR
+    // Create multiview variant for XR stereo rendering
+    {
+      nvvk::GraphicsPipelineCreator multiviewCreator;
+      multiviewCreator.pipelineInfo.layout                  = m_pipelineLayout;
+      multiviewCreator.colorFormats                         = {m_colorFormat};
+      multiviewCreator.renderingState.depthAttachmentFormat = m_depthFormat;
+      multiviewCreator.renderingState.viewMask              = 0x3;  // Render to both views
+      multiviewCreator.dynamicStateValues.push_back(VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE);
+      multiviewCreator.dynamicStateValues.push_back(VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE);
+
+      multiviewCreator.addShader(VK_SHADER_STAGE_VERTEX_BIT, "main", m_shaders.handMeshVertexShader);
+      multiviewCreator.addShader(VK_SHADER_STAGE_FRAGMENT_BIT, "main", m_shaders.handMeshFragmentShader);
+
+      multiviewCreator.createGraphicsPipeline(m_device, nullptr, pipelineState, &m_graphicsPipelineHandMeshMultiview);
+      NVVK_DBG_NAME(m_graphicsPipelineHandMeshMultiview);
+    }
+#endif
   }
 }
 
@@ -521,6 +540,7 @@ void GaussianSplatting::deinitPipelines()
   TEST_DESTROY_AND_RESET(m_graphicsPipelineGsVertMultiview, vkDestroyPipeline(m_device, m_graphicsPipelineGsVertMultiview, nullptr));
   TEST_DESTROY_AND_RESET(m_graphicsPipelineGsMeshMultiview, vkDestroyPipeline(m_device, m_graphicsPipelineGsMeshMultiview, nullptr));
   TEST_DESTROY_AND_RESET(m_graphicsPipeline3dgutMeshMultiview, vkDestroyPipeline(m_device, m_graphicsPipeline3dgutMeshMultiview, nullptr));
+  TEST_DESTROY_AND_RESET(m_graphicsPipelineHandMeshMultiview, vkDestroyPipeline(m_device, m_graphicsPipelineHandMeshMultiview, nullptr));
 #endif
 
   TEST_DESTROY_AND_RESET(m_pipelineLayout, vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr));

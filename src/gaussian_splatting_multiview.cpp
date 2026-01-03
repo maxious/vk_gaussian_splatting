@@ -250,6 +250,9 @@ void GaussianSplatting::renderMultiviewRaster(VkCommandBuffer cmd, uint32_t spla
     }
   }
 
+  // Allow subclasses to render additional content (e.g., hand meshes)
+  onRenderMultiviewExtra(cmd);
+
   vkCmdEndRendering(cmd);
 
   // Transition images back to general

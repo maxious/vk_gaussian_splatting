@@ -394,6 +394,10 @@ protected:
   void initXrMultiviewResources(VkCommandBuffer cmd, VkExtent2D perEyeExtent);
   void deinitXrMultiviewResources();
   void renderMultiviewRaster(VkCommandBuffer cmd, uint32_t splatCount);
+  
+  // Virtual hook for rendering additional content in the multiview render pass
+  // Called after splats are rendered but before vkCmdEndRendering
+  virtual void onRenderMultiviewExtra(VkCommandBuffer cmd) {}
 #endif
 
   nvapp::Application*         m_app{nullptr};
@@ -540,6 +544,7 @@ protected:
   VkPipeline m_graphicsPipelineGsVertMultiview = VK_NULL_HANDLE;
   VkPipeline m_graphicsPipelineGsMeshMultiview = VK_NULL_HANDLE;
   VkPipeline m_graphicsPipeline3dgutMeshMultiview = VK_NULL_HANDLE;
+  VkPipeline m_graphicsPipelineHandMeshMultiview = VK_NULL_HANDLE;
 #endif
 
   // Common to 3D meshes and 3D Gaussians pipeline

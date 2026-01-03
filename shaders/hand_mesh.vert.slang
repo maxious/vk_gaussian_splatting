@@ -44,7 +44,7 @@ struct VertexOutput
 // clang-format on
 
 [shader("vertex")]
-VertexOutput main(VertexInput input)
+VertexOutput main(VertexInput input, uint viewIndex : SV_ViewID)
 {
   VertexOutput output;
 
@@ -61,14 +61,19 @@ VertexOutput main(VertexInput input)
     deformedNrm += weight * mul(input.normal, float3x3(jointMatrix));
   }
 
-  float3 origin = mul(float4(0, 0, 0, 1), frameInfo.viewInverse).xyz;
+  // Select matrices based on multiview state
+  float4x4 viewMatrix = (frameInfo.multiviewEnabled != 0) ? frameInfo.viewMatrixArray[viewIndex] : frameInfo.viewMatrix;
+  float4x4 viewInverse = (frameInfo.multiviewEnabled != 0) ? frameInfo.viewInverseArray[viewIndex] : frameInfo.viewInverse;
+  float4x4 projMatrix = (frameInfo.multiviewEnabled != 0) ? frameInfo.projectionMatrixArray[viewIndex] : frameInfo.projectionMatrix;
+
+  float3 origin = mul(float4(0, 0, 0, 1), viewInverse).xyz;
 
   output.worldPos = mul(float4(deformedPos, 1.0), pcRaster.modelMatrix).xyz;
   output.viewDir  = output.worldPos - origin;
   output.texCoord = input.uv;
   output.worldNrm = normalize(mul(deformedNrm, float3x3(transpose(pcRaster.modelMatrixInverse))));
 
-  output.position = mul(mul(float4(output.worldPos, 1.0), frameInfo.viewMatrix), frameInfo.projectionMatrix);
+  output.position = mul(mul(float4(output.worldPos, 1.0), viewMatrix), projMatrix);
 
   return output;
 }
