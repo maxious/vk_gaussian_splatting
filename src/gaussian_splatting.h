@@ -359,6 +359,8 @@ protected:
   bool  m_xrResizedThisFrame = false;  // Skip rendering frame after XR GBuffer resize
   VkImage m_xrColorImage  = VK_NULL_HANDLE;  // Current XR color swapchain image
   VkImage m_xrDepthImage  = VK_NULL_HANDLE;  // Current XR depth swapchain image
+  VkImage m_xrMotionImage = VK_NULL_HANDLE;  // Current XR motion swapchain image
+
   
   // Multiview resources for stereo rendering (2-layer images)
   nvvk::Image   m_xrMultiviewColor{};       // 2-layer color image for multiview
@@ -396,17 +398,19 @@ protected:
   {
     COLOR_MAIN = 0,
     COLOR_AUX1 = 1,
+    COLOR_MOTION = 2,
 #ifdef WITH_DLSS_RR
     // DLSS-RR G-buffer outputs (at render resolution)
-    COLOR_DLSS_DIFFUSE_ALBEDO  = 2,   // RGB diffuse albedo
-    COLOR_DLSS_SPECULAR_ALBEDO = 3,   // RGB specular albedo
-    COLOR_DLSS_NORMAL_ROUGH    = 4,   // RGB normal + A roughness
-    COLOR_DLSS_MOTION          = 5,   // RG motion vectors
+    COLOR_DLSS_DIFFUSE_ALBEDO  = 3,   // RGB diffuse albedo
+    COLOR_DLSS_SPECULAR_ALBEDO = 4,   // RGB specular albedo
+    COLOR_DLSS_NORMAL_ROUGH    = 5,   // RGB normal + A roughness
+    COLOR_DLSS_MOTION          = 2,   // RG motion vectors (aliased to COLOR_MOTION)
     COLOR_DLSS_LINEAR_DEPTH    = 6,   // R linear depth
     COLOR_DLSS_SPEC_HIT_DIST   = 7,   // R specular hit distance
     COLOR_DLSS_OUTPUT          = 8,   // DLSS-RR output (at output resolution)
 #endif
   };
+
   // G-Buffers: 2 color buffers + 1 depth buffer (+ DLSS-RR buffers when enabled)
   nvvk::GBuffer m_gBuffers;
 

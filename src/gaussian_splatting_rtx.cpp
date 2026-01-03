@@ -51,6 +51,9 @@ void GaussianSplatting::initRtDescriptorSet()
   m_rtDescriptorBindings.addBinding(RTX_BINDING_DLSS_MOTION, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_RAYGEN_BIT_KHR);
   m_rtDescriptorBindings.addBinding(RTX_BINDING_DLSS_LINEAR_DEPTH, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_RAYGEN_BIT_KHR);
   m_rtDescriptorBindings.addBinding(RTX_BINDING_DLSS_SPEC_HIT_DIST, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_RAYGEN_BIT_KHR);
+#else
+  // Add motion binding for Space Warp
+  m_rtDescriptorBindings.addBinding(RTX_BINDING_DLSS_MOTION, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_RAYGEN_BIT_KHR);
 #endif
 
   NVVK_CHECK(m_rtDescriptorBindings.createDescriptorSetLayout(m_device, 0, &m_rtDescriptorSetLayout));
@@ -118,6 +121,15 @@ void GaussianSplatting::initRtDescriptorSet()
                         m_gBuffers.getColorImageView(COLOR_DLSS_LINEAR_DEPTH), VK_IMAGE_LAYOUT_GENERAL);
   writeContainer.append(m_rtDescriptorBindings.getWriteSet(RTX_BINDING_DLSS_SPEC_HIT_DIST, m_rtDescriptorSet),
                         m_gBuffers.getColorImageView(COLOR_DLSS_SPEC_HIT_DIST), VK_IMAGE_LAYOUT_GENERAL);
+#else
+  // If Space Warp is enabled, we still need to bind the motion buffer
+  // We check if the image exists (it should if configured correctly in onAttach)
+  // Note: We use RTX_BINDING_DLSS_MOTION as the binding index for motion vectors
+  if (m_gBuffers.getColorFormats().size() > COLOR_MOTION)
+  {
+      writeContainer.append(m_rtDescriptorBindings.getWriteSet(RTX_BINDING_DLSS_MOTION, m_rtDescriptorSet),
+                            m_gBuffers.getColorImageView(COLOR_MOTION), VK_IMAGE_LAYOUT_GENERAL);
+  }
 #endif
 
   // actually write
@@ -163,6 +175,12 @@ void GaussianSplatting::updateRtDescriptorSet()
                           m_gBuffers.getColorImageView(COLOR_DLSS_LINEAR_DEPTH), VK_IMAGE_LAYOUT_GENERAL);
     writeContainer.append(m_rtDescriptorBindings.getWriteSet(RTX_BINDING_DLSS_SPEC_HIT_DIST, m_rtDescriptorSet),
                           m_gBuffers.getColorImageView(COLOR_DLSS_SPEC_HIT_DIST), VK_IMAGE_LAYOUT_GENERAL);
+#else
+    if (m_gBuffers.getColorFormats().size() > COLOR_MOTION)
+    {
+        writeContainer.append(m_rtDescriptorBindings.getWriteSet(RTX_BINDING_DLSS_MOTION, m_rtDescriptorSet),
+                              m_gBuffers.getColorImageView(COLOR_MOTION), VK_IMAGE_LAYOUT_GENERAL);
+    }
 #endif
 
     // let's update
@@ -363,6 +381,7 @@ void GaussianSplatting::raytrace(const VkCommandBuffer& cmdBuf, bool meshDepthOn
   m_pcRay.modelMatrixRotScaleInverse = glm::inverse(glm::mat3(m_splatSetVk.transform));
   m_pcRay.meshDepthOnly              = meshDepthOnly;
   m_pcRay.viewportOffset             = viewportOffset;
+  m_pcRay.useNdcMotion               = (m_xr && m_xr->isSpaceWarpSupported()) ? 1 : 0;
 
   // Dynamic offsets for descriptor sets:
   // Set 0 (Raster): [FrameInfo, Indirect] - But wait, initRtPipeline set up descSets{m_descriptorSet, m_rtDescriptorSet}
@@ -467,6 +486,7 @@ void GaussianSplatting::raytraceMultiview(const VkCommandBuffer& cmdBuf, bool me
   m_pcRay.modelMatrixRotScaleInverse = glm::inverse(glm::mat3(m_splatSetVk.transform));
   m_pcRay.meshDepthOnly = meshDepthOnly;
   m_pcRay.viewportOffset = glm::ivec2(0, 0);
+  m_pcRay.useNdcMotion = (m_xr && m_xr->isSpaceWarpSupported()) ? 1 : 0;
 
   // Dynamic offsets
   uint32_t indirectOffset = static_cast<uint32_t>(m_frameIndex * m_indirectStride);

@@ -96,18 +96,22 @@ void GaussianSplatting::onAttach(nvapp::Application* app)
   // Color attachments:
   // - COLOR_MAIN: main output
   // - COLOR_AUX1: temporal sampling with 3DGUT
+  // - COLOR_MOTION: RG motion vectors (for Space Warp & DLSS)
   // - DLSS-RR buffers (when enabled): diffuse albedo, specular albedo, normal+roughness, 
-  //   motion vectors, linear depth, specular hit distance, DLSS output
+  //   linear depth, specular hit distance, DLSS output
   std::vector<VkFormat> colorFormats = {m_colorFormat, m_colorFormat};
+  colorFormats.push_back(VK_FORMAT_R16G16_SFLOAT); // COLOR_MOTION (index 2)
+
 #ifdef WITH_DLSS_RR
   colorFormats.push_back(VK_FORMAT_R16G16B16A16_SFLOAT);  // COLOR_DLSS_DIFFUSE_ALBEDO
   colorFormats.push_back(VK_FORMAT_R16G16B16A16_SFLOAT);  // COLOR_DLSS_SPECULAR_ALBEDO
   colorFormats.push_back(VK_FORMAT_R16G16B16A16_SFLOAT);  // COLOR_DLSS_NORMAL_ROUGH
-  colorFormats.push_back(VK_FORMAT_R16G16_SFLOAT);        // COLOR_DLSS_MOTION
+  // COLOR_DLSS_MOTION is index 2, already added
   colorFormats.push_back(VK_FORMAT_R32_SFLOAT);           // COLOR_DLSS_LINEAR_DEPTH
   colorFormats.push_back(VK_FORMAT_R16_SFLOAT);           // COLOR_DLSS_SPEC_HIT_DIST
   colorFormats.push_back(m_colorFormat);                  // COLOR_DLSS_OUTPUT
 #endif
+
 
   m_gBuffers.init({
       .allocator      = &m_alloc,
@@ -615,7 +619,12 @@ void GaussianSplatting::updateDepthRendering(VkCommandBuffer cmd)
                 LOGI("Synced depth frame #%zu: %ux%u @ %u ms (video: %u ms)\n",
                      depthFrameIdx, depthFrame.width, depthFrame.height,
                      depthFrame.timestampMs, videoTimestampMs);
-              }
+  if(m_xr && m_xr->isSpaceWarpSupported())
+  {
+    m_shaderMacros.push_back({"WITH_SPACE_WARP", "1"});
+  }
+}
+
             }
           }
         }
@@ -815,74 +824,93 @@ void GaussianSplatting::copyToXrSwapchain(VkCommandBuffer cmd)
 
   // Get the source image (our rendered GBuffer)
   VkImage srcColorImage = m_gBuffers.getColorImage(COLOR_MAIN);
+  VkImage srcMotionImage = m_gBuffers.getColorImage(COLOR_MOTION);
   VkImage srcDepthImage = m_gBuffers.getDepthImage();
 
   VkExtent2D extent = m_xr->getFullExtent();
 
   // Transition XR images to transfer dst layout
   {
-    VkImageMemoryBarrier barriers[2] = {};
+    std::vector<VkImageMemoryBarrier> barriers;
+    
+    // Color
+    VkImageMemoryBarrier colorBarrier = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    colorBarrier.srcAccessMask = 0;
+    colorBarrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    colorBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    colorBarrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    colorBarrier.image = m_xrColorImage;
+    colorBarrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    barriers.push_back(colorBarrier);
 
-    barriers[0].sType                           = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    barriers[0].srcAccessMask                   = 0;
-    barriers[0].dstAccessMask                   = VK_ACCESS_TRANSFER_WRITE_BIT;
-    barriers[0].oldLayout                       = VK_IMAGE_LAYOUT_UNDEFINED;
-    barriers[0].newLayout                       = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    barriers[0].image                           = m_xrColorImage;
-    barriers[0].subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
-    barriers[0].subresourceRange.baseMipLevel   = 0;
-    barriers[0].subresourceRange.levelCount     = 1;
-    barriers[0].subresourceRange.baseArrayLayer = 0;
-    barriers[0].subresourceRange.layerCount     = 1;
+    // Depth
+    VkImageMemoryBarrier depthBarrier = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    depthBarrier.srcAccessMask = 0;
+    depthBarrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    depthBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    depthBarrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    depthBarrier.image = m_xrDepthImage;
+    depthBarrier.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+    barriers.push_back(depthBarrier);
 
-    barriers[1].sType                           = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    barriers[1].srcAccessMask                   = 0;
-    barriers[1].dstAccessMask                   = VK_ACCESS_TRANSFER_WRITE_BIT;
-    barriers[1].oldLayout                       = VK_IMAGE_LAYOUT_UNDEFINED;
-    barriers[1].newLayout                       = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    barriers[1].image                           = m_xrDepthImage;
-    barriers[1].subresourceRange.aspectMask     = VK_IMAGE_ASPECT_DEPTH_BIT;
-    barriers[1].subresourceRange.baseMipLevel   = 0;
-    barriers[1].subresourceRange.levelCount     = 1;
-    barriers[1].subresourceRange.baseArrayLayer = 0;
-    barriers[1].subresourceRange.layerCount     = 1;
+    // Motion
+    if (m_xrMotionImage != VK_NULL_HANDLE)
+    {
+        VkImageMemoryBarrier motionBarrier = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        motionBarrier.srcAccessMask = 0;
+        motionBarrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        motionBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        motionBarrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        motionBarrier.image = m_xrMotionImage;
+        motionBarrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        barriers.push_back(motionBarrier);
+    }
 
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
-                         nullptr, 2, barriers);
+                         nullptr, static_cast<uint32_t>(barriers.size()), barriers.data());
   }
 
   // Transition source images to transfer src layout
   // Note: Ray tracing uses VK_IMAGE_LAYOUT_GENERAL, rasterization uses COLOR_ATTACHMENT_OPTIMAL
   // We use GENERAL as the source layout since RTX path uses it
   {
-    VkImageMemoryBarrier barriers[2] = {};
+    std::vector<VkImageMemoryBarrier> barriers;
 
-    barriers[0].sType                           = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    barriers[0].srcAccessMask                   = VK_ACCESS_SHADER_WRITE_BIT;
-    barriers[0].dstAccessMask                   = VK_ACCESS_TRANSFER_READ_BIT;
-    barriers[0].oldLayout                       = VK_IMAGE_LAYOUT_GENERAL;
-    barriers[0].newLayout                       = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-    barriers[0].image                           = srcColorImage;
-    barriers[0].subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
-    barriers[0].subresourceRange.baseMipLevel   = 0;
-    barriers[0].subresourceRange.levelCount     = 1;
-    barriers[0].subresourceRange.baseArrayLayer = 0;
-    barriers[0].subresourceRange.layerCount     = 1;
+    // Color
+    VkImageMemoryBarrier colorBarrier = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    colorBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    colorBarrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    colorBarrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+    colorBarrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    colorBarrier.image = srcColorImage;
+    colorBarrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    barriers.push_back(colorBarrier);
 
-    barriers[1].sType                           = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    barriers[1].srcAccessMask                   = VK_ACCESS_SHADER_WRITE_BIT;
-    barriers[1].dstAccessMask                   = VK_ACCESS_TRANSFER_READ_BIT;
-    barriers[1].oldLayout                       = VK_IMAGE_LAYOUT_GENERAL;
-    barriers[1].newLayout                       = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-    barriers[1].image                           = srcDepthImage;
-    barriers[1].subresourceRange.aspectMask     = VK_IMAGE_ASPECT_DEPTH_BIT;
-    barriers[1].subresourceRange.baseMipLevel   = 0;
-    barriers[1].subresourceRange.levelCount     = 1;
-    barriers[1].subresourceRange.baseArrayLayer = 0;
-    barriers[1].subresourceRange.layerCount     = 1;
+    // Depth
+    VkImageMemoryBarrier depthBarrier = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    depthBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    depthBarrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    depthBarrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+    depthBarrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    depthBarrier.image = srcDepthImage;
+    depthBarrier.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+    barriers.push_back(depthBarrier);
+
+    // Motion (only if target exists)
+    if (m_xrMotionImage != VK_NULL_HANDLE)
+    {
+        VkImageMemoryBarrier motionBarrier = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        motionBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        motionBarrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        motionBarrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+        motionBarrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        motionBarrier.image = srcMotionImage;
+        motionBarrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        barriers.push_back(motionBarrier);
+    }
 
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
-                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 2, barriers);
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, static_cast<uint32_t>(barriers.size()), barriers.data());
   }
 
   // Blit color image (using blit instead of copy to handle UNORM->SRGB format conversion)
@@ -926,72 +954,117 @@ void GaussianSplatting::copyToXrSwapchain(VkCommandBuffer cmd)
                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
   }
 
+  // Copy motion image
+  if (m_xrMotionImage != VK_NULL_HANDLE)
+  {
+    VkImageCopy region            = {};
+    region.srcSubresource.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.srcSubresource.mipLevel       = 0;
+    region.srcSubresource.baseArrayLayer = 0;
+    region.srcSubresource.layerCount     = 1;
+    region.srcOffset                     = {0, 0, 0};
+    region.dstSubresource.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.dstSubresource.mipLevel       = 0;
+    region.dstSubresource.baseArrayLayer = 0;
+    region.dstSubresource.layerCount     = 1;
+    region.dstOffset                     = {0, 0, 0};
+    region.extent                        = {extent.width, extent.height, 1};
+
+    vkCmdCopyImage(cmd, srcMotionImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, m_xrMotionImage,
+                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+  }
+
   // Transition XR images to attachment optimal for the compositor
   {
-    VkImageMemoryBarrier barriers[2] = {};
+    std::vector<VkImageMemoryBarrier> barriers;
 
-    barriers[0].sType                           = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    barriers[0].srcAccessMask                   = VK_ACCESS_TRANSFER_WRITE_BIT;
-    barriers[0].dstAccessMask                   = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT;
-    barriers[0].oldLayout                       = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    barriers[0].newLayout                       = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    barriers[0].image                           = m_xrColorImage;
-    barriers[0].subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
-    barriers[0].subresourceRange.baseMipLevel   = 0;
-    barriers[0].subresourceRange.levelCount     = 1;
-    barriers[0].subresourceRange.baseArrayLayer = 0;
-    barriers[0].subresourceRange.layerCount     = 1;
+    // Color
+    VkImageMemoryBarrier colorBarrier = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    colorBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    colorBarrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT;
+    colorBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    colorBarrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    colorBarrier.image = m_xrColorImage;
+    colorBarrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    barriers.push_back(colorBarrier);
 
-    barriers[1].sType                           = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    barriers[1].srcAccessMask                   = VK_ACCESS_TRANSFER_WRITE_BIT;
-    barriers[1].dstAccessMask                   = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
-    barriers[1].oldLayout                       = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    barriers[1].newLayout                       = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-    barriers[1].image                           = m_xrDepthImage;
-    barriers[1].subresourceRange.aspectMask     = VK_IMAGE_ASPECT_DEPTH_BIT;
-    barriers[1].subresourceRange.baseMipLevel   = 0;
-    barriers[1].subresourceRange.levelCount     = 1;
-    barriers[1].subresourceRange.baseArrayLayer = 0;
-    barriers[1].subresourceRange.layerCount     = 1;
+    // Depth
+    VkImageMemoryBarrier depthBarrier = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    depthBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    depthBarrier.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+    depthBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    depthBarrier.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    depthBarrier.image = m_xrDepthImage;
+    depthBarrier.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+    barriers.push_back(depthBarrier);
+
+    // Motion
+    if (m_xrMotionImage != VK_NULL_HANDLE)
+    {
+        VkImageMemoryBarrier motionBarrier = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        motionBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        motionBarrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT; // Motion is color attachment in XR? Spec says "XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT" is allowed.
+                                                                           // Actually usage is SAMPLED usually for compositor?
+                                                                           // Spec: "The motion vector data is stored in the motionVectorSubImage’s RGB channels"
+                                                                           // The compositor likely reads it as sampled image.
+                                                                           // VK_ACCESS_SHADER_READ_BIT might be safer if we knew what compositor does.
+                                                                           // But standard for swapchain submission is often COLOR_ATTACHMENT_OPTIMAL or PRESENT_SRC_KHR.
+                                                                           // For XR, it's usually COLOR_ATTACHMENT_OPTIMAL.
+        motionBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        motionBarrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        motionBarrier.image = m_xrMotionImage;
+        motionBarrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        barriers.push_back(motionBarrier);
+    }
 
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
                          VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, 0,
-                         0, nullptr, 0, nullptr, 2, barriers);
+                         0, nullptr, 0, nullptr, static_cast<uint32_t>(barriers.size()), barriers.data());
   }
 
   // Transition source images back to GENERAL layout for next frame's ray tracing
   {
-    VkImageMemoryBarrier barriers[2] = {};
+    std::vector<VkImageMemoryBarrier> barriers;
 
-    barriers[0].sType                           = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    barriers[0].srcAccessMask                   = VK_ACCESS_TRANSFER_READ_BIT;
-    barriers[0].dstAccessMask                   = VK_ACCESS_SHADER_WRITE_BIT;
-    barriers[0].oldLayout                       = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-    barriers[0].newLayout                       = VK_IMAGE_LAYOUT_GENERAL;
-    barriers[0].image                           = srcColorImage;
-    barriers[0].subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
-    barriers[0].subresourceRange.baseMipLevel   = 0;
-    barriers[0].subresourceRange.levelCount     = 1;
-    barriers[0].subresourceRange.baseArrayLayer = 0;
-    barriers[0].subresourceRange.layerCount     = 1;
+    // Color
+    VkImageMemoryBarrier colorBarrier = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    colorBarrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    colorBarrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    colorBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    colorBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    colorBarrier.image = srcColorImage;
+    colorBarrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    barriers.push_back(colorBarrier);
 
-    barriers[1].sType                           = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    barriers[1].srcAccessMask                   = VK_ACCESS_TRANSFER_READ_BIT;
-    barriers[1].dstAccessMask                   = VK_ACCESS_SHADER_WRITE_BIT;
-    barriers[1].oldLayout                       = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-    barriers[1].newLayout                       = VK_IMAGE_LAYOUT_GENERAL;
-    barriers[1].image                           = srcDepthImage;
-    barriers[1].subresourceRange.aspectMask     = VK_IMAGE_ASPECT_DEPTH_BIT;
-    barriers[1].subresourceRange.baseMipLevel   = 0;
-    barriers[1].subresourceRange.levelCount     = 1;
-    barriers[1].subresourceRange.baseArrayLayer = 0;
-    barriers[1].subresourceRange.layerCount     = 1;
+    // Depth
+    VkImageMemoryBarrier depthBarrier = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    depthBarrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    depthBarrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    depthBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    depthBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    depthBarrier.image = srcDepthImage;
+    depthBarrier.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+    barriers.push_back(depthBarrier);
+
+    // Motion (only if target exists)
+    if (m_xrMotionImage != VK_NULL_HANDLE)
+    {
+        VkImageMemoryBarrier motionBarrier = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        motionBarrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        motionBarrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        motionBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        motionBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+        motionBarrier.image = srcMotionImage;
+        motionBarrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        barriers.push_back(motionBarrier);
+    }
 
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
                          VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, 0,
-                         0, nullptr, 0, nullptr, 2, barriers);
+                         0, nullptr, 0, nullptr, static_cast<uint32_t>(barriers.size()), barriers.data());
   }
 }
+
 #endif  // WITH_OPENXR
 
 }  // namespace vk_gaussian_splatting

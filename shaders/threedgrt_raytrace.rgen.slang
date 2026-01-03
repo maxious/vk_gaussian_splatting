@@ -44,14 +44,10 @@
 [[vk::binding(BINDING_MESH_DESCRIPTORS, 0)]] StructuredBuffer<ObjDesc> objDesc;
 [[vk::binding(BINDING_LIGHT_SET, 0)]] StructuredBuffer<LightSource> lights;
 #endif
-#ifdef WITH_DLSS_RR
-[[vk::binding(RTX_BINDING_DLSS_DIFFUSE_ALBEDO, 1)]] RWTexture2D<float4> dlssDiffuseAlbedo;
-[[vk::binding(RTX_BINDING_DLSS_SPECULAR_ALBEDO, 1)]] RWTexture2D<float4> dlssSpecularAlbedo;
-[[vk::binding(RTX_BINDING_DLSS_NORMAL_ROUGH, 1)]] RWTexture2D<float4> dlssNormalRough;
+#if defined(WITH_DLSS_RR) || defined(WITH_SPACE_WARP)
 [[vk::binding(RTX_BINDING_DLSS_MOTION, 1)]] RWTexture2D<float2> dlssMotion;
-[[vk::binding(RTX_BINDING_DLSS_LINEAR_DEPTH, 1)]] RWTexture2D<float> dlssLinearDepth;
-[[vk::binding(RTX_BINDING_DLSS_SPEC_HIT_DIST, 1)]] RWTexture2D<float> dlssSpecHitDist;
 #endif
+
 // clang-format on
 
 double maxComponent(in double3 v)
@@ -449,24 +445,9 @@ void main()
 #pragma warning(disable: 41000)  // Disable warning warning 41000: unreachable code detected
   image[outputPixel] = float4(fragRadiance, 1.0);
 
-#ifdef WITH_DLSS_RR
-  // Output DLSS-RR G-buffers
-  // For Gaussian splatting, we approximate surface properties from the volumetric data
-  
-  // Diffuse albedo: use the accumulated radiance as approximation (normalized)
-  float3 albedoApprox = fragRadiance / max(1.0, max(fragRadiance.x, max(fragRadiance.y, fragRadiance.z)));
-  dlssDiffuseAlbedo[outputPixel] = float4(albedoApprox, 0.0);  // Alpha = metallic (0 for dielectric splats)
-  
-  // Specular albedo: Gaussian splats are typically diffuse, so minimal specular
-  dlssSpecularAlbedo[outputPixel] = float4(0.04, 0.04, 0.04, 0.0);  // Fresnel F0 for dielectric
-  
-  // Normal + roughness: use view direction as normal approximation (facing camera)
-  // and high roughness since splats are diffuse
-  float3 viewNormal = -rayDirection;
-  float roughness = 0.9;  // High roughness for diffuse-like appearance
-  dlssNormalRough[outputPixel] = float4(viewNormal * 0.5 + 0.5, roughness);
-  
+#if defined(WITH_DLSS_RR) || defined(WITH_SPACE_WARP)
   // Motion vectors: compute screen-space motion from current and previous frame matrices
+
   // Since splat tracing now uses model-space rays, compute hit position in model space first,
   // then transform to world space for motion vector calculation.
   // Note: For XR locomotion, the model matrix changes frame-to-frame, but we don't track
@@ -481,17 +462,36 @@ void main()
   float2 prevNdc = prevClip.xy / prevClip.w;
   float4 currClip = mul(mul(float4(worldPos, 1.0), frameInfo.viewMatrix), frameInfo.projectionMatrix);
   float2 currNdc = currClip.xy / currClip.w;
-  // Motion in screen space (pixels)
-  float2 motion = (currNdc - prevNdc) * frameInfo.viewport * 0.5;
-  // Add jitter offset for temporal stability
-  motion += frameInfo.dlssJitter;
+  
+  float2 motion;
+  if (pcRay.useNdcMotion != 0)
+  {
+    // NDC space motion for Space Warp
+    motion = (currNdc - prevNdc);
+    // No jitter for Space Warp
+  }
+  else
+  {
+    // Screen space (pixel) motion for DLSS-RR
+    motion = (currNdc - prevNdc) * frameInfo.viewport * 0.5;
+    // Add jitter offset for temporal stability
+    motion += frameInfo.dlssJitter;
+  }
+  
   dlssMotion[outputPixel] = closestParticleFound ? motion : float2(0.0);
   
+#if defined(WITH_DLSS_RR) || defined(WITH_SPACE_WARP)
   // Linear depth: distance along the ray to the closest particle
   float linearDepth = closestParticleFound ? closestParticleDist : frameInfo.nearFar.y;
+#ifdef WITH_DLSS_RR
   dlssLinearDepth[outputPixel] = linearDepth;
+#endif
   
+#ifdef WITH_DLSS_RR
   // Specular hit distance: not applicable for diffuse Gaussian splats
   dlssSpecHitDist[outputPixel] = 0.0;
-#endif
+#endif // WITH_DLSS_RR
+#endif // WITH_DLSS_RR
+
+#endif // WITH_DLSS_RR || WITH_SPACE_WARP
 }

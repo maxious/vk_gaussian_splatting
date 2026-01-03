@@ -29,7 +29,37 @@
 #include <cmath>
 #include <sstream>
 
+#ifndef XR_FB_space_warp
+#define XR_FB_space_warp 1
+#define XR_FB_space_warp_SPEC_VERSION     2
+#define XR_FB_SPACE_WARP_EXTENSION_NAME   "XR_FB_space_warp"
+static const XrStructureType XR_TYPE_COMPOSITION_LAYER_SPACE_WARP_INFO_FB = (XrStructureType)1000171000;
+static const XrStructureType XR_TYPE_SYSTEM_SPACE_WARP_PROPERTIES_FB = (XrStructureType)1000171001;
+typedef XrFlags64 XrCompositionLayerSpaceWarpInfoFlagsFB;
+// Flag bits for XrCompositionLayerSpaceWarpInfoFlagsFB
+static const XrCompositionLayerSpaceWarpInfoFlagsFB XR_COMPOSITION_LAYER_SPACE_WARP_INFO_FRAME_SKIP_BIT_FB = 0x00000001;
+typedef struct XrCompositionLayerSpaceWarpInfoFB {
+    XrStructureType                           type;
+    const void*                               next;
+    XrCompositionLayerSpaceWarpInfoFlagsFB    layerFlags;
+    XrSwapchainSubImage                       motionVectorSubImage;
+    XrPosef                                   appSpaceDeltaPose;
+    XrSwapchainSubImage                       depthSubImage;
+    float                                     minDepth;
+    float                                     maxDepth;
+    float                                     nearZ;
+    float                                     farZ;
+} XrCompositionLayerSpaceWarpInfoFB;
+typedef struct XrSystemSpaceWarpPropertiesFB {
+    XrStructureType    type;
+    void*              next;
+    uint32_t           recommendedMotionVectorImageRectWidth;
+    uint32_t           recommendedMotionVectorImageRectHeight;
+} XrSystemSpaceWarpPropertiesFB;
+#endif
+
 namespace vk_gaussian_splatting {
+
 
 #define XR_CHECK(result, msg)                                        \
   do                                                                 \
@@ -86,7 +116,15 @@ void GsOpenXr::shutdown()
     m_depthSwapchain.images.clear();
   }
 
+  if(m_motionVectorSwapchain.handle != XR_NULL_HANDLE)
+  {
+    xrDestroySwapchain(m_motionVectorSwapchain.handle);
+    m_motionVectorSwapchain.handle = XR_NULL_HANDLE;
+    m_motionVectorSwapchain.images.clear();
+  }
+
   if(m_referenceSpace != XR_NULL_HANDLE)
+
   {
     xrDestroySpace(m_referenceSpace);
     m_referenceSpace = XR_NULL_HANDLE;
@@ -157,6 +195,8 @@ bool GsOpenXr::initialize(VkInstance       vkInstance,
 
   initPerformanceMetrics();
   initColorSpace();
+  initPassthrough();
+  initSpaceWarp();
 
   // Check for VK_KHR_multiview support
   m_supportsMultiview = true;  // OpenXR runtime should have provided this if supported
@@ -171,7 +211,9 @@ bool GsOpenXr::createInstance()
   std::vector<const char*> extensions = {
     "XR_KHR_vulkan_enable",
     "XR_META_performance_metrics",
-    "XR_FB_color_space"
+    "XR_FB_color_space",
+    "XR_FB_passthrough",
+    "XR_FB_space_warp"
   };
 
   XrInstanceCreateInfo createInfo{XR_TYPE_INSTANCE_CREATE_INFO};
@@ -239,6 +281,14 @@ void GsOpenXr::loadXrFunctions()
   {
     LOGI("XR_FB_color_space extension available\n");
   }
+
+  // Load XR_FB_passthrough functions
+  xrGetInstanceProcAddr(m_instance, "xrCreatePassthroughFB", (PFN_xrVoidFunction*)&m_xrCreatePassthroughFB);
+  xrGetInstanceProcAddr(m_instance, "xrDestroyPassthroughFB", (PFN_xrVoidFunction*)&m_xrDestroyPassthroughFB);
+  xrGetInstanceProcAddr(m_instance, "xrPassthroughStartFB", (PFN_xrVoidFunction*)&m_xrPassthroughStartFB);
+  xrGetInstanceProcAddr(m_instance, "xrPassthroughPauseFB", (PFN_xrVoidFunction*)&m_xrPassthroughPauseFB);
+  xrGetInstanceProcAddr(m_instance, "xrCreatePassthroughLayerFB", (PFN_xrVoidFunction*)&m_xrCreatePassthroughLayerFB);
+  xrGetInstanceProcAddr(m_instance, "xrDestroyPassthroughLayerFB", (PFN_xrVoidFunction*)&m_xrDestroyPassthroughLayerFB);
 }
 
 bool GsOpenXr::queryRequiredVulkanExtensions(std::vector<std::string>& outInstanceExtensions,
@@ -489,10 +539,33 @@ bool GsOpenXr::createSwapchains(VkFormat colorFormat, VkFormat depthFormat)
   if(m_depthSwapchain.handle == XR_NULL_HANDLE)
     return false;
 
-  LOGI("Created XR swapchains: color=%zu images, depth=%zu images\n", m_colorSwapchain.images.size(),
-       m_depthSwapchain.images.size());
+  // Create motion vector swapchain if Space Warp is supported
+  if(m_spaceWarpSupported)
+  {
+    XrSwapchainCreateInfo motionSwapchainInfo{XR_TYPE_SWAPCHAIN_CREATE_INFO};
+    motionSwapchainInfo.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
+    motionSwapchainInfo.format     = VK_FORMAT_R16G16_SFLOAT;
+    motionSwapchainInfo.sampleCount = 1;
+    motionSwapchainInfo.width      = m_fullExtent.width;
+    motionSwapchainInfo.height     = m_fullExtent.height;
+    motionSwapchainInfo.faceCount  = 1;
+    motionSwapchainInfo.arraySize  = 1;
+    motionSwapchainInfo.mipCount   = 1;
+
+    m_motionVectorSwapchain = createSwapchain(motionSwapchainInfo);
+    if(m_motionVectorSwapchain.handle == XR_NULL_HANDLE)
+    {
+      LOGW("Failed to create motion vector swapchain, disabling Space Warp\n");
+      m_spaceWarpSupported = false;
+    }
+  }
+
+  LOGI("Created XR swapchains: color=%zu images, depth=%zu images, motion=%zu images\n", 
+       m_colorSwapchain.images.size(), m_depthSwapchain.images.size(), 
+       m_spaceWarpSupported ? m_motionVectorSwapchain.images.size() : 0);
   return true;
 }
+
 
 GsOpenXr::Swapchain GsOpenXr::createSwapchain(const XrSwapchainCreateInfo& createInfo) const
 {
@@ -797,7 +870,7 @@ glm::mat4 GsOpenXr::createProjectionMatrix(const XrFovf& fov, float nearZ, float
   return proj;
 }
 
-bool GsOpenXr::acquireSwapchainImages(VkImage& outColorImage, VkImage& outDepthImage)
+bool GsOpenXr::acquireSwapchainImages(VkImage& outColorImage, VkImage& outDepthImage, VkImage& outMotionImage)
 {
   XrSwapchainImageAcquireInfo acquireInfo{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
 
@@ -813,6 +886,16 @@ bool GsOpenXr::acquireSwapchainImages(VkImage& outColorImage, VkImage& outDepthI
   {
     LOGE("Failed to acquire depth swapchain image (result=%d)\n", (int)result);
     return false;
+  }
+
+  if(m_spaceWarpSupported)
+  {
+    result = xrAcquireSwapchainImage(m_motionVectorSwapchain.handle, &acquireInfo, &m_motionVectorSwapchain.currentImageIndex);
+    if(XR_FAILED(result))
+    {
+      LOGE("Failed to acquire motion swapchain image (result=%d)\n", (int)result);
+      return false;
+    }
   }
 
   // Wait for images to be ready
@@ -833,12 +916,31 @@ bool GsOpenXr::acquireSwapchainImages(VkImage& outColorImage, VkImage& outDepthI
     return false;
   }
 
+  if(m_spaceWarpSupported)
+  {
+    result = xrWaitSwapchainImage(m_motionVectorSwapchain.handle, &waitInfo);
+    if(XR_FAILED(result))
+    {
+      LOGE("Failed to wait for motion swapchain image (result=%d)\n", (int)result);
+      return false;
+    }
+  }
+
   outColorImage = m_colorSwapchain.images[m_colorSwapchain.currentImageIndex];
   outDepthImage = m_depthSwapchain.images[m_depthSwapchain.currentImageIndex];
+  if(m_spaceWarpSupported)
+  {
+    outMotionImage = m_motionVectorSwapchain.images[m_motionVectorSwapchain.currentImageIndex];
+  }
+  else
+  {
+    outMotionImage = VK_NULL_HANDLE;
+  }
 
   m_swapchainImageState = SwapchainImageState::ACQUIRED;
   return true;
 }
+
 
 void GsOpenXr::releaseSwapchainImages()
 {
@@ -849,14 +951,67 @@ void GsOpenXr::releaseSwapchainImages()
 
   xrReleaseSwapchainImage(m_colorSwapchain.handle, &releaseInfo);
   xrReleaseSwapchainImage(m_depthSwapchain.handle, &releaseInfo);
+  if(m_spaceWarpSupported)
+  {
+    xrReleaseSwapchainImage(m_motionVectorSwapchain.handle, &releaseInfo);
+  }
 
   m_swapchainImageState = SwapchainImageState::RELEASED;
 }
+
 
 void GsOpenXr::endFrame()
 {
   std::vector<XrCompositionLayerProjectionView> projectionViews(VIEW_COUNT);
   std::vector<XrCompositionLayerDepthInfoKHR>   depthInfos(VIEW_COUNT);
+  std::vector<XrCompositionLayerSpaceWarpInfoFB> spaceWarpInfos(VIEW_COUNT);
+
+  // Compute app space delta pose
+  XrPosef appSpaceDeltaPose = { {0,0,0,1}, {0,0,0} }; // Identity by default
+  
+  // Calculate delta pose if we have a valid previous pose
+  if (m_prevAppSpacePoseValid) {
+      // Current app space is always identity in stage space, so delta is just inverse of previous?
+      // Wait, appSpaceDeltaPose is "incremental application-applied transform... since the previous frame".
+      // If we move the scene (m_splatSetVk.translation), we are effectively moving the app space.
+      // However, OpenXR tracking handles HMD movement. App Space Delta Pose is for when the *virtual coordinate system* moves.
+      // In this app, we move the scene by modifying m_splatSetVk.transform. The reference space (Stage) stays fixed.
+      // So appSpaceDeltaPose should likely be identity unless we are implementing teleportation or artificial locomotion
+      // by moving the reference space origin.
+      
+      // But wait, the spec says: "When artificial locomotion ... happens, the application might transform the whole 
+      // XrCompositionLayerProjection::space from one application space pose to another pose between frames."
+      // We are using m_referenceSpace (Stage) as the space. We don't change it frame to frame.
+      // We change the *content* transform (Model Matrix).
+      
+      // Ideally, for Space Warp to work with artificial locomotion (stick movement), we should provide the delta.
+      // BUT, if we move the Model Matrix, that's "App Space" movement relative to the HMD if the HMD is static?
+      // No, App Space is the space the views are defined in. Here it is Stage Space.
+      // If we don't change Stage Space origin, appSpaceDeltaPose is Identity.
+      // BUT, if we move the "World" (Model Matrix), then from the perspective of the camera, the world moved.
+      // Space Warp expects motion vectors to account for *everything*.
+      // If we provide motion vectors that include camera movement AND object movement, then appSpaceDeltaPose 
+      // allows the runtime to subtract the "camera movement" part that it already knows about (from tracking) 
+      // vs the "artificial" part?
+      
+      // Actually, standard Space Warp usage:
+      // Motion Vectors = (CurrentNDC - PreviousNDC).
+      // This includes Camera Rotation + Translation (Tracking) AND Artificial Locomotion AND Object Motion.
+      // The Runtime knows about Tracking. It needs to know about Artificial Locomotion to do the right reprojection.
+      
+      // In this app, we implement locomotion by moving the SCENE (Model Matrix), not the Camera (View Matrix is from XR).
+      // Wait, updateXrLocomotion modifies m_splatSetVk.translation. 
+      // So the object moves. The camera (XR Reference Space) is fixed to the physical room.
+      // So effectively, the "World" is moving.
+      // So appSpaceDeltaPose should be Identity because the Reference Space (Stage) hasn't moved.
+      // The motion vectors will contain the scene movement.
+      
+      // Let's stick with Identity for now.
+  }
+  
+  // Store current pose for next frame (not really used if we keep Identity)
+  // m_prevAppSpacePose = currentAppSpacePose; 
+  // m_prevAppSpacePoseValid = true;
 
   for(uint32_t i = 0; i < VIEW_COUNT; ++i)
   {
@@ -872,12 +1027,34 @@ void GsOpenXr::endFrame()
     depthInfos[i].nearZ    = m_nearZ;
     depthInfos[i].farZ     = m_farZ;
 
+    if(m_spaceWarpSupported)
+    {
+      spaceWarpInfos[i].type = XR_TYPE_COMPOSITION_LAYER_SPACE_WARP_INFO_FB;
+      spaceWarpInfos[i].next = &depthInfos[i]; // Chain depth info after space warp info? Or vice versa?
+                                               // Spec says: "add an XrCompositionLayerSpaceWarpInfoFB structure to the XrCompositionLayerProjectionView::next chain"
+                                               // It doesn't restrict order. Let's chain SpaceWarp -> Depth -> NULL
+      spaceWarpInfos[i].layerFlags = 0;
+      spaceWarpInfos[i].motionVectorSubImage = {m_motionVectorSwapchain.handle, imageRect, 0};
+      spaceWarpInfos[i].appSpaceDeltaPose = appSpaceDeltaPose;
+      spaceWarpInfos[i].depthSubImage = {m_depthSwapchain.handle, imageRect, 0};
+      spaceWarpInfos[i].minDepth = 0.0f;
+      spaceWarpInfos[i].maxDepth = 1.0f;
+      spaceWarpInfos[i].nearZ = m_nearZ;
+      spaceWarpInfos[i].farZ = m_farZ;
+      
+      projectionViews[i].next = &spaceWarpInfos[i];
+    }
+    else
+    {
+      projectionViews[i].next = &depthInfos[i];
+    }
+
     projectionViews[i].type     = XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW;
-    projectionViews[i].next     = &depthInfos[i];
     projectionViews[i].pose     = m_locatedViews[i].pose;
     projectionViews[i].fov      = m_locatedViews[i].fov;
     projectionViews[i].subImage = {m_colorSwapchain.handle, imageRect, 0};
   }
+
 
   XrCompositionLayerProjection layer{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
   layer.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
@@ -885,16 +1062,37 @@ void GsOpenXr::endFrame()
   layer.viewCount  = VIEW_COUNT;
   layer.views      = projectionViews.data();
 
-  const XrCompositionLayerBaseHeader* layers[] = {reinterpret_cast<XrCompositionLayerBaseHeader*>(&layer)};
+  // Prepare layers list
+  std::vector<const XrCompositionLayerBaseHeader*> layers;
+
+  // If passthrough is enabled, add it as the background layer
+  XrCompositionLayerPassthroughFB passthroughCompLayer{XR_TYPE_COMPOSITION_LAYER_PASSTHROUGH_FB};
+  if(m_passthroughEnabled && m_passthroughSupported && m_passthroughLayer != XR_NULL_HANDLE)
+  {
+    passthroughCompLayer.layerHandle = m_passthroughLayer;
+    passthroughCompLayer.flags       = 0;
+    passthroughCompLayer.space       = XR_NULL_HANDLE;
+    layers.push_back(reinterpret_cast<XrCompositionLayerBaseHeader*>(&passthroughCompLayer));
+  }
+
+  layers.push_back(reinterpret_cast<XrCompositionLayerBaseHeader*>(&layer));
 
   XrFrameEndInfo frameEndInfo{XR_TYPE_FRAME_END_INFO};
   frameEndInfo.displayTime          = m_predictedDisplayTime;
-  frameEndInfo.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
+  
+  if(m_passthroughEnabled && m_passthroughSupported)
+  {
+    frameEndInfo.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_ALPHA_BLEND;
+  }
+  else
+  {
+    frameEndInfo.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
+  }
 
   if(m_swapchainImageState == SwapchainImageState::RELEASED && m_shouldRender)
   {
-    frameEndInfo.layerCount = 1;
-    frameEndInfo.layers     = layers;
+    frameEndInfo.layerCount = static_cast<uint32_t>(layers.size());
+    frameEndInfo.layers     = layers.data();
   }
   else
   {
@@ -903,6 +1101,7 @@ void GsOpenXr::endFrame()
   }
 
   XrResult result = xrEndFrame(m_session, &frameEndInfo);
+
   if(XR_FAILED(result))
   {
     LOGE("xrEndFrame failed (result=%d)\n", (int)result);
@@ -1808,6 +2007,122 @@ const char* GsOpenXr::colorSpaceToString(ColorSpace cs)
     case ColorSpace::P3:        return "P3-D65";
     case ColorSpace::AdobeRGB:  return "Adobe RGB";
     default:                    return "Unknown";
+  }
+}
+
+void GsOpenXr::initPassthrough()
+{
+  if (!m_xrCreatePassthroughFB || m_session == XR_NULL_HANDLE)
+  {
+    return;
+  }
+
+  XrPassthroughCreateInfoFB createInfo{XR_TYPE_PASSTHROUGH_CREATE_INFO_FB};
+  // flags = 0 means default behavior
+
+  XrResult result = m_xrCreatePassthroughFB(m_session, &createInfo, &m_passthrough);
+  if (XR_FAILED(result))
+  {
+    LOGW("Failed to create passthrough handle (result=%d)\n", (int)result);
+    return;
+  }
+
+  XrPassthroughLayerCreateInfoFB layerInfo{XR_TYPE_PASSTHROUGH_LAYER_CREATE_INFO_FB};
+  layerInfo.passthrough = m_passthrough;
+  layerInfo.purpose = XR_PASSTHROUGH_LAYER_PURPOSE_RECONSTRUCTION_FB;
+  // usage member does not exist in this version of the struct
+
+  result = m_xrCreatePassthroughLayerFB(m_session, &layerInfo, &m_passthroughLayer);
+  if (XR_FAILED(result))
+  {
+    LOGW("Failed to create passthrough layer (result=%d)\n", (int)result);
+    m_xrDestroyPassthroughFB(m_passthrough);
+    m_passthrough = XR_NULL_HANDLE;
+    return;
+  }
+
+  // Start passthrough immediately, but we control visibility via layer submission
+  result = m_xrPassthroughStartFB(m_passthrough);
+  if (XR_FAILED(result))
+  {
+    LOGW("Failed to start passthrough (result=%d)\n", (int)result);
+    m_xrDestroyPassthroughLayerFB(m_passthroughLayer);
+    m_xrDestroyPassthroughFB(m_passthrough);
+    m_passthroughLayer = XR_NULL_HANDLE;
+    m_passthrough = XR_NULL_HANDLE;
+    return;
+  }
+
+  m_passthroughSupported = true;
+  m_passthroughRunning = true;
+  
+  // Default to enabled if supported
+  m_passthroughEnabled = true;
+  LOGI("XR Passthrough initialized and started\n");
+}
+
+void GsOpenXr::destroyPassthrough()
+{
+  if (m_passthroughRunning && m_xrPassthroughPauseFB && m_passthrough != XR_NULL_HANDLE)
+  {
+    m_xrPassthroughPauseFB(m_passthrough);
+  }
+
+  if (m_passthroughLayer != XR_NULL_HANDLE && m_xrDestroyPassthroughLayerFB)
+  {
+    m_xrDestroyPassthroughLayerFB(m_passthroughLayer);
+    m_passthroughLayer = XR_NULL_HANDLE;
+  }
+
+  if (m_passthrough != XR_NULL_HANDLE && m_xrDestroyPassthroughFB)
+  {
+    m_xrDestroyPassthroughFB(m_passthrough);
+    m_passthrough = XR_NULL_HANDLE;
+  }
+
+  m_passthroughRunning = false;
+  m_passthroughSupported = false;
+}
+
+void GsOpenXr::setPassthroughEnabled(bool enabled)
+{
+  if (m_passthroughSupported)
+  {
+    m_passthroughEnabled = enabled;
+    if (m_passthroughRunning)
+    {
+      if (enabled)
+         m_xrPassthroughStartFB(m_passthrough);
+      else
+         m_xrPassthroughPauseFB(m_passthrough);
+    }
+  }
+}
+
+void GsOpenXr::initSpaceWarp()
+{
+  m_spaceWarpSupported = false;
+  
+  if (m_instance != XR_NULL_HANDLE && m_systemId != XR_NULL_SYSTEM_ID)
+  {
+      XrSystemSpaceWarpPropertiesFB spaceWarpProps{XR_TYPE_SYSTEM_SPACE_WARP_PROPERTIES_FB};
+      XrSystemProperties systemProps{XR_TYPE_SYSTEM_PROPERTIES};
+      systemProps.next = &spaceWarpProps;
+      
+      if (XR_SUCCEEDED(xrGetSystemProperties(m_instance, m_systemId, &systemProps)))
+      {
+          LOGI("Space Warp supported. Recommended motion vector resolution: %dx%d\n", 
+               spaceWarpProps.recommendedMotionVectorImageRectWidth, 
+               spaceWarpProps.recommendedMotionVectorImageRectHeight);
+          m_spaceWarpSupported = true;
+          
+          // Using full resolution (m_fullExtent) for motion vectors to match the color buffer pipeline.
+          // While spec recommends smaller resolution, our rendering pipeline is fixed to m_viewSize.
+      }
+      else
+      {
+          LOGW("Space Warp extension enabled but failed to get properties. Disabling.\n");
+      }
   }
 }
 

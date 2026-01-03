@@ -101,11 +101,12 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
     // GBuffer resize is now handled in onPreRender() before command recording
 
     // Acquire XR swapchain images
-    if(!m_xr->acquireSwapchainImages(m_xrColorImage, m_xrDepthImage))
+    if(!m_xr->acquireSwapchainImages(m_xrColorImage, m_xrDepthImage, m_xrMotionImage))
     {
       m_xr->endFrame();
       return;
     }
+
 
     // Locate views with current clip planes
     glm::vec2 clipPlanes = cameraManip->getClipPlanes();
@@ -585,9 +586,18 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
     VkRenderingAttachmentInfo colorAttachment = DEFAULT_VkRenderingAttachmentInfo;
     colorAttachment.imageView                 = m_gBuffers.getColorImageView(colorBufferId);
     colorAttachment.loadOp                    = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    colorAttachment.clearValue                = {m_clearColor};
+    
+    VkClearColorValue clearColor = m_clearColor;
+#ifdef WITH_OPENXR
+    if(m_xr && m_xr->isValid() && m_xr->isPassthroughEnabled())
+    {
+      clearColor = {0.0f, 0.0f, 0.0f, 0.0f};
+    }
+#endif
+    colorAttachment.clearValue                = {clearColor};
 
     VkRenderingAttachmentInfo depthAttachment = DEFAULT_VkRenderingAttachmentInfo;
+
     depthAttachment.imageView                 = m_gBuffers.getDepthImageView();
     depthAttachment.loadOp                    = VK_ATTACHMENT_LOAD_OP_CLEAR;
     depthAttachment.clearValue                = {.depthStencil = DEFAULT_VkClearDepthStencilValue};

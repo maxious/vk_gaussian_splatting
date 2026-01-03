@@ -111,8 +111,9 @@ public:
   EyeData getEyeData(uint32_t eyeIndex) const;
 
   // Swapchain image management
-  bool acquireSwapchainImages(VkImage& outColorImage, VkImage& outDepthImage);
+  bool acquireSwapchainImages(VkImage& outColorImage, VkImage& outDepthImage, VkImage& outMotionImage);
   void releaseSwapchainImages();
+
 
   // End frame and submit to compositor
   void endFrame();
@@ -193,6 +194,7 @@ public:
   };
 
   bool isColorSpaceSupported() const { return m_colorSpaceSupported; }
+  bool isSpaceWarpSupported() const { return m_spaceWarpSupported; }
   ColorSpace getNativeColorSpace() const { return m_nativeColorSpace; }
   ColorSpace getCurrentColorSpace() const { return m_currentColorSpace; }
   const std::vector<ColorSpace>& getSupportedColorSpaces() const { return m_supportedColorSpaces; }
@@ -391,6 +393,46 @@ private:
   PFN_xrSetColorSpaceFB m_xrSetColorSpaceFB = nullptr;
 
   void initColorSpace();
+
+  // XR_FB_space_warp support
+  bool m_spaceWarpSupported = false;
+  Swapchain m_motionVectorSwapchain;
+  
+  // App space pose from previous frame for delta calculation
+  XrPosef m_prevAppSpacePose = { {0,0,0,1}, {0,0,0} };
+  bool m_prevAppSpacePoseValid = false;
+
+  void initSpaceWarp();
+
+  // XR_FB_passthrough support
+  bool m_passthroughSupported = false;
+  bool m_passthroughEnabled = false;
+  bool m_passthroughRunning = false;
+
+  XrPassthroughFB m_passthrough = XR_NULL_HANDLE;
+  XrPassthroughLayerFB m_passthroughLayer = XR_NULL_HANDLE;
+
+  using PFN_xrCreatePassthroughFB = XrResult(XRAPI_PTR*)(XrSession, const XrPassthroughCreateInfoFB*, XrPassthroughFB*);
+  using PFN_xrDestroyPassthroughFB = XrResult(XRAPI_PTR*)(XrPassthroughFB);
+  using PFN_xrPassthroughStartFB = XrResult(XRAPI_PTR*)(XrPassthroughFB);
+  using PFN_xrPassthroughPauseFB = XrResult(XRAPI_PTR*)(XrPassthroughFB);
+  using PFN_xrCreatePassthroughLayerFB = XrResult(XRAPI_PTR*)(XrSession, const XrPassthroughLayerCreateInfoFB*, XrPassthroughLayerFB*);
+  using PFN_xrDestroyPassthroughLayerFB = XrResult(XRAPI_PTR*)(XrPassthroughLayerFB);
+
+  PFN_xrCreatePassthroughFB m_xrCreatePassthroughFB = nullptr;
+  PFN_xrDestroyPassthroughFB m_xrDestroyPassthroughFB = nullptr;
+  PFN_xrPassthroughStartFB m_xrPassthroughStartFB = nullptr;
+  PFN_xrPassthroughPauseFB m_xrPassthroughPauseFB = nullptr;
+  PFN_xrCreatePassthroughLayerFB m_xrCreatePassthroughLayerFB = nullptr;
+  PFN_xrDestroyPassthroughLayerFB m_xrDestroyPassthroughLayerFB = nullptr;
+
+  void initPassthrough();
+  void destroyPassthrough();
+
+public:
+  bool isPassthroughSupported() const { return m_passthroughSupported; }
+  bool isPassthroughEnabled() const { return m_passthroughEnabled; }
+  void setPassthroughEnabled(bool enabled);
 };
 
 }  // namespace vk_gaussian_splatting
