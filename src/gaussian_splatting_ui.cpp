@@ -1707,6 +1707,31 @@ void GaussianSplattingUI::guiDrawRendererProperties()
         PE::SliderFloat("Snap Angle", &m_xrSnapTurnAngle, 15.0f, 90.0f, "%.0f deg", 0, "Snap turn angle in degrees");
       }
     }
+
+    if(m_xr->isColorSpaceSupported())
+    {
+      ImGui::Separator();
+      PE::Text("## Color Space", "");
+      PE::Text("Current", "%s", GsOpenXr::colorSpaceToString(m_xr->getCurrentColorSpace()));
+
+      const auto& supportedSpaces = m_xr->getSupportedColorSpaces();
+      if(!supportedSpaces.empty() && ImGui::BeginCombo("Color Space", GsOpenXr::colorSpaceToString(m_xr->getCurrentColorSpace())))
+      {
+        for(auto cs : supportedSpaces)
+        {
+          bool isSelected = (cs == m_xr->getCurrentColorSpace());
+          if(ImGui::Selectable(GsOpenXr::colorSpaceToString(cs), isSelected))
+          {
+            m_xr->setColorSpace(cs);
+          }
+          if(isSelected)
+          {
+            ImGui::SetItemDefaultFocus();
+          }
+        }
+        ImGui::EndCombo();
+      }
+    }
   }
   else if(m_useXrHmd)
   {

@@ -156,6 +156,7 @@ bool GsOpenXr::initialize(VkInstance       vkInstance,
   }
 
   initPerformanceMetrics();
+  initColorSpace();
 
   // Check for VK_KHR_multiview support
   m_supportsMultiview = true;  // OpenXR runtime should have provided this if supported
@@ -169,7 +170,8 @@ bool GsOpenXr::createInstance()
 {
   std::vector<const char*> extensions = {
     "XR_KHR_vulkan_enable",
-    "XR_META_performance_metrics"
+    "XR_META_performance_metrics",
+    "XR_FB_color_space"
   };
 
   XrInstanceCreateInfo createInfo{XR_TYPE_INSTANCE_CREATE_INFO};
@@ -224,6 +226,18 @@ void GsOpenXr::loadXrFunctions()
   if(m_perfMetricsSupported)
   {
     LOGI("XR_META_performance_metrics extension available\n");
+  }
+
+  xrGetInstanceProcAddr(m_instance, "xrEnumerateColorSpacesFB",
+                        (PFN_xrVoidFunction*)&m_xrEnumerateColorSpacesFB);
+  xrGetInstanceProcAddr(m_instance, "xrSetColorSpaceFB",
+                        (PFN_xrVoidFunction*)&m_xrSetColorSpaceFB);
+
+  m_colorSpaceSupported = (m_xrEnumerateColorSpacesFB != nullptr && m_xrSetColorSpaceFB != nullptr);
+
+  if(m_colorSpaceSupported)
+  {
+    LOGI("XR_FB_color_space extension available\n");
   }
 }
 
@@ -1713,6 +1727,88 @@ void GsOpenXr::updatePerformanceMetrics()
   m_perfMetrics.cpuUtilizationWorst = queryFloat(m_pathCpuUtilWorst);
   m_perfMetrics.gpuUtilization = queryFloat(m_pathGpuUtil);
   m_perfMetrics.valid = true;
+}
+
+void GsOpenXr::initColorSpace()
+{
+  if(!m_colorSpaceSupported || !m_xrEnumerateColorSpacesFB || m_session == XR_NULL_HANDLE)
+    return;
+
+  uint32_t colorSpaceCount = 0;
+  XrResult result = m_xrEnumerateColorSpacesFB(m_session, 0, &colorSpaceCount, nullptr);
+  if(XR_FAILED(result) || colorSpaceCount == 0)
+  {
+    LOGW("No color spaces available\n");
+    m_colorSpaceSupported = false;
+    return;
+  }
+
+  std::vector<int32_t> colorSpaces(colorSpaceCount);
+  result = m_xrEnumerateColorSpacesFB(m_session, colorSpaceCount, &colorSpaceCount, colorSpaces.data());
+  if(XR_FAILED(result))
+  {
+    LOGE("Failed to enumerate color spaces\n");
+    m_colorSpaceSupported = false;
+    return;
+  }
+
+  m_supportedColorSpaces.clear();
+  for(int32_t cs : colorSpaces)
+  {
+    m_supportedColorSpaces.push_back(static_cast<ColorSpace>(cs));
+  }
+
+  LOGI("XR color spaces available: %u\n", colorSpaceCount);
+  for(ColorSpace cs : m_supportedColorSpaces)
+  {
+    LOGI("  - %s\n", colorSpaceToString(cs));
+  }
+
+  bool hasRec709 = std::find(m_supportedColorSpaces.begin(), m_supportedColorSpaces.end(), 
+                              ColorSpace::Rec709) != m_supportedColorSpaces.end();
+  if(hasRec709)
+  {
+    setColorSpace(ColorSpace::Rec709);
+  }
+  else if(!m_supportedColorSpaces.empty())
+  {
+    setColorSpace(m_supportedColorSpaces[0]);
+  }
+}
+
+bool GsOpenXr::setColorSpace(ColorSpace colorSpace)
+{
+  if(!m_colorSpaceSupported || !m_xrSetColorSpaceFB || m_session == XR_NULL_HANDLE)
+    return false;
+
+  XrResult result = m_xrSetColorSpaceFB(m_session, static_cast<int32_t>(colorSpace));
+  if(XR_SUCCEEDED(result))
+  {
+    m_currentColorSpace = colorSpace;
+    LOGI("XR color space set to: %s\n", colorSpaceToString(colorSpace));
+    return true;
+  }
+  else
+  {
+    LOGW("Failed to set XR color space to %s (result=%d)\n", colorSpaceToString(colorSpace), (int)result);
+    return false;
+  }
+}
+
+const char* GsOpenXr::colorSpaceToString(ColorSpace cs)
+{
+  switch(cs)
+  {
+    case ColorSpace::Unmanaged: return "Unmanaged";
+    case ColorSpace::Rec2020:   return "Rec.2020";
+    case ColorSpace::Rec709:    return "Rec.709 (sRGB)";
+    case ColorSpace::RiftCV1:   return "Rift CV1";
+    case ColorSpace::RiftS:     return "Rift S";
+    case ColorSpace::Quest:     return "Quest";
+    case ColorSpace::P3:        return "P3-D65";
+    case ColorSpace::AdobeRGB:  return "Adobe RGB";
+    default:                    return "Unknown";
+  }
 }
 
 }  // namespace vk_gaussian_splatting

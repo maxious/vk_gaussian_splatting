@@ -180,6 +180,25 @@ public:
   const PerformanceMetrics& getPerformanceMetrics() const { return m_perfMetrics; }
   void updatePerformanceMetrics();
 
+  enum class ColorSpace
+  {
+    Unmanaged = 0,
+    Rec2020 = 1,
+    Rec709 = 2,
+    RiftCV1 = 3,
+    RiftS = 4,
+    Quest = 5,
+    P3 = 6,
+    AdobeRGB = 7
+  };
+
+  bool isColorSpaceSupported() const { return m_colorSpaceSupported; }
+  ColorSpace getNativeColorSpace() const { return m_nativeColorSpace; }
+  ColorSpace getCurrentColorSpace() const { return m_currentColorSpace; }
+  const std::vector<ColorSpace>& getSupportedColorSpaces() const { return m_supportedColorSpaces; }
+  bool setColorSpace(ColorSpace colorSpace);
+  static const char* colorSpaceToString(ColorSpace cs);
+
 private:
   // OpenXR handles
   XrInstance     m_instance      = XR_NULL_HANDLE;
@@ -358,6 +377,20 @@ private:
 
   void initPerformanceMetrics();
   void enablePerformanceMetrics();
+
+  // XR_FB_color_space support
+  bool m_colorSpaceSupported = false;
+  ColorSpace m_nativeColorSpace = ColorSpace::Unmanaged;
+  ColorSpace m_currentColorSpace = ColorSpace::Unmanaged;
+  std::vector<ColorSpace> m_supportedColorSpaces;
+
+  using PFN_xrEnumerateColorSpacesFB = XrResult(XRAPI_PTR*)(XrSession, uint32_t, uint32_t*, int32_t*);
+  using PFN_xrSetColorSpaceFB = XrResult(XRAPI_PTR*)(XrSession, int32_t);
+
+  PFN_xrEnumerateColorSpacesFB m_xrEnumerateColorSpacesFB = nullptr;
+  PFN_xrSetColorSpaceFB m_xrSetColorSpaceFB = nullptr;
+
+  void initColorSpace();
 };
 
 }  // namespace vk_gaussian_splatting
