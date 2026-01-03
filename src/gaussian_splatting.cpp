@@ -251,6 +251,17 @@ void GaussianSplatting::onDetach()
   }
 #endif
 
+  if(m_dummyTextureArray.view != VK_NULL_HANDLE)
+  {
+    vkDestroyImageView(m_device, m_dummyTextureArray.view, nullptr);
+    m_dummyTextureArray.view = VK_NULL_HANDLE;
+  }
+  if(m_dummyTextureArray.image.image != VK_NULL_HANDLE)
+  {
+    m_alloc.destroyImage(m_dummyTextureArray.image);
+    m_dummyTextureArray.image = {};
+  }
+
   m_profilerGpuTimer.deinit();
   m_profilerManager->destroyTimeline(m_profilerTimeline);
   m_profilerTimeline = nullptr;
