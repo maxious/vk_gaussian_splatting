@@ -22,7 +22,7 @@
 // clang-format off
 [[vk::binding(BINDING_FRAME_INFO_UBO, 0)]] ConstantBuffer<FrameInfo> frameInfo;
 [[vk::binding(BINDING_OPACITY_TEXTURE, 0)]] Texture2D<float> depthTexture : register(t16);
-[[vk::binding(BINDING_OPACITY_TEXTURE, 0)]] SamplerState depthSampler : register(s16);
+[[vk::binding(BINDING_OPACITY_SAMPLER, 0)]] SamplerState depthSampler : register(s16);
 [[vk::push_constant]] ConstantBuffer<PushConstant> pcRaster;
 
 struct VertexInput

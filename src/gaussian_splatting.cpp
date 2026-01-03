@@ -178,7 +178,7 @@ void GaussianSplatting::onAttach(nvapp::Application* app)
       viewInfo.subresourceRange.baseArrayLayer = 0;
       viewInfo.subresourceRange.layerCount = 2;
       
-      vkCreateImageView(m_device, &viewInfo, nullptr, &m_dummyTextureArray.view);
+      NVVK_CHECK(vkCreateImageView(m_device, &viewInfo, nullptr, &m_dummyTextureArray.view));
 
       // Transition to shader read only
       VkCommandBuffer cmd = m_app->createTempCmdBuffer();
@@ -254,6 +254,20 @@ void GaussianSplatting::onDetach()
   m_profilerGpuTimer.deinit();
   m_profilerManager->destroyTimeline(m_profilerTimeline);
   m_profilerTimeline = nullptr;
+
+  if(m_dummyTextureArray.view != VK_NULL_HANDLE)
+  {
+    vkDestroyImageView(m_device, m_dummyTextureArray.view, nullptr);
+    m_dummyTextureArray.view = VK_NULL_HANDLE;
+  }
+  if(m_dummyTextureArray.image.image != VK_NULL_HANDLE)
+  {
+    m_alloc.destroyImage(m_dummyTextureArray.image);
+    m_dummyTextureArray.image = {};
+  }
+
+  m_descriptorSet = VK_NULL_HANDLE;
+
   m_gBuffers.deinit();
   m_samplerPool.releaseSampler(m_sampler);
   m_samplerPool.deinit();

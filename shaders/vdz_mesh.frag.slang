@@ -23,7 +23,7 @@
 [[vk::binding(BINDING_FRAME_INFO_UBO, 0)]] ConstantBuffer<FrameInfo> frameInfo;
 [[vk::binding(BINDING_VDZ_VIDEO_TEXTURE, 0)]] Texture2D<float4> vdzVideoTexture : register(t25);
 [[vk::binding(BINDING_VDZ_DEPTH_TEXTURE, 0)]] Texture2D<float> vdzDepthTexture : register(t26);
-[[vk::binding(BINDING_VDZ_VIDEO_TEXTURE, 0)]] SamplerState vdzSampler : register(s25);
+[[vk::binding(BINDING_VDZ_VIDEO_SAMPLER, 0)]] SamplerState vdzSampler : register(s25);
 
 struct FragmentInput
 {

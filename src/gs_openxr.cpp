@@ -1190,7 +1190,8 @@ void GsOpenXr::endFrame()
 
   if(XR_FAILED(result))
   {
-    LOGE("xrEndFrame failed (result=%d)\n", (int)result);
+    LOGE("xrEndFrame failed (result=%d, layerCount=%d, environmentBlendMode=%d, shouldRender=%d, swapchainImageState=%d)\n",
+         (int)result, (int)frameEndInfo.layerCount, (int)frameEndInfo.environmentBlendMode, (int)m_shouldRender, (int)m_swapchainImageState);
   }
 }
 

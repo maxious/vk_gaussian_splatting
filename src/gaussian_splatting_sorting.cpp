@@ -126,70 +126,19 @@ void GaussianSplatting::processSortingOnGPU(VkCommandBuffer cmd, const uint32_t 
     uint32_t indirectOffset = static_cast<uint32_t>(m_frameIndex * m_indirectStride);
     uint32_t frameInfoOffset = m_lastFrameInfoOffset;
     uint32_t dynamicOffsets[2] = {frameInfoOffset, indirectOffset};
-    
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipelineLayout, 0, 1, &m_descriptorSet, 2, dynamicOffsets);
 
-    // Model transform
-    m_pcRaster.modelMatrix        = m_splatSetVk.transform;
-    m_pcRaster.modelMatrixInverse = m_splatSetVk.transformInverse;
-
-    vkCmdPushConstants(cmd, m_pipelineLayout,
-                       VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_MESH_BIT_EXT | VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                       0, sizeof(shaderio::PushConstant), &m_pcRaster);
-
-    vkCmdDispatch(cmd, (splatCount + prmRaster.distShaderWorkgroupSize - 1) / prmRaster.distShaderWorkgroupSize, 1, 1);
-
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                         VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_MESH_SHADER_BIT_EXT | VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT,
-                         0, 1, &barrier, 0, NULL, 0, NULL);
-  }
-
-  // 3. invoke the radix sort from vrdx lib
-  {
-    auto timerSection = m_profilerGpuTimer.cmdFrameSection(cmd, "GPU Sort");
-    VkDeviceSize indirectOffset = m_frameIndex * m_indirectStride;
-
-    vrdxCmdSortKeyValueIndirect(cmd, m_gpuSorter, splatCount, m_indirect.buffer,
-                                indirectOffset + offsetof(shaderio::IndirectParams, instanceCount), m_splatDistancesDevice.buffer, 0,
-                                m_splatIndicesDevice.buffer, 0, m_vrdxStorageDevice.buffer, 0, 0, 0);
-
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-                         VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_MESH_SHADER_BIT_EXT | VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT,
-                         0, 1, &barrier, 0, NULL, 0, NULL);
-  }
-}
-
-void GaussianSplatting::drawSplatPrimitives(VkCommandBuffer cmd, const uint32_t splatCount)
-{
-  NVVK_DBG_SCOPE(cmd);
-
-  // Do we need to activate depth test and Write ?
-  bool needDepth = ((prmRaster.sortingMethod != SORTING_GPU_SYNC_RADIX) && prmRender.opacityGaussianDisabled)
-                   || !m_meshSetVk.instances.empty();
-
-  // Model transform
-  m_pcRaster.modelMatrix        = m_splatSetVk.transform;
-  m_pcRaster.modelMatrixInverse = m_splatSetVk.transformInverse;
-  // cast to mat3 extracts only the rot/scale part of the transform
-  glm::mat3 rotScale                    = glm::mat3(m_splatSetVk.transform);
-  m_pcRaster.modelMatrixRotScaleInverse = glm::inverse(rotScale);
-
-  vkCmdPushConstants(cmd, m_pipelineLayout,
-                     VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_MESH_BIT_EXT | VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                     0, sizeof(shaderio::PushConstant), &m_pcRaster);
+    if (m_descriptorSet == VK_NULL_HANDLE) {
+      LOGE("m_descriptorSet is null in vert render\n");
+      return;
+    }
 
   if(prmSelectedPipeline == PIPELINE_VERT)
-  {  // Pipeline using vertex shader
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipelineGsVert);
-    // Bind descriptor set with dynamic offsets
-    // Order: [FrameInfo, Indirect]
-    uint32_t indirectOffset = static_cast<uint32_t>(m_frameIndex * m_indirectStride);
-    uint32_t frameInfoOffset = m_lastFrameInfoOffset;
-    uint32_t dynamicOffsets[2] = {frameInfoOffset, indirectOffset};
-    
+  {
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_descriptorSet, 2, dynamicOffsets);
 
     // overrides the pipeline setup for depth test/write
+    // Since splats are sorted back-to-front, depth test/write is disabled for performance
+    bool needDepth = false;
     vkCmdSetDepthWriteEnable(cmd, (VkBool32)needDepth);
     vkCmdSetDepthTestEnable(cmd, (VkBool32)needDepth);
 
@@ -227,6 +176,8 @@ void GaussianSplatting::drawSplatPrimitives(VkCommandBuffer cmd, const uint32_t 
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_descriptorSet, 2, dynamicOffsets);
 
     // overrides the pipeline setup for depth test/write
+    // Since splats are sorted back-to-front, depth test/write is disabled for performance
+    bool needDepth = false;
     vkCmdSetDepthWriteEnable(cmd, (VkBool32)needDepth);
     vkCmdSetDepthTestEnable(cmd, (VkBool32)needDepth);
 
