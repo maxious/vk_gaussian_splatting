@@ -147,6 +147,8 @@ void GaussianSplatting::renderMultiviewRaster(VkCommandBuffer cmd, uint32_t spla
 {
   if(!m_xrMultiviewInitialized || !m_shaders.valid)
     return;
+  if(m_descriptorSet == VK_NULL_HANDLE || m_pipelineLayout == VK_NULL_HANDLE)
+    return;
 
   auto timerSection = m_profilerGpuTimer.cmdFrameSection(cmd, "Multiview Raster");
 

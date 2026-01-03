@@ -85,11 +85,6 @@ namespace vk_gaussian_splatting {
 
 GsOpenXr::GsOpenXr()
 {
-  for(auto& view : m_locatedViews)
-  {
-    view.type = XR_TYPE_VIEW;
-    view.next = nullptr;
-  }
 }
 
 GsOpenXr::~GsOpenXr()
@@ -1689,6 +1684,7 @@ void GsOpenXr::pollHandInput()
           jl.pose.orientation.z);
       }
       out.joints[i] = joint;
+      out.jointPoses[i] = jl.pose;
     }
 
     out.tracked = anyTracked;

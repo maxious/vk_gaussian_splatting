@@ -68,6 +68,8 @@ void GaussianSplatting::initPipelines()
   bindings.addBinding(BINDING_VDZ_DEPTH_TEXTURE, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
   // Environment Depth Occlusion
   bindings.addBinding(BINDING_ENV_DEPTH_TEXTURE, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT);
+  // Hand mesh joint matrices (XR skinned hands)
+  bindings.addBinding(BINDING_JOINT_MATRICES, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT);
 
   //
   const VkPushConstantRange pcRanges = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT
@@ -456,6 +458,50 @@ void GaussianSplatting::initPipelines()
     creator.createGraphicsPipeline(m_device, nullptr, pipelineState, &m_graphicsPipelineVdzMesh);
     NVVK_DBG_NAME(m_graphicsPipelineVdzMesh);
   }
+
+  // Create the hand mesh pipeline (XR skinned hands)
+  {
+    nvvk::GraphicsPipelineState pipelineState;
+
+    // Alpha blending for translucent hands
+    pipelineState.colorBlendEnables[0]                        = VK_TRUE;
+    pipelineState.colorBlendEquations[0].colorBlendOp        = VK_BLEND_OP_ADD;
+    pipelineState.colorBlendEquations[0].srcAlphaBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    pipelineState.colorBlendEquations[0].dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    pipelineState.colorBlendEquations[0].srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    pipelineState.colorBlendEquations[0].dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+
+    pipelineState.rasterizationState.cullMode        = VK_CULL_MODE_NONE;
+    pipelineState.depthStencilState.depthWriteEnable = VK_TRUE;
+    pipelineState.depthStencilState.depthTestEnable  = VK_TRUE;
+
+    // Hand mesh vertex layout: position(vec3) + normal(vec3) + uv(vec2) + blendIndices(ivec4) + blendWeights(vec4)
+    pipelineState.vertexBindings = {{.binding   = 0,
+                                     .stride    = sizeof(float) * 3 + sizeof(float) * 3 + sizeof(float) * 2 +
+                                                  sizeof(int32_t) * 4 + sizeof(float) * 4,
+                                     .inputRate = VK_VERTEX_INPUT_RATE_VERTEX}};
+
+    pipelineState.vertexAttributes = {
+        {.location = 0, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = 0},                          // position
+        {.location = 1, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = sizeof(float) * 3},          // normal
+        {.location = 2, .binding = 0, .format = VK_FORMAT_R32G32_SFLOAT, .offset = sizeof(float) * 6},             // uv
+        {.location = 3, .binding = 0, .format = VK_FORMAT_R32G32B32A32_SINT, .offset = sizeof(float) * 8},         // blendIndices
+        {.location = 4, .binding = 0, .format = VK_FORMAT_R32G32B32A32_SFLOAT, .offset = sizeof(float) * 8 + sizeof(int32_t) * 4}  // blendWeights
+    };
+
+    nvvk::GraphicsPipelineCreator creator;
+    creator.pipelineInfo.layout                  = m_pipelineLayout;
+    creator.colorFormats                         = {m_colorFormat};
+    creator.renderingState.depthAttachmentFormat = m_depthFormat;
+    creator.dynamicStateValues.push_back(VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE);
+    creator.dynamicStateValues.push_back(VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE);
+
+    creator.addShader(VK_SHADER_STAGE_VERTEX_BIT, "main", m_shaders.handMeshVertexShader);
+    creator.addShader(VK_SHADER_STAGE_FRAGMENT_BIT, "main", m_shaders.handMeshFragmentShader);
+
+    creator.createGraphicsPipeline(m_device, nullptr, pipelineState, &m_graphicsPipelineHandMesh);
+    NVVK_DBG_NAME(m_graphicsPipelineHandMesh);
+  }
 }
 
 // include RTX one
@@ -469,6 +515,7 @@ void GaussianSplatting::deinitPipelines()
   TEST_DESTROY_AND_RESET(m_graphicsPipeline3dgutMesh, vkDestroyPipeline(m_device, m_graphicsPipeline3dgutMesh, nullptr));
   TEST_DESTROY_AND_RESET(m_graphicsPipelineMesh, vkDestroyPipeline(m_device, m_graphicsPipelineMesh, nullptr));
   TEST_DESTROY_AND_RESET(m_graphicsPipelineVdzMesh, vkDestroyPipeline(m_device, m_graphicsPipelineVdzMesh, nullptr));
+  TEST_DESTROY_AND_RESET(m_graphicsPipelineHandMesh, vkDestroyPipeline(m_device, m_graphicsPipelineHandMesh, nullptr));
   TEST_DESTROY_AND_RESET(m_computePipelineGsDistCull, vkDestroyPipeline(m_device, m_computePipelineGsDistCull, nullptr));
 #ifdef WITH_OPENXR
   TEST_DESTROY_AND_RESET(m_graphicsPipelineGsVertMultiview, vkDestroyPipeline(m_device, m_graphicsPipelineGsVertMultiview, nullptr));

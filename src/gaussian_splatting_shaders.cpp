@@ -130,6 +130,9 @@ bool GaussianSplatting::initShaders(void)
   // VDZ depth mesh
   success &= compileSlangShader("vdz_mesh.vert.slang", m_shaders.vdzMeshVertexShader);
   success &= compileSlangShader("vdz_mesh.frag.slang", m_shaders.vdzMeshFragmentShader);
+  // Hand mesh (XR skinned hands)
+  success &= compileSlangShader("hand_mesh.vert.slang", m_shaders.handMeshVertexShader);
+  success &= compileSlangShader("hand_mesh.frag.slang", m_shaders.handMeshFragmentShader);
 
   if(!success)
     return (m_shaders.valid = false);

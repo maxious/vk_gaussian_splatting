@@ -58,6 +58,10 @@ GaussianSplatting::~GaussianSplatting(){
 
 void GaussianSplatting::onAttach(nvapp::Application* app)
 {
+  if (m_attached)
+    return;
+  m_attached = true;
+
   // shortcuts
   m_app    = app;
   m_device = m_app->getDevice();

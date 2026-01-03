@@ -111,6 +111,7 @@
 #define BINDING_VDZ_DEPTH_SAMPLER 28
 #define BINDING_VDZ_VIDEO_SAMPLER 29
 #define BINDING_OPACITY_SAMPLER 30
+#define BINDING_JOINT_MATRICES 31
 
 // bindings for set 1 of RTX
 #define RTX_BINDING_OUTIMAGE 0        // Ray tracer output image

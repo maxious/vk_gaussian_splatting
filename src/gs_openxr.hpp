@@ -50,93 +50,7 @@
 #include <atomic>
 #include <condition_variable>
 
-// Define XR_META_environment_depth if not available
-#ifndef XR_META_environment_depth
-#define XR_META_environment_depth 1
-#define XR_META_environment_depth_SPEC_VERSION 1
-#define XR_META_ENVIRONMENT_DEPTH_EXTENSION_NAME "XR_META_environment_depth"
 
-XR_DEFINE_HANDLE(XrEnvironmentDepthProviderMETA)
-XR_DEFINE_HANDLE(XrEnvironmentDepthSwapchainMETA)
-
-static const XrStructureType XR_TYPE_ENVIRONMENT_DEPTH_PROVIDER_CREATE_INFO_META = (XrStructureType)1000291000;
-static const XrStructureType XR_TYPE_ENVIRONMENT_DEPTH_SWAPCHAIN_CREATE_INFO_META = (XrStructureType)1000291001;
-static const XrStructureType XR_TYPE_ENVIRONMENT_DEPTH_SWAPCHAIN_STATE_META = (XrStructureType)1000291002;
-static const XrStructureType XR_TYPE_ENVIRONMENT_DEPTH_IMAGE_ACQUIRE_INFO_META = (XrStructureType)1000291003;
-static const XrStructureType XR_TYPE_ENVIRONMENT_DEPTH_IMAGE_VIEW_META = (XrStructureType)1000291004;
-static const XrStructureType XR_TYPE_ENVIRONMENT_DEPTH_IMAGE_META = (XrStructureType)1000291005;
-static const XrStructureType XR_TYPE_SYSTEM_ENVIRONMENT_DEPTH_PROPERTIES_META = (XrStructureType)1000291006;
-static const XrStructureType XR_TYPE_ENVIRONMENT_DEPTH_HAND_REMOVAL_SET_INFO_META = (XrStructureType)1000291007;
-
-typedef XrFlags64 XrEnvironmentDepthProviderCreateFlagsMETA;
-typedef struct XrEnvironmentDepthProviderCreateInfoMETA {
-    XrStructureType             type;
-    const void*                 next;
-    XrEnvironmentDepthProviderCreateFlagsMETA createFlags;
-} XrEnvironmentDepthProviderCreateInfoMETA;
-
-typedef XrFlags64 XrEnvironmentDepthSwapchainCreateFlagsMETA;
-typedef struct XrEnvironmentDepthSwapchainCreateInfoMETA {
-    XrStructureType             type;
-    const void*                 next;
-    XrEnvironmentDepthSwapchainCreateFlagsMETA createFlags;
-} XrEnvironmentDepthSwapchainCreateInfoMETA;
-
-typedef struct XrEnvironmentDepthSwapchainStateMETA {
-    XrStructureType             type;
-    void*                       next;
-    uint32_t                    width;
-    uint32_t                    height;
-} XrEnvironmentDepthSwapchainStateMETA;
-
-typedef struct XrEnvironmentDepthImageAcquireInfoMETA {
-    XrStructureType             type;
-    const void*                 next;
-    XrSpace                     space;
-    XrTime                      displayTime;
-} XrEnvironmentDepthImageAcquireInfoMETA;
-
-typedef struct XrEnvironmentDepthImageViewMETA {
-    XrStructureType             type;
-    const void*                 next;
-    XrFovf                      fov;
-    XrPosef                     pose;
-} XrEnvironmentDepthImageViewMETA;
-
-typedef struct XrEnvironmentDepthImageMETA {
-    XrStructureType             type;
-    void*                       next;
-    uint32_t                    swapchainIndex;
-    float                       nearZ;
-    float                       farZ;
-    XrEnvironmentDepthImageViewMETA views[2];
-} XrEnvironmentDepthImageMETA;
-
-typedef struct XrSystemEnvironmentDepthPropertiesMETA {
-    XrStructureType             type;
-    void*                       next;
-    XrBool32                    supportsEnvironmentDepth;
-    XrBool32                    supportsHandRemoval;
-} XrSystemEnvironmentDepthPropertiesMETA;
-
-typedef struct XrEnvironmentDepthHandRemovalSetInfoMETA {
-    XrStructureType             type;
-    const void*                 next;
-    XrBool32                    enabled;
-} XrEnvironmentDepthHandRemovalSetInfoMETA;
-
-typedef XrResult (XRAPI_PTR *PFN_xrCreateEnvironmentDepthProviderMETA)(XrSession session, const XrEnvironmentDepthProviderCreateInfoMETA* createInfo, XrEnvironmentDepthProviderMETA* environmentDepthProvider);
-typedef XrResult (XRAPI_PTR *PFN_xrDestroyEnvironmentDepthProviderMETA)(XrEnvironmentDepthProviderMETA environmentDepthProvider);
-typedef XrResult (XRAPI_PTR *PFN_xrStartEnvironmentDepthProviderMETA)(XrEnvironmentDepthProviderMETA environmentDepthProvider);
-typedef XrResult (XRAPI_PTR *PFN_xrStopEnvironmentDepthProviderMETA)(XrEnvironmentDepthProviderMETA environmentDepthProvider);
-typedef XrResult (XRAPI_PTR *PFN_xrCreateEnvironmentDepthSwapchainMETA)(XrEnvironmentDepthProviderMETA environmentDepthProvider, const XrEnvironmentDepthSwapchainCreateInfoMETA* createInfo, XrEnvironmentDepthSwapchainMETA* swapchain);
-typedef XrResult (XRAPI_PTR *PFN_xrDestroyEnvironmentDepthSwapchainMETA)(XrEnvironmentDepthSwapchainMETA swapchain);
-typedef XrResult (XRAPI_PTR *PFN_xrGetEnvironmentDepthSwapchainStateMETA)(XrEnvironmentDepthSwapchainMETA swapchain, XrEnvironmentDepthSwapchainStateMETA* state);
-typedef XrResult (XRAPI_PTR *PFN_xrAcquireEnvironmentDepthImageMETA)(XrEnvironmentDepthProviderMETA environmentDepthProvider, const XrEnvironmentDepthImageAcquireInfoMETA* acquireInfo, XrEnvironmentDepthImageMETA* environmentDepthImage);
-typedef XrResult (XRAPI_PTR *PFN_xrEnumerateEnvironmentDepthSwapchainImagesMETA)(XrEnvironmentDepthSwapchainMETA swapchain, uint32_t imageCapacityInput, uint32_t* imageCountOutput, XrSwapchainImageBaseHeader* images);
-typedef XrResult (XRAPI_PTR *PFN_xrSetEnvironmentDepthHandRemovalMETA)(XrEnvironmentDepthProviderMETA environmentDepthProvider, const XrEnvironmentDepthHandRemovalSetInfoMETA* setInfo);
-
-#endif
 
 // Define hand tracking extension names if not available
 #ifndef XR_EXT_HAND_TRACKING_EXTENSION_NAME
@@ -285,6 +199,7 @@ public:
 
     // Optional: expose all joints for rendering / advanced logic
     std::array<HandJoint, XR_HAND_JOINT_COUNT_EXT> joints;
+    std::array<XrPosef, XR_HAND_JOINT_COUNT_EXT> jointPoses;
   };
 
   // Get hand input data
@@ -297,6 +212,7 @@ public:
   // Get hand mesh function
   XrResult getHandMeshFB(XrHandTrackerEXT handTracker, XrHandTrackingMeshFB* mesh);
 
+public:
   struct PerformanceMetrics
   {
     float appCpuFrameTimeMs = 0.0f;

@@ -296,15 +296,14 @@ private:
     std::vector<uint16_t> indices;
 
     // Vulkan GPU resources
-    VkBuffer vertexBuffer = VK_NULL_HANDLE;
-    VkBuffer indexBuffer = VK_NULL_HANDLE;
-    VkBuffer jointMatricesBuffer = VK_NULL_HANDLE;
-    VmaAllocation vertexAllocation = VK_NULL_HANDLE;
-    VmaAllocation indexAllocation = VK_NULL_HANDLE;
-    VmaAllocation jointAllocation = VK_NULL_HANDLE;
+    nvvk::Buffer vertexBuffer;
+    nvvk::Buffer indexBuffer;
+    nvvk::Buffer jointMatricesBuffer;
 
     // Joint matrices for skinning (updated each frame)
     std::array<glm::mat4, XR_HAND_JOINT_COUNT_EXT> jointMatrices{};
+    // Bind poses from the mesh
+    std::array<XrPosef, XR_HAND_JOINT_COUNT_EXT> jointBindPoses{};
 
     // Rendering state
     bool initialized = false;
@@ -318,7 +317,7 @@ private:
   bool initHandMeshes();
   void destroyHandMeshes();
   void updateHandMeshes();
-  void renderHandMesh(VkCommandBuffer cmd, const GaussianSplattingUI::HandMeshVk& mesh, const glm::mat4& viewProj);
+  void renderHandMesh(VkCommandBuffer cmd, const GaussianSplattingUI::HandMeshVk& mesh, const glm::mat4& wristTransform);
 
   // Wrist button for file picker
   struct WristButton {

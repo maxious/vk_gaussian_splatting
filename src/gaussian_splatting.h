@@ -214,6 +214,8 @@ protected:
 
 
 private:
+  bool m_attached = false;
+
   // Copy rendered image to XR swapchain
   void copyToXrSwapchain(VkCommandBuffer cmd);
 
@@ -510,6 +512,9 @@ protected:
     // VDZ depth mesh rendering
     VkShaderModule vdzMeshVertexShader{};
     VkShaderModule vdzMeshFragmentShader{};
+    // Hand mesh rendering (XR)
+    VkShaderModule handMeshVertexShader{};
+    VkShaderModule handMeshFragmentShader{};
 
     // Utility storage to process shaders in loop
     std::vector<VkShaderModule*> modules{};
@@ -526,6 +531,8 @@ protected:
   VkPipeline m_graphicsPipelineMesh = VK_NULL_HANDLE;  // The graphic pipeline to rasterize meshes
   // VDZ depth mesh pipeline
   VkPipeline m_graphicsPipelineVdzMesh = VK_NULL_HANDLE;
+  // Hand mesh pipeline (XR skinned hands)
+  VkPipeline m_graphicsPipelineHandMesh = VK_NULL_HANDLE;
 #ifdef WITH_OPENXR
   // Multiview variants of raster pipelines (viewMask = 0x3 for stereo)
   VkPipeline m_graphicsPipelineGsVertMultiview = VK_NULL_HANDLE;
