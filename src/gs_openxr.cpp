@@ -69,6 +69,7 @@ GsOpenXr::~GsOpenXr()
 
 void GsOpenXr::shutdown()
 {
+  stopTrackingThread();
   destroyActionSet();
 
   if(m_colorSwapchain.handle != XR_NULL_HANDLE)
@@ -154,6 +155,8 @@ bool GsOpenXr::initialize(VkInstance       vkInstance,
     LOGW("Failed to create OpenXR action set for controllers - locomotion disabled\n");
   }
 
+  initPerformanceMetrics();
+
   // Check for VK_KHR_multiview support
   m_supportsMultiview = true;  // OpenXR runtime should have provided this if supported
 
@@ -164,7 +167,10 @@ bool GsOpenXr::initialize(VkInstance       vkInstance,
 
 bool GsOpenXr::createInstance()
 {
-  std::vector<const char*> extensions = {"XR_KHR_vulkan_enable"};
+  std::vector<const char*> extensions = {
+    "XR_KHR_vulkan_enable",
+    "XR_META_performance_metrics"
+  };
 
   XrInstanceCreateInfo createInfo{XR_TYPE_INSTANCE_CREATE_INFO};
   strcpy_s(createInfo.applicationInfo.applicationName, "vk_gaussian_splatting");
@@ -201,6 +207,24 @@ void GsOpenXr::loadXrFunctions()
                         (PFN_xrVoidFunction*)&m_xrGetVulkanInstanceExtensionsKHR);
   xrGetInstanceProcAddr(m_instance, "xrGetVulkanDeviceExtensionsKHR",
                         (PFN_xrVoidFunction*)&m_xrGetVulkanDeviceExtensionsKHR);
+
+  xrGetInstanceProcAddr(m_instance, "xrEnumeratePerformanceMetricsCounterPathsMETA",
+                        (PFN_xrVoidFunction*)&m_xrEnumeratePerformanceMetricsCounterPathsMETA);
+  xrGetInstanceProcAddr(m_instance, "xrSetPerformanceMetricsStateMETA",
+                        (PFN_xrVoidFunction*)&m_xrSetPerformanceMetricsStateMETA);
+  xrGetInstanceProcAddr(m_instance, "xrGetPerformanceMetricsStateMETA",
+                        (PFN_xrVoidFunction*)&m_xrGetPerformanceMetricsStateMETA);
+  xrGetInstanceProcAddr(m_instance, "xrQueryPerformanceMetricsCounterMETA",
+                        (PFN_xrVoidFunction*)&m_xrQueryPerformanceMetricsCounterMETA);
+
+  m_perfMetricsSupported = (m_xrEnumeratePerformanceMetricsCounterPathsMETA != nullptr &&
+                            m_xrSetPerformanceMetricsStateMETA != nullptr &&
+                            m_xrQueryPerformanceMetricsCounterMETA != nullptr);
+
+  if(m_perfMetricsSupported)
+  {
+    LOGI("XR_META_performance_metrics extension available\n");
+  }
 }
 
 bool GsOpenXr::queryRequiredVulkanExtensions(std::vector<std::string>& outInstanceExtensions,
@@ -556,6 +580,8 @@ void GsOpenXr::handleSessionStateChange(const XrEventDataSessionStateChanged& ev
       else
       {
         m_sessionRunning = true;
+        startTrackingThread();
+        enablePerformanceMetrics();
       }
       break;
     }
@@ -572,17 +598,20 @@ void GsOpenXr::handleSessionStateChange(const XrEventDataSessionStateChanged& ev
       break;
     case XR_SESSION_STATE_STOPPING:
       LOGI("XR session state: STOPPING\n");
+      stopTrackingThread();
       m_shouldRender   = false;
       m_sessionRunning = false;
       xrEndSession(m_session);
       break;
     case XR_SESSION_STATE_LOSS_PENDING:
       LOGW("XR session state: LOSS_PENDING\n");
+      stopTrackingThread();
       m_shouldRender   = false;
       m_sessionRunning = false;
       break;
     case XR_SESSION_STATE_EXITING:
       LOGI("XR session state: EXITING\n");
+      stopTrackingThread();
       m_shouldRender   = false;
       m_sessionRunning = false;
       break;
@@ -640,6 +669,25 @@ bool GsOpenXr::locateViews(float nearZ, float farZ)
   m_nearZ = nearZ;
   m_farZ  = farZ;
 
+  std::array<XrView, VIEW_COUNT> newViews;
+  for(auto& view : newViews)
+  {
+    view.type = XR_TYPE_VIEW;
+    view.next = nullptr;
+  }
+
+  bool gotHighFreqPose = false;
+  if(m_trackingThreadRunning.load() && m_poseCount.load() > 0)
+  {
+    gotHighFreqPose = getPoseForTime(m_predictedDisplayTime, newViews);
+    if(gotHighFreqPose)
+    {
+      m_locatedViews = newViews;
+      m_trackingLossFrameCount = 0;
+      return true;
+    }
+  }
+
   XrViewLocateInfo locateInfo{XR_TYPE_VIEW_LOCATE_INFO};
   locateInfo.viewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
   locateInfo.displayTime           = m_predictedDisplayTime;
@@ -647,14 +695,6 @@ bool GsOpenXr::locateViews(float nearZ, float farZ)
 
   XrViewState viewState{XR_TYPE_VIEW_STATE};
   uint32_t    viewCount = VIEW_COUNT;
-
-  // Use a temporary buffer to avoid overwriting valid data with invalid data
-  std::array<XrView, VIEW_COUNT> newViews;
-  for(auto& view : newViews)
-  {
-    view.type = XR_TYPE_VIEW;
-    view.next = nullptr;
-  }
 
   XrResult result = xrLocateViews(m_session, &locateInfo, &viewState, VIEW_COUNT, &viewCount, newViews.data());
   if(XR_FAILED(result))
@@ -664,7 +704,6 @@ bool GsOpenXr::locateViews(float nearZ, float farZ)
     return false;
   }
 
-  // Check if position and orientation are valid
   if((viewState.viewStateFlags & XR_VIEW_STATE_POSITION_VALID_BIT) == 0 ||
      (viewState.viewStateFlags & XR_VIEW_STATE_ORIENTATION_VALID_BIT) == 0)
   {
@@ -672,17 +711,13 @@ bool GsOpenXr::locateViews(float nearZ, float farZ)
 
     if(m_trackingLossFrameCount <= MAX_TRACKING_LOSS_FRAMES)
     {
-      // Grace period: use last known valid views
-      // We do NOT update m_locatedViews with newViews (which might be garbage)
       return true;
     }
 
-    // Tracking is lost or invalid, do not render this frame to avoid glitches/motion sickness
     m_shouldRender = false;
     return false;
   }
 
-  // Tracking is valid, update views and reset counter
   m_locatedViews = newViews;
   m_trackingLossFrameCount = 0;
   return true;
@@ -1317,6 +1352,367 @@ void GsOpenXr::updateControllerPoses()
 
   locateSpace(m_leftHandSpace, m_leftController);
   locateSpace(m_rightHandSpace, m_rightController);
+}
+
+// ============================================================================
+// High-frequency tracking thread implementation
+// ============================================================================
+
+void GsOpenXr::startTrackingThread()
+{
+  if(m_trackingThreadRunning.load())
+    return;
+
+  m_trackingThreadShouldStop.store(false);
+  m_poseWriteIndex.store(0);
+  m_poseCount.store(0);
+
+  m_trackingThread = std::thread([this]() { trackingThreadLoop(); });
+  m_trackingThreadRunning.store(true);
+
+  LOGI("OpenXR high-frequency tracking thread started (%d Hz)\n", TRACKING_SAMPLE_RATE_HZ);
+}
+
+void GsOpenXr::stopTrackingThread()
+{
+  if(!m_trackingThreadRunning.load())
+    return;
+
+  m_trackingThreadShouldStop.store(true);
+
+  if(m_trackingThread.joinable())
+  {
+    m_trackingThread.join();
+  }
+
+  m_trackingThreadRunning.store(false);
+  LOGI("OpenXR high-frequency tracking thread stopped\n");
+}
+
+void GsOpenXr::trackingThreadLoop()
+{
+  using namespace std::chrono;
+  const auto sampleInterval = microseconds(1000000 / TRACKING_SAMPLE_RATE_HZ);
+
+  PFN_xrConvertWin32PerformanceCounterToTimeKHR convertTimeFunc = nullptr;
+  xrGetInstanceProcAddr(m_instance, "xrConvertWin32PerformanceCounterToTimeKHR",
+                        (PFN_xrVoidFunction*)&convertTimeFunc);
+
+  while(!m_trackingThreadShouldStop.load())
+  {
+    auto loopStart = steady_clock::now();
+
+    if(m_session != XR_NULL_HANDLE && m_referenceSpace != XR_NULL_HANDLE && m_sessionRunning && convertTimeFunc)
+    {
+      LARGE_INTEGER perfCount;
+      QueryPerformanceCounter(&perfCount);
+
+      XrTime now = 0;
+      if(XR_SUCCEEDED(convertTimeFunc(m_instance, &perfCount, &now)) && now != 0)
+      {
+        XrViewLocateInfo locateInfo{XR_TYPE_VIEW_LOCATE_INFO};
+        locateInfo.viewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
+        locateInfo.displayTime = now;
+        locateInfo.space = m_referenceSpace;
+
+        XrViewState viewState{XR_TYPE_VIEW_STATE};
+        uint32_t viewCount = VIEW_COUNT;
+
+        std::array<XrView, VIEW_COUNT> views;
+        for(auto& view : views)
+        {
+          view.type = XR_TYPE_VIEW;
+          view.next = nullptr;
+        }
+
+        XrResult result = xrLocateViews(m_session, &locateInfo, &viewState, VIEW_COUNT, &viewCount, views.data());
+
+        if(XR_SUCCEEDED(result))
+        {
+          size_t writeIdx = m_poseWriteIndex.load() % POSE_RING_BUFFER_SIZE;
+
+          {
+            std::lock_guard<std::mutex> lock(m_poseMutex);
+            m_poseRingBuffer[writeIdx].timestamp = now;
+            m_poseRingBuffer[writeIdx].views = views;
+            m_poseRingBuffer[writeIdx].viewStateFlags = viewState.viewStateFlags;
+            m_poseRingBuffer[writeIdx].valid = true;
+          }
+
+          m_poseWriteIndex.fetch_add(1);
+          size_t count = m_poseCount.load();
+          if(count < POSE_RING_BUFFER_SIZE)
+          {
+            m_poseCount.fetch_add(1);
+          }
+        }
+      }
+    }
+
+    auto loopEnd = steady_clock::now();
+    auto elapsed = duration_cast<microseconds>(loopEnd - loopStart);
+    auto sleepTime = sampleInterval - elapsed;
+
+    if(sleepTime > microseconds(0))
+    {
+      std::this_thread::sleep_for(sleepTime);
+    }
+  }
+}
+
+bool GsOpenXr::getPoseForTime(XrTime targetTime, std::array<XrView, VIEW_COUNT>& outViews) const
+{
+  size_t count = m_poseCount.load();
+  if(count == 0)
+    return false;
+
+  std::lock_guard<std::mutex> lock(m_poseMutex);
+
+  size_t writeIdx = m_poseWriteIndex.load();
+  size_t startIdx = (writeIdx >= count) ? (writeIdx - count) : 0;
+
+  const TimestampedPose* closest = nullptr;
+  const TimestampedPose* before = nullptr;
+  const TimestampedPose* after = nullptr;
+  XrTime minDiff = INT64_MAX;
+
+  for(size_t i = 0; i < count; ++i)
+  {
+    size_t idx = (startIdx + i) % POSE_RING_BUFFER_SIZE;
+    const TimestampedPose& pose = m_poseRingBuffer[idx];
+
+    if(!pose.valid)
+      continue;
+
+    XrTime diff = (pose.timestamp > targetTime) ? (pose.timestamp - targetTime) : (targetTime - pose.timestamp);
+
+    if(diff < minDiff)
+    {
+      minDiff = diff;
+      closest = &pose;
+    }
+
+    if(pose.timestamp <= targetTime)
+    {
+      if(!before || pose.timestamp > before->timestamp)
+        before = &pose;
+    }
+    if(pose.timestamp >= targetTime)
+    {
+      if(!after || pose.timestamp < after->timestamp)
+        after = &pose;
+    }
+  }
+
+  if(before && after && before != after)
+  {
+    XrTime range = after->timestamp - before->timestamp;
+    if(range > 0)
+    {
+      float t = static_cast<float>(targetTime - before->timestamp) / static_cast<float>(range);
+      t = std::clamp(t, 0.0f, 1.0f);
+
+      for(uint32_t eye = 0; eye < VIEW_COUNT; ++eye)
+      {
+        outViews[eye] = interpolateView(before->views[eye], after->views[eye], t);
+      }
+      return true;
+    }
+  }
+
+  if(closest)
+  {
+    outViews = closest->views;
+    return true;
+  }
+
+  return false;
+}
+
+XrView GsOpenXr::interpolateView(const XrView& a, const XrView& b, float t)
+{
+  XrView result;
+  result.type = XR_TYPE_VIEW;
+  result.next = nullptr;
+  result.pose = interpolatePose(a.pose, b.pose, t);
+  result.fov.angleLeft = a.fov.angleLeft + t * (b.fov.angleLeft - a.fov.angleLeft);
+  result.fov.angleRight = a.fov.angleRight + t * (b.fov.angleRight - a.fov.angleRight);
+  result.fov.angleUp = a.fov.angleUp + t * (b.fov.angleUp - a.fov.angleUp);
+  result.fov.angleDown = a.fov.angleDown + t * (b.fov.angleDown - a.fov.angleDown);
+  return result;
+}
+
+XrPosef GsOpenXr::interpolatePose(const XrPosef& a, const XrPosef& b, float t)
+{
+  XrPosef result;
+
+  result.position.x = a.position.x + t * (b.position.x - a.position.x);
+  result.position.y = a.position.y + t * (b.position.y - a.position.y);
+  result.position.z = a.position.z + t * (b.position.z - a.position.z);
+
+  result.orientation = slerp(a.orientation, b.orientation, t);
+
+  return result;
+}
+
+XrQuaternionf GsOpenXr::slerp(const XrQuaternionf& a, const XrQuaternionf& b, float t)
+{
+  float dot = a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w;
+
+  XrQuaternionf b2 = b;
+  if(dot < 0.0f)
+  {
+    dot = -dot;
+    b2.x = -b2.x;
+    b2.y = -b2.y;
+    b2.z = -b2.z;
+    b2.w = -b2.w;
+  }
+
+  XrQuaternionf result;
+
+  if(dot > 0.9995f)
+  {
+    result.x = a.x + t * (b2.x - a.x);
+    result.y = a.y + t * (b2.y - a.y);
+    result.z = a.z + t * (b2.z - a.z);
+    result.w = a.w + t * (b2.w - a.w);
+
+    float len = std::sqrt(result.x * result.x + result.y * result.y + result.z * result.z + result.w * result.w);
+    result.x /= len;
+    result.y /= len;
+    result.z /= len;
+    result.w /= len;
+  }
+  else
+  {
+    float theta0 = std::acos(dot);
+    float theta = theta0 * t;
+    float sinTheta = std::sin(theta);
+    float sinTheta0 = std::sin(theta0);
+
+    float s0 = std::cos(theta) - dot * sinTheta / sinTheta0;
+    float s1 = sinTheta / sinTheta0;
+
+    result.x = s0 * a.x + s1 * b2.x;
+    result.y = s0 * a.y + s1 * b2.y;
+    result.z = s0 * a.z + s1 * b2.z;
+    result.w = s0 * a.w + s1 * b2.w;
+  }
+
+  return result;
+}
+
+void GsOpenXr::initPerformanceMetrics()
+{
+  if(!m_perfMetricsSupported || !m_xrEnumeratePerformanceMetricsCounterPathsMETA)
+    return;
+
+  uint32_t pathCount = 0;
+  XrResult result = m_xrEnumeratePerformanceMetricsCounterPathsMETA(m_instance, 0, &pathCount, nullptr);
+  if(XR_FAILED(result) || pathCount == 0)
+  {
+    LOGW("No performance metrics counters available\n");
+    m_perfMetricsSupported = false;
+    return;
+  }
+
+  m_perfMetricsPaths.resize(pathCount);
+  result = m_xrEnumeratePerformanceMetricsCounterPathsMETA(m_instance, pathCount, &pathCount, m_perfMetricsPaths.data());
+  if(XR_FAILED(result))
+  {
+    LOGE("Failed to enumerate performance metrics paths\n");
+    m_perfMetricsSupported = false;
+    return;
+  }
+
+  xrStringToPath(m_instance, "/perfmetrics_meta/app/cpu_frametime", &m_pathAppCpuFrametime);
+  xrStringToPath(m_instance, "/perfmetrics_meta/app/gpu_frametime", &m_pathAppGpuFrametime);
+  xrStringToPath(m_instance, "/perfmetrics_meta/app/motion_to_photon_latency", &m_pathMotionToPhoton);
+  xrStringToPath(m_instance, "/perfmetrics_meta/compositor/cpu_frametime", &m_pathCompositorCpuFrametime);
+  xrStringToPath(m_instance, "/perfmetrics_meta/compositor/gpu_frametime", &m_pathCompositorGpuFrametime);
+  xrStringToPath(m_instance, "/perfmetrics_meta/compositor/dropped_frame_count", &m_pathDroppedFrameCount);
+  xrStringToPath(m_instance, "/perfmetrics_meta/compositor/spacewarp_mode", &m_pathSpacewarpMode);
+  xrStringToPath(m_instance, "/perfmetrics_meta/device/cpu_utilization_average", &m_pathCpuUtilAvg);
+  xrStringToPath(m_instance, "/perfmetrics_meta/device/cpu_utilization_worst", &m_pathCpuUtilWorst);
+  xrStringToPath(m_instance, "/perfmetrics_meta/device/gpu_utilization", &m_pathGpuUtil);
+
+  LOGI("XR performance metrics initialized with %u counters\n", pathCount);
+}
+
+void GsOpenXr::enablePerformanceMetrics()
+{
+  if(!m_perfMetricsSupported || !m_xrSetPerformanceMetricsStateMETA || m_session == XR_NULL_HANDLE)
+    return;
+
+  struct
+  {
+    XrStructureType type;
+    const void*     next;
+    XrBool32        enabled;
+  } state = {(XrStructureType)1000232001, nullptr, XR_TRUE};
+
+  XrResult result = m_xrSetPerformanceMetricsStateMETA(m_session, &state);
+  if(XR_SUCCEEDED(result))
+  {
+    m_perfMetricsEnabled = true;
+    LOGI("XR performance metrics enabled\n");
+  }
+  else
+  {
+    LOGW("Failed to enable XR performance metrics (result=%d)\n", (int)result);
+  }
+}
+
+void GsOpenXr::updatePerformanceMetrics()
+{
+  if(!m_perfMetricsEnabled || !m_xrQueryPerformanceMetricsCounterMETA || m_session == XR_NULL_HANDLE)
+  {
+    m_perfMetrics.valid = false;
+    return;
+  }
+
+  struct XrPerfCounter
+  {
+    XrStructureType type;
+    const void*     next;
+    uint64_t        counterFlags;
+    uint32_t        counterUnit;
+    uint32_t        uintValue;
+    float           floatValue;
+  };
+
+  auto queryFloat = [this](XrPath path) -> float {
+    if(path == XR_NULL_PATH)
+      return 0.0f;
+    XrPerfCounter counter = {(XrStructureType)1000232002, nullptr, 0, 0, 0, 0.0f};
+    XrResult result = m_xrQueryPerformanceMetricsCounterMETA(m_session, path, &counter);
+    if(XR_SUCCEEDED(result) && (counter.counterFlags & 0x04))
+      return counter.floatValue;
+    return 0.0f;
+  };
+
+  auto queryUint = [this](XrPath path) -> uint32_t {
+    if(path == XR_NULL_PATH)
+      return 0;
+    XrPerfCounter counter = {(XrStructureType)1000232002, nullptr, 0, 0, 0, 0.0f};
+    XrResult result = m_xrQueryPerformanceMetricsCounterMETA(m_session, path, &counter);
+    if(XR_SUCCEEDED(result) && (counter.counterFlags & 0x02))
+      return counter.uintValue;
+    return 0;
+  };
+
+  m_perfMetrics.appCpuFrameTimeMs = queryFloat(m_pathAppCpuFrametime);
+  m_perfMetrics.appGpuFrameTimeMs = queryFloat(m_pathAppGpuFrametime);
+  m_perfMetrics.motionToPhotonLatencyMs = queryFloat(m_pathMotionToPhoton);
+  m_perfMetrics.compositorCpuFrameTimeMs = queryFloat(m_pathCompositorCpuFrametime);
+  m_perfMetrics.compositorGpuFrameTimeMs = queryFloat(m_pathCompositorGpuFrametime);
+  m_perfMetrics.droppedFrameCount = queryUint(m_pathDroppedFrameCount);
+  m_perfMetrics.spacewarpMode = queryUint(m_pathSpacewarpMode);
+  m_perfMetrics.cpuUtilizationAvg = queryFloat(m_pathCpuUtilAvg);
+  m_perfMetrics.cpuUtilizationWorst = queryFloat(m_pathCpuUtilWorst);
+  m_perfMetrics.gpuUtilization = queryFloat(m_pathGpuUtil);
+  m_perfMetrics.valid = true;
 }
 
 }  // namespace vk_gaussian_splatting

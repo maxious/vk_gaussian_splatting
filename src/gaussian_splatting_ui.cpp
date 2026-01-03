@@ -4183,6 +4183,45 @@ void GaussianSplattingUI::guiDrawPerformancePanel()
                 ImGui::PlotLines(name.c_str(), values.data(), (int)values.size(), 0, nullptr, FLT_MAX, FLT_MAX, ImVec2(0, 50));
             }
         }
+
+#ifdef WITH_OPENXR
+        if (m_xrInitialized && m_xr && m_xr->isPerformanceMetricsSupported()) {
+            m_xr->updatePerformanceMetrics();
+            const auto& xrMetrics = m_xr->getPerformanceMetrics();
+            
+            if (xrMetrics.valid) {
+                ImGui::Separator();
+                ImGui::Text("Quest Performance Metrics (XR_META)");
+                
+                if (ImGui::BeginTable("XRMetrics", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+                    ImGui::TableSetupColumn("Metric");
+                    ImGui::TableSetupColumn("Value");
+                    ImGui::TableHeadersRow();
+
+                    auto addRow = [](const char* label, const char* fmt, auto value) {
+                        ImGui::TableNextRow();
+                        ImGui::TableNextColumn();
+                        ImGui::Text("%s", label);
+                        ImGui::TableNextColumn();
+                        ImGui::Text(fmt, value);
+                    };
+
+                    addRow("App CPU Frame", "%.2f ms", xrMetrics.appCpuFrameTimeMs);
+                    addRow("App GPU Frame", "%.2f ms", xrMetrics.appGpuFrameTimeMs);
+                    addRow("Motion-to-Photon", "%.2f ms", xrMetrics.motionToPhotonLatencyMs);
+                    addRow("Compositor CPU", "%.2f ms", xrMetrics.compositorCpuFrameTimeMs);
+                    addRow("Compositor GPU", "%.2f ms", xrMetrics.compositorGpuFrameTimeMs);
+                    addRow("Dropped Frames", "%u", xrMetrics.droppedFrameCount);
+                    addRow("SpaceWarp Mode", "%u", xrMetrics.spacewarpMode);
+                    addRow("CPU Util (Avg)", "%.1f %%", xrMetrics.cpuUtilizationAvg);
+                    addRow("CPU Util (Worst)", "%.1f %%", xrMetrics.cpuUtilizationWorst);
+                    addRow("GPU Util", "%.1f %%", xrMetrics.gpuUtilization);
+
+                    ImGui::EndTable();
+                }
+            }
+        }
+#endif
     }
     ImGui::End();
 }

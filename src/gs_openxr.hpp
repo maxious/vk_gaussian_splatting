@@ -45,6 +45,10 @@
 #include <vector>
 #include <optional>
 #include <string>
+#include <thread>
+#include <mutex>
+#include <atomic>
+#include <condition_variable>
 
 namespace vk_gaussian_splatting {
 
@@ -157,6 +161,25 @@ public:
   // Check if controllers are available
   bool hasControllers() const { return m_hasControllers; }
 
+  struct PerformanceMetrics
+  {
+    float appCpuFrameTimeMs = 0.0f;
+    float appGpuFrameTimeMs = 0.0f;
+    float motionToPhotonLatencyMs = 0.0f;
+    float compositorCpuFrameTimeMs = 0.0f;
+    float compositorGpuFrameTimeMs = 0.0f;
+    uint32_t droppedFrameCount = 0;
+    uint32_t spacewarpMode = 0;
+    float cpuUtilizationAvg = 0.0f;
+    float cpuUtilizationWorst = 0.0f;
+    float gpuUtilization = 0.0f;
+    bool valid = false;
+  };
+
+  bool isPerformanceMetricsSupported() const { return m_perfMetricsSupported; }
+  const PerformanceMetrics& getPerformanceMetrics() const { return m_perfMetrics; }
+  void updatePerformanceMetrics();
+
 private:
   // OpenXR handles
   XrInstance     m_instance      = XR_NULL_HANDLE;
@@ -266,6 +289,75 @@ private:
   // Tracking state
   uint32_t m_trackingLossFrameCount = 0;
   static constexpr uint32_t MAX_TRACKING_LOSS_FRAMES = 60;
+
+  // ============================================================================
+  // High-frequency async tracking thread
+  // ============================================================================
+  // Samples poses at ~1000 Hz independently of the 72 Hz frame loop.
+  // This allows us to use the freshest tracking data when rendering.
+
+  struct TimestampedPose
+  {
+    XrTime                        timestamp = 0;
+    std::array<XrView, VIEW_COUNT> views;
+    XrViewStateFlags              viewStateFlags = 0;
+    bool                          valid = false;
+  };
+
+  static constexpr size_t POSE_RING_BUFFER_SIZE = 128;  // ~128ms at 1000Hz
+  static constexpr int    TRACKING_SAMPLE_RATE_HZ = 1000;
+
+  std::array<TimestampedPose, POSE_RING_BUFFER_SIZE> m_poseRingBuffer;
+  std::atomic<size_t>   m_poseWriteIndex{0};
+  std::atomic<size_t>   m_poseCount{0};  // Number of valid samples in buffer
+  mutable std::mutex    m_poseMutex;     // Protects ring buffer access during interpolation
+
+  std::thread           m_trackingThread;
+  std::atomic<bool>     m_trackingThreadRunning{false};
+  std::atomic<bool>     m_trackingThreadShouldStop{false};
+
+  // Tracking thread methods
+  void startTrackingThread();
+  void stopTrackingThread();
+  void trackingThreadLoop();
+  
+  // Get the best pose for a given display time (interpolates if needed)
+  bool getPoseForTime(XrTime targetTime, std::array<XrView, VIEW_COUNT>& outViews) const;
+  
+  // Linear interpolation helper for XrView
+  static XrView interpolateView(const XrView& a, const XrView& b, float t);
+  static XrPosef interpolatePose(const XrPosef& a, const XrPosef& b, float t);
+  static XrQuaternionf slerp(const XrQuaternionf& a, const XrQuaternionf& b, float t);
+
+  // XR_META_performance_metrics support
+  bool m_perfMetricsSupported = false;
+  bool m_perfMetricsEnabled = false;
+  PerformanceMetrics m_perfMetrics;
+  
+  std::vector<XrPath> m_perfMetricsPaths;
+  XrPath m_pathAppCpuFrametime = XR_NULL_PATH;
+  XrPath m_pathAppGpuFrametime = XR_NULL_PATH;
+  XrPath m_pathMotionToPhoton = XR_NULL_PATH;
+  XrPath m_pathCompositorCpuFrametime = XR_NULL_PATH;
+  XrPath m_pathCompositorGpuFrametime = XR_NULL_PATH;
+  XrPath m_pathDroppedFrameCount = XR_NULL_PATH;
+  XrPath m_pathSpacewarpMode = XR_NULL_PATH;
+  XrPath m_pathCpuUtilAvg = XR_NULL_PATH;
+  XrPath m_pathCpuUtilWorst = XR_NULL_PATH;
+  XrPath m_pathGpuUtil = XR_NULL_PATH;
+
+  using PFN_xrEnumeratePerformanceMetricsCounterPathsMETA = XrResult(XRAPI_PTR*)(XrInstance, uint32_t, uint32_t*, XrPath*);
+  using PFN_xrSetPerformanceMetricsStateMETA = XrResult(XRAPI_PTR*)(XrSession, const void*);
+  using PFN_xrGetPerformanceMetricsStateMETA = XrResult(XRAPI_PTR*)(XrSession, void*);
+  using PFN_xrQueryPerformanceMetricsCounterMETA = XrResult(XRAPI_PTR*)(XrSession, XrPath, void*);
+
+  PFN_xrEnumeratePerformanceMetricsCounterPathsMETA m_xrEnumeratePerformanceMetricsCounterPathsMETA = nullptr;
+  PFN_xrSetPerformanceMetricsStateMETA m_xrSetPerformanceMetricsStateMETA = nullptr;
+  PFN_xrGetPerformanceMetricsStateMETA m_xrGetPerformanceMetricsStateMETA = nullptr;
+  PFN_xrQueryPerformanceMetricsCounterMETA m_xrQueryPerformanceMetricsCounterMETA = nullptr;
+
+  void initPerformanceMetrics();
+  void enablePerformanceMetrics();
 };
 
 }  // namespace vk_gaussian_splatting
