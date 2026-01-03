@@ -1687,12 +1687,38 @@ void GsOpenXr::trackingThreadLoop()
 
         XrResult result = xrLocateViews(m_session, &locateInfo, &viewState, VIEW_COUNT, &viewCount, views.data());
 
-        if(XR_SUCCEEDED(result))
+        if(XR_SUCCEEDED(result) &&
+           (viewState.viewStateFlags & XR_VIEW_STATE_POSITION_VALID_BIT) != 0 &&
+           (viewState.viewStateFlags & XR_VIEW_STATE_ORIENTATION_VALID_BIT) != 0)
         {
           size_t writeIdx = m_poseWriteIndex.load() % POSE_RING_BUFFER_SIZE;
 
+          bool positionTracked = (viewState.viewStateFlags & XR_VIEW_STATE_POSITION_TRACKED_BIT) != 0;
+          bool orientationTracked = (viewState.viewStateFlags & XR_VIEW_STATE_ORIENTATION_TRACKED_BIT) != 0;
+
           {
             std::lock_guard<std::mutex> lock(m_poseMutex);
+
+            if((!positionTracked || !orientationTracked) && m_poseCount.load() > 0)
+            {
+              size_t prevIdx = (writeIdx == 0) ? (POSE_RING_BUFFER_SIZE - 1) : (writeIdx - 1);
+              const auto& prevPose = m_poseRingBuffer[prevIdx];
+              if(prevPose.valid)
+              {
+                const auto& prevPos = prevPose.views[0].pose.position;
+                const auto& currPos = views[0].pose.position;
+                float dx = currPos.x - prevPos.x;
+                float dy = currPos.y - prevPos.y;
+                float dz = currPos.z - prevPos.z;
+                float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+
+                LOGW("Tracking loss - inferred pose: prev=(%.4f, %.4f, %.4f) curr=(%.4f, %.4f, %.4f) delta=%.4fm [pos_tracked=%d, ori_tracked=%d]\n",
+                     prevPos.x, prevPos.y, prevPos.z,
+                     currPos.x, currPos.y, currPos.z,
+                     dist, positionTracked ? 1 : 0, orientationTracked ? 1 : 0);
+              }
+            }
+
             m_poseRingBuffer[writeIdx].timestamp = now;
             m_poseRingBuffer[writeIdx].views = views;
             m_poseRingBuffer[writeIdx].viewStateFlags = viewState.viewStateFlags;
