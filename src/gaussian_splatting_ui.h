@@ -284,6 +284,55 @@ private:
   std::filesystem::path          m_comfyWorkflowPath = "S:\\ComfyUI\\user\\default\\workflows\\z_image_turbo_3d.json";
   std::string                    m_comfyStatusMessage;
 #endif
+
+  // Hand mesh rendering
+  struct HandMeshVk {
+    // CPU mesh data from OpenXR
+    std::vector<XrVector3f> positions;
+    std::vector<XrVector3f> normals;
+    std::vector<XrVector2f> uvs;
+    std::vector<XrVector4sFB> blendIndices;
+    std::vector<XrVector4f> blendWeights;
+    std::vector<uint16_t> indices;
+
+    // Vulkan GPU resources
+    VkBuffer vertexBuffer = VK_NULL_HANDLE;
+    VkBuffer indexBuffer = VK_NULL_HANDLE;
+    VkBuffer jointMatricesBuffer = VK_NULL_HANDLE;
+    VmaAllocation vertexAllocation = VK_NULL_HANDLE;
+    VmaAllocation indexAllocation = VK_NULL_HANDLE;
+    VmaAllocation jointAllocation = VK_NULL_HANDLE;
+
+    // Joint matrices for skinning (updated each frame)
+    std::array<glm::mat4, XR_HAND_JOINT_COUNT_EXT> jointMatrices{};
+
+    // Rendering state
+    bool initialized = false;
+    bool visible = true;
+  };
+
+  HandMeshVk m_leftHandMesh;
+  HandMeshVk m_rightHandMesh;
+
+  // Hand mesh rendering functions
+  bool initHandMeshes();
+  void destroyHandMeshes();
+  void updateHandMeshes();
+  void renderHandMesh(VkCommandBuffer cmd, const GaussianSplattingUI::HandMeshVk& mesh, const glm::mat4& viewProj);
+
+  // Wrist button for file picker
+  struct WristButton {
+    bool visible = true;
+    bool pressed = false;
+    float radius = 0.03f;
+    glm::vec3 localOffset{0.0f, 0.0f, 0.05f};
+  } m_wristButton;
+
+  // File picker state
+  bool m_showFilePicker = false;
+
+  // Wrist button handler
+  void onWristButtonPressed() override;
 };
 
 }  // namespace vk_gaussian_splatting

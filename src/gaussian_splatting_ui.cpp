@@ -71,6 +71,10 @@ GaussianSplattingUI::~GaussianSplattingUI(){
 
 void GaussianSplattingUI::onAttach(nvapp::Application* app)
 {
+    GaussianSplatting::onAttach(app);
+
+    // Initialize hand meshes after OpenXR is set up
+    initHandMeshes();
   // we hide the UI dy default in benchmark mode
   m_showUI = !(*m_pBenchmarkEnabled);
 
@@ -166,14 +170,8 @@ void GaussianSplattingUI::onAttach(nvapp::Application* app)
 
 void GaussianSplattingUI::onDetach()
 {
-#ifdef WITH_COMFYUI
-  if (m_comfyClient)
-  {
-    m_comfyClient->disconnect();
-    m_comfyClient.reset();
-  }
-#endif
-  GaussianSplatting::onDetach();
+    destroyHandMeshes();
+    GaussianSplatting::onDetach();
 }
 
 void GaussianSplattingUI::onResize(VkCommandBuffer cmd, const VkExtent2D& size)
@@ -194,7 +192,14 @@ void GaussianSplattingUI::onPreRender()
 
 void GaussianSplattingUI::onRender(VkCommandBuffer cmd)
 {
+  // Update hand meshes before rendering
+  updateHandMeshes();
+
   GaussianSplatting::onRender(cmd);
+
+  // TODO: Render hand meshes after main scene
+  // renderHandMesh(cmd, m_leftHandMesh, ...);
+  // renderHandMesh(cmd, m_rightHandMesh, ...);
 }
 
 #define ICON_BLANK "     "
@@ -869,6 +874,37 @@ void GaussianSplattingUI::onUIRender()
   if(m_showDepthPerformance)
   {
     guiDrawPerformancePanel();
+  }
+
+  // File picker from wrist button
+  if (m_showFilePicker)
+  {
+    if (ImGui::Begin("File Picker", &m_showFilePicker))
+    {
+      ImGui::Text("Select a file from _downloaded_resources:");
+
+      std::filesystem::path resourcesDir = getResourcesDirs()[0];
+      if (std::filesystem::exists(resourcesDir))
+      {
+        for (const auto& entry : std::filesystem::directory_iterator(resourcesDir))
+        {
+          if (entry.is_regular_file())
+          {
+            std::string filename = entry.path().filename().string();
+            if (ImGui::Selectable(filename.c_str()))
+            {
+              prmScene.sceneToLoadFilename = entry.path();
+              m_showFilePicker = false;
+            }
+          }
+        }
+      }
+      else
+      {
+        ImGui::Text("No _downloaded_resources directory found.");
+      }
+    }
+    ImGui::End();
   }
 
 #ifdef WITH_COMFYUI
@@ -4252,6 +4288,67 @@ void GaussianSplattingUI::guiDrawPerformancePanel()
     ImGui::End();
 }
 
+void GaussianSplattingUI::onWristButtonPressed()
+{
+    m_showFilePicker = !m_showFilePicker;
+}
+
+bool GaussianSplattingUI::initHandMeshes()
+{
+    if (!m_xr || !m_xr->handsSupported())
+        return false;
+
+    // TODO: Implement full mesh fetching and buffer creation
+    // For now, just mark as initialized for structure
+    m_leftHandMesh.initialized = true;
+    m_rightHandMesh.initialized = true;
+
+    return true;
+}
+
+void GaussianSplattingUI::destroyHandMeshes()
+{
+    for (int hand = 0; hand < 2; ++hand) {
+        GaussianSplattingUI::HandMeshVk& mesh = (hand == 0) ? m_leftHandMesh : m_rightHandMesh;
+
+        if (mesh.vertexBuffer != VK_NULL_HANDLE) {
+            vmaDestroyBuffer(m_alloc, mesh.vertexBuffer, mesh.vertexAllocation);
+            mesh.vertexBuffer = VK_NULL_HANDLE;
+        }
+        if (mesh.indexBuffer != VK_NULL_HANDLE) {
+            vmaDestroyBuffer(m_alloc, mesh.indexBuffer, mesh.indexAllocation);
+            mesh.indexBuffer = VK_NULL_HANDLE;
+        }
+        if (mesh.jointMatricesBuffer != VK_NULL_HANDLE) {
+            vmaDestroyBuffer(m_alloc, mesh.jointMatricesBuffer, mesh.jointAllocation);
+            mesh.jointMatricesBuffer = VK_NULL_HANDLE;
+        }
+
+        mesh.initialized = false;
+    }
+}
+
+void GaussianSplattingUI::updateHandMeshes()
+{
+    if (!m_xr || !m_xr->handsSupported())
+        return;
+
+    // TODO: Implement joint matrix computation and GPU upload
+    // For now, this is a placeholder
+}
+
+void GaussianSplattingUI::renderHandMesh(VkCommandBuffer cmd, const GaussianSplattingUI::HandMeshVk& mesh, const glm::mat4& viewProj)
+{
+    if (!mesh.initialized || !mesh.visible)
+        return;
+
+    // TODO: Implement Vulkan rendering pipeline for skinned hand mesh
+    // This would require:
+    // - Vertex shader with skinning calculations
+    // - Descriptor sets for joint matrices
+    // - Pipeline with proper vertex input attributes
+    // - Drawing commands
+}
 
 }  // namespace vk_gaussian_splatting
 

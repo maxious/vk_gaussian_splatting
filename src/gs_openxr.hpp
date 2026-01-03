@@ -291,6 +291,12 @@ public:
   const HandInput& getHandInput(Hand hand) const;
   bool handsSupported() const { return m_handTrackingSupported; }
 
+  // Get hand tracker for mesh access
+  XrHandTrackerEXT getHandTracker(Hand hand) const;
+
+  // Get hand mesh function
+  XrResult getHandMeshFB(XrHandTrackerEXT handTracker, XrHandTrackingMeshFB* mesh);
+
   struct PerformanceMetrics
   {
     float appCpuFrameTimeMs = 0.0f;

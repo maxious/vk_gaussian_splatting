@@ -2429,6 +2429,21 @@ void GsOpenXr::destroyEnvironmentDepth()
   m_environmentDepthRunning = false;
 }
 
+const GsOpenXr::HandInput& GsOpenXr::getHandInput(Hand hand) const {
+  return m_handInputs[hand == Hand::Left ? 0 : 1];
+}
+
+XrHandTrackerEXT GsOpenXr::getHandTracker(Hand hand) const {
+  return m_handTracker[hand == Hand::Left ? 0 : 1];
+}
+
+XrResult GsOpenXr::getHandMeshFB(XrHandTrackerEXT handTracker, XrHandTrackingMeshFB* mesh) {
+  if (m_xrGetHandMeshFB == nullptr) {
+    return XR_ERROR_FUNCTION_UNSUPPORTED;
+  }
+  return m_xrGetHandMeshFB(handTracker, mesh);
+}
+
 }  // namespace vk_gaussian_splatting
 
 #endif  // WITH_OPENXR

@@ -807,74 +807,139 @@ void GaussianSplatting::shutdownOpenXR()
 
 void GaussianSplatting::updateXrLocomotion(float deltaTime)
 {
-  if(!m_xrInitialized || !m_xr || !m_xr->hasControllers())
+  if(!m_xrInitialized || !m_xr)
     return;
 
   m_xr->pollControllerInput();
   const auto& locomotion = m_xr->getLocomotionInput();
 
-  // Get HMD forward direction from the view matrix (use left eye as reference)
-  GsOpenXr::EyeData eyeData = m_xr->getEyeData(0);
-  glm::mat4 viewInverse = glm::inverse(eyeData.view);
-  glm::vec3 forward = -glm::vec3(viewInverse[2]);  // -Z is forward in view space
-  glm::vec3 right = glm::vec3(viewInverse[0]);     // +X is right
+  // Determine if we should use hand input or controller input
+  bool useHands = m_xr->handsSupported() &&
+                  (m_xr->getHandInput(GsOpenXr::Hand::Left).tracked ||
+                   m_xr->getHandInput(GsOpenXr::Hand::Right).tracked);
 
-  // Flatten forward/right to XZ plane for locomotion (ignore vertical component)
-  forward.y = 0.0f;
-  if(glm::length(forward) > 0.001f)
-    forward = glm::normalize(forward);
-  else
-    forward = glm::vec3(0.0f, 0.0f, -1.0f);
-  
-  right.y = 0.0f;
-  if(glm::length(right) > 0.001f)
-    right = glm::normalize(right);
-  else
-    right = glm::vec3(1.0f, 0.0f, 0.0f);
+  if (!useHands) {
+    // Use controller-based locomotion
+    if (!m_xr->hasControllers())
+      return;
 
-  // Calculate movement speed
-  float speed = m_xrMoveSpeed;
-  if(locomotion.sprintPressed)
-  {
-    speed *= m_xrSprintMultiplier;
+    // Get HMD forward direction from the view matrix (use left eye as reference)
+    GsOpenXr::EyeData eyeData = m_xr->getEyeData(0);
+    glm::mat4 viewInverse = glm::inverse(eyeData.view);
+    glm::vec3 forward = -glm::vec3(viewInverse[2]);  // -Z is forward in view space
+    glm::vec3 right = glm::vec3(viewInverse[0]);     // +X is right
+
+    // Flatten forward/right to XZ plane for locomotion (ignore vertical component)
+    forward.y = 0.0f;
+    if(glm::length(forward) > 0.001f)
+      forward = glm::normalize(forward);
+    else
+      forward = glm::vec3(0.0f, 0.0f, -1.0f);
+
+    right.y = 0.0f;
+    if(glm::length(right) > 0.001f)
+      right = glm::normalize(right);
+    else
+      right = glm::vec3(1.0f, 0.0f, 0.0f);
+
+    // Calculate movement speed
+    float speed = m_xrMoveSpeed;
+    if(locomotion.sprintPressed)
+    {
+      speed *= m_xrSprintMultiplier;
+    }
+
+    // Calculate movement - move scene opposite to desired player movement
+    glm::vec3 movement(0.0f);
+    movement -= forward * locomotion.move.y * speed * deltaTime;  // Forward/back (inverted for scene)
+    movement -= right * locomotion.move.x * speed * deltaTime;    // Strafe (inverted for scene)
+
+    // Apply movement to splat set translation
+    if(glm::length(movement) > 0.0001f)
+    {
+      m_splatSetVk.translation += movement;
+      computeTransform(m_splatSetVk.scale, m_splatSetVk.rotation, m_splatSetVk.translation,
+                       m_splatSetVk.transform, m_splatSetVk.transformInverse);
+    }
+
+    // Handle right stick - rotation (X) and vertical movement (Y)
+    bool transformChanged = false;
+
+    // Right stick X: rotate scene around Y axis
+    float turnAmount = locomotion.turn.x * glm::radians(m_xrSmoothTurnSpeed) * deltaTime;
+    if(std::abs(turnAmount) > 0.0001f)
+    {
+      m_splatSetVk.rotation.y += turnAmount;
+      transformChanged = true;
+    }
+
+    // Right stick Y: move scene up/down
+    float verticalMove = locomotion.turn.y * speed * deltaTime;
+    if(std::abs(verticalMove) > 0.0001f)
+    {
+      m_splatSetVk.translation.y -= verticalMove;
+      transformChanged = true;
+    }
+
+    if(transformChanged)
+    {
+      computeTransform(m_splatSetVk.scale, m_splatSetVk.rotation, m_splatSetVk.translation,
+                       m_splatSetVk.transform, m_splatSetVk.transformInverse);
+    }
   }
 
-  // Calculate movement - move scene opposite to desired player movement
-  glm::vec3 movement(0.0f);
-  movement -= forward * locomotion.move.y * speed * deltaTime;  // Forward/back (inverted for scene)
-  movement -= right * locomotion.move.x * speed * deltaTime;    // Strafe (inverted for scene)
+  // Handle hand-based pinch-drag locomotion
+  if (m_xr->handsSupported()) {
+    const auto& left  = m_xr->getHandInput(GsOpenXr::Hand::Left);
+    const auto& right = m_xr->getHandInput(GsOpenXr::Hand::Right);
 
-  // Apply movement to splat set translation
-  if(glm::length(movement) > 0.0001f)
-  {
-    m_splatSetVk.translation += movement;
-    computeTransform(m_splatSetVk.scale, m_splatSetVk.rotation, m_splatSetVk.translation,
-                     m_splatSetVk.transform, m_splatSetVk.transformInverse);
-  }
+    static bool lastPinchLeft = false;
+    static bool lastPinchRight = false;
 
-  // Handle right stick - rotation (X) and vertical movement (Y)
-  bool transformChanged = false;
+    auto updateHandDrag = [&](const GsOpenXr::HandInput& hand, GsOpenXr::Hand handEnum, bool& lastPinch) {
+      bool pinchingNow = hand.tracked && hand.indexPinching;
 
-  // Right stick X: rotate scene around Y axis
-  float turnAmount = locomotion.turn.x * glm::radians(m_xrSmoothTurnSpeed) * deltaTime;
-  if(std::abs(turnAmount) > 0.0001f)
-  {
-    m_splatSetVk.rotation.y += turnAmount;
-    transformChanged = true;
-  }
+      if (pinchingNow && !lastPinch && hand.tracked) {
+        m_handDrag.active = true;
+        m_handDrag.hand = handEnum;
+        m_handDrag.grabStartHandPos = hand.indexTipPos;
+        m_handDrag.grabStartWorldOffset = m_splatSetVk.translation;
+      }
 
-  // Right stick Y: move scene up/down
-  float verticalMove = locomotion.turn.y * speed * deltaTime;
-  if(std::abs(verticalMove) > 0.0001f)
-  {
-    m_splatSetVk.translation.y -= verticalMove;
-    transformChanged = true;
-  }
+      if (m_handDrag.active && m_handDrag.hand == handEnum && pinchingNow) {
+        glm::vec3 delta = hand.indexTipPos - m_handDrag.grabStartHandPos;
+        delta.y = 0.0f;
+        m_splatSetVk.translation = m_handDrag.grabStartWorldOffset - delta;
 
-  if(transformChanged)
-  {
-    computeTransform(m_splatSetVk.scale, m_splatSetVk.rotation, m_splatSetVk.translation,
-                     m_splatSetVk.transform, m_splatSetVk.transformInverse);
+        computeTransform(m_splatSetVk.scale, m_splatSetVk.rotation, m_splatSetVk.translation,
+                         m_splatSetVk.transform, m_splatSetVk.transformInverse);
+      }
+
+      if (!pinchingNow && lastPinch && m_handDrag.active && m_handDrag.hand == handEnum) {
+        m_handDrag.active = false;
+      }
+
+      lastPinch = pinchingNow;
+    };
+
+    updateHandDrag(left, GsOpenXr::Hand::Left, lastPinchLeft);
+    updateHandDrag(right, GsOpenXr::Hand::Right, lastPinchRight);
+
+    // Wrist button interaction (left wrist, triggered by right index finger)
+    static bool lastWristButtonTouched = false;
+    bool wristButtonTouched = false;
+    if (left.tracked && right.tracked) {
+      glm::vec3 buttonCenter = left.wristPos + left.wristRot * glm::vec3(0.0f, 0.0f, 0.05f);
+      float dist = glm::length(right.indexTipPos - buttonCenter);
+      wristButtonTouched = dist < 0.03f;
+    }
+
+    if (wristButtonTouched && !lastWristButtonTouched) {
+      onWristButtonPressed();
+    }
+    lastWristButtonTouched = wristButtonTouched;
+
+
   }
 }
 

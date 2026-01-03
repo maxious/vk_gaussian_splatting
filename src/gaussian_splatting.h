@@ -193,12 +193,25 @@ protected:
   // Process controller input for locomotion
   void updateXrLocomotion(float deltaTime);
 
+  // Virtual function for derived classes to handle wrist button
+  virtual void onWristButtonPressed() {}
+
   // Locomotion settings
   float m_xrMoveSpeed       = 2.0f;   // meters per second
   float m_xrSprintMultiplier = 2.5f;  // speed multiplier when sprinting
   float m_xrSnapTurnAngle   = 45.0f;  // degrees per snap turn
   float m_xrSmoothTurnSpeed = 90.0f;  // degrees per second for smooth turn
   bool  m_xrUseSmoothTurn   = false;  // use smooth turn instead of snap turn
+
+  // Hand drag state for pinch-to-drag scene movement
+  struct HandDragState {
+    bool active = false;
+    GsOpenXr::Hand hand;
+    glm::vec3 grabStartHandPos{0};
+    glm::vec3 grabStartWorldOffset{0};
+  } m_handDrag;
+
+
 
 private:
   // Copy rendered image to XR swapchain
