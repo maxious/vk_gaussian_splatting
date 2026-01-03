@@ -50,6 +50,94 @@
 #include <atomic>
 #include <condition_variable>
 
+// Define XR_META_environment_depth if not available
+#ifndef XR_META_environment_depth
+#define XR_META_environment_depth 1
+#define XR_META_environment_depth_SPEC_VERSION 1
+#define XR_META_ENVIRONMENT_DEPTH_EXTENSION_NAME "XR_META_environment_depth"
+
+XR_DEFINE_HANDLE(XrEnvironmentDepthProviderMETA)
+XR_DEFINE_HANDLE(XrEnvironmentDepthSwapchainMETA)
+
+static const XrStructureType XR_TYPE_ENVIRONMENT_DEPTH_PROVIDER_CREATE_INFO_META = (XrStructureType)1000291000;
+static const XrStructureType XR_TYPE_ENVIRONMENT_DEPTH_SWAPCHAIN_CREATE_INFO_META = (XrStructureType)1000291001;
+static const XrStructureType XR_TYPE_ENVIRONMENT_DEPTH_SWAPCHAIN_STATE_META = (XrStructureType)1000291002;
+static const XrStructureType XR_TYPE_ENVIRONMENT_DEPTH_IMAGE_ACQUIRE_INFO_META = (XrStructureType)1000291003;
+static const XrStructureType XR_TYPE_ENVIRONMENT_DEPTH_IMAGE_VIEW_META = (XrStructureType)1000291004;
+static const XrStructureType XR_TYPE_ENVIRONMENT_DEPTH_IMAGE_META = (XrStructureType)1000291005;
+static const XrStructureType XR_TYPE_SYSTEM_ENVIRONMENT_DEPTH_PROPERTIES_META = (XrStructureType)1000291006;
+static const XrStructureType XR_TYPE_ENVIRONMENT_DEPTH_HAND_REMOVAL_SET_INFO_META = (XrStructureType)1000291007;
+
+typedef XrFlags64 XrEnvironmentDepthProviderCreateFlagsMETA;
+typedef struct XrEnvironmentDepthProviderCreateInfoMETA {
+    XrStructureType             type;
+    const void*                 next;
+    XrEnvironmentDepthProviderCreateFlagsMETA createFlags;
+} XrEnvironmentDepthProviderCreateInfoMETA;
+
+typedef XrFlags64 XrEnvironmentDepthSwapchainCreateFlagsMETA;
+typedef struct XrEnvironmentDepthSwapchainCreateInfoMETA {
+    XrStructureType             type;
+    const void*                 next;
+    XrEnvironmentDepthSwapchainCreateFlagsMETA createFlags;
+} XrEnvironmentDepthSwapchainCreateInfoMETA;
+
+typedef struct XrEnvironmentDepthSwapchainStateMETA {
+    XrStructureType             type;
+    void*                       next;
+    uint32_t                    width;
+    uint32_t                    height;
+} XrEnvironmentDepthSwapchainStateMETA;
+
+typedef struct XrEnvironmentDepthImageAcquireInfoMETA {
+    XrStructureType             type;
+    const void*                 next;
+    XrSpace                     space;
+    XrTime                      displayTime;
+} XrEnvironmentDepthImageAcquireInfoMETA;
+
+typedef struct XrEnvironmentDepthImageViewMETA {
+    XrStructureType             type;
+    const void*                 next;
+    XrFovf                      fov;
+    XrPosef                     pose;
+} XrEnvironmentDepthImageViewMETA;
+
+typedef struct XrEnvironmentDepthImageMETA {
+    XrStructureType             type;
+    void*                       next;
+    uint32_t                    swapchainIndex;
+    float                       nearZ;
+    float                       farZ;
+    XrEnvironmentDepthImageViewMETA views[2];
+} XrEnvironmentDepthImageMETA;
+
+typedef struct XrSystemEnvironmentDepthPropertiesMETA {
+    XrStructureType             type;
+    void*                       next;
+    XrBool32                    supportsEnvironmentDepth;
+    XrBool32                    supportsHandRemoval;
+} XrSystemEnvironmentDepthPropertiesMETA;
+
+typedef struct XrEnvironmentDepthHandRemovalSetInfoMETA {
+    XrStructureType             type;
+    const void*                 next;
+    XrBool32                    enabled;
+} XrEnvironmentDepthHandRemovalSetInfoMETA;
+
+typedef XrResult (XRAPI_PTR *PFN_xrCreateEnvironmentDepthProviderMETA)(XrSession session, const XrEnvironmentDepthProviderCreateInfoMETA* createInfo, XrEnvironmentDepthProviderMETA* environmentDepthProvider);
+typedef XrResult (XRAPI_PTR *PFN_xrDestroyEnvironmentDepthProviderMETA)(XrEnvironmentDepthProviderMETA environmentDepthProvider);
+typedef XrResult (XRAPI_PTR *PFN_xrStartEnvironmentDepthProviderMETA)(XrEnvironmentDepthProviderMETA environmentDepthProvider);
+typedef XrResult (XRAPI_PTR *PFN_xrStopEnvironmentDepthProviderMETA)(XrEnvironmentDepthProviderMETA environmentDepthProvider);
+typedef XrResult (XRAPI_PTR *PFN_xrCreateEnvironmentDepthSwapchainMETA)(XrEnvironmentDepthProviderMETA environmentDepthProvider, const XrEnvironmentDepthSwapchainCreateInfoMETA* createInfo, XrEnvironmentDepthSwapchainMETA* swapchain);
+typedef XrResult (XRAPI_PTR *PFN_xrDestroyEnvironmentDepthSwapchainMETA)(XrEnvironmentDepthSwapchainMETA swapchain);
+typedef XrResult (XRAPI_PTR *PFN_xrGetEnvironmentDepthSwapchainStateMETA)(XrEnvironmentDepthSwapchainMETA swapchain, XrEnvironmentDepthSwapchainStateMETA* state);
+typedef XrResult (XRAPI_PTR *PFN_xrAcquireEnvironmentDepthImageMETA)(XrEnvironmentDepthProviderMETA environmentDepthProvider, const XrEnvironmentDepthImageAcquireInfoMETA* acquireInfo, XrEnvironmentDepthImageMETA* environmentDepthImage);
+typedef XrResult (XRAPI_PTR *PFN_xrEnumerateEnvironmentDepthSwapchainImagesMETA)(XrEnvironmentDepthSwapchainMETA swapchain, uint32_t imageCapacityInput, uint32_t* imageCountOutput, XrSwapchainImageBaseHeader* images);
+typedef XrResult (XRAPI_PTR *PFN_xrSetEnvironmentDepthHandRemovalMETA)(XrEnvironmentDepthProviderMETA environmentDepthProvider, const XrEnvironmentDepthHandRemovalSetInfoMETA* setInfo);
+
+#endif
+
 namespace vk_gaussian_splatting {
 
 class GsOpenXr
@@ -201,6 +289,10 @@ public:
   bool setColorSpace(ColorSpace colorSpace);
   static const char* colorSpaceToString(ColorSpace cs);
 
+  // Utility
+  static glm::mat4 createViewMatrix(const XrPosef& pose);
+  static glm::mat4 createProjectionMatrix(const XrFovf& fov, float nearZ, float farZ);
+
 private:
   // OpenXR handles
   XrInstance     m_instance      = XR_NULL_HANDLE;
@@ -252,6 +344,16 @@ private:
   PFN_xrGetVulkanInstanceExtensionsKHR    m_xrGetVulkanInstanceExtensionsKHR    = nullptr;
   PFN_xrGetVulkanDeviceExtensionsKHR      m_xrGetVulkanDeviceExtensionsKHR      = nullptr;
 
+  // Extension availability flags (set during instance creation)
+  bool m_extPerformanceMetricsAvailable = false;
+  bool m_extColorSpaceAvailable = false;
+  bool m_extPassthroughAvailable = false;
+  bool m_extSpaceWarpAvailable = false;
+  bool m_extEnvironmentDepthAvailable = false;
+  bool m_extDepthExtensionAvailable = false;
+  bool m_extWin32PerfCounterAvailable = false;
+
+
   // Helper methods
   bool createInstance();
   bool getSystem();
@@ -264,9 +366,6 @@ private:
   void pollEvents();
   void handleSessionStateChange(const XrEventDataSessionStateChanged& event);
 
-  // Utility
-  static glm::mat4 createViewMatrix(const XrPosef& pose);
-  static glm::mat4 createProjectionMatrix(const XrFovf& fov, float nearZ, float farZ);
   void loadXrFunctions();
 
   // Controller input system
@@ -429,10 +528,38 @@ private:
   void initPassthrough();
   void destroyPassthrough();
 
+  // XR_META_environment_depth support
+  bool m_environmentDepthSupported = false;
+  bool m_environmentDepthEnabled = false;
+  bool m_environmentDepthRunning = false;
+
+  XrEnvironmentDepthProviderMETA m_environmentDepthProvider = XR_NULL_HANDLE;
+  XrEnvironmentDepthSwapchainMETA m_environmentDepthSwapchain = XR_NULL_HANDLE;
+  std::vector<VkImage> m_environmentDepthImages;
+
+  PFN_xrCreateEnvironmentDepthProviderMETA m_xrCreateEnvironmentDepthProviderMETA = nullptr;
+  PFN_xrDestroyEnvironmentDepthProviderMETA m_xrDestroyEnvironmentDepthProviderMETA = nullptr;
+  PFN_xrStartEnvironmentDepthProviderMETA m_xrStartEnvironmentDepthProviderMETA = nullptr;
+  PFN_xrStopEnvironmentDepthProviderMETA m_xrStopEnvironmentDepthProviderMETA = nullptr;
+  PFN_xrCreateEnvironmentDepthSwapchainMETA m_xrCreateEnvironmentDepthSwapchainMETA = nullptr;
+  PFN_xrDestroyEnvironmentDepthSwapchainMETA m_xrDestroyEnvironmentDepthSwapchainMETA = nullptr;
+  PFN_xrGetEnvironmentDepthSwapchainStateMETA m_xrGetEnvironmentDepthSwapchainStateMETA = nullptr;
+  PFN_xrAcquireEnvironmentDepthImageMETA m_xrAcquireEnvironmentDepthImageMETA = nullptr;
+  PFN_xrEnumerateEnvironmentDepthSwapchainImagesMETA m_xrEnumerateEnvironmentDepthSwapchainImagesMETA = nullptr;
+  PFN_xrSetEnvironmentDepthHandRemovalMETA m_xrSetEnvironmentDepthHandRemovalMETA = nullptr;
+
+  void initEnvironmentDepth();
+  void destroyEnvironmentDepth();
+
 public:
   bool isPassthroughSupported() const { return m_passthroughSupported; }
   bool isPassthroughEnabled() const { return m_passthroughEnabled; }
   void setPassthroughEnabled(bool enabled);
+
+  bool isEnvironmentDepthSupported() const { return m_environmentDepthSupported; }
+  bool isEnvironmentDepthEnabled() const { return m_environmentDepthEnabled; }
+
+  bool acquireEnvironmentDepthImage(VkImage& outDepthImage, XrEnvironmentDepthImageMETA& outDepthInfo);
 };
 
 }  // namespace vk_gaussian_splatting

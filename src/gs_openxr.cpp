@@ -197,6 +197,7 @@ bool GsOpenXr::initialize(VkInstance       vkInstance,
   initColorSpace();
   initPassthrough();
   initSpaceWarp();
+  initEnvironmentDepth();
 
   // Check for VK_KHR_multiview support
   m_supportsMultiview = true;  // OpenXR runtime should have provided this if supported
@@ -208,13 +209,70 @@ bool GsOpenXr::initialize(VkInstance       vkInstance,
 
 bool GsOpenXr::createInstance()
 {
-  std::vector<const char*> extensions = {
-    "XR_KHR_vulkan_enable",
-    "XR_META_performance_metrics",
-    "XR_FB_color_space",
-    "XR_FB_passthrough",
-    "XR_FB_space_warp"
+  std::vector<const char*> extensions;
+  extensions.push_back("XR_KHR_vulkan_enable");
+
+  // Get available extensions
+  uint32_t extCount = 0;
+  xrEnumerateInstanceExtensionProperties(nullptr, 0, &extCount, nullptr);
+  std::vector<XrExtensionProperties> availableExts(extCount, {XR_TYPE_EXTENSION_PROPERTIES});
+  xrEnumerateInstanceExtensionProperties(nullptr, extCount, &extCount, availableExts.data());
+
+  auto isExtensionAvailable = [&](const char* extName) {
+    for (const auto& ext : availableExts) {
+      if (strcmp(ext.extensionName, extName) == 0) return true;
+    }
+    return false;
   };
+
+  if (isExtensionAvailable("XR_FB_passthrough")) {
+    extensions.push_back("XR_FB_passthrough");
+    m_extPassthroughAvailable = true;
+  } else {
+    LOGW("XR_FB_passthrough extension not available\n");
+  }
+
+  if (isExtensionAvailable("XR_FB_color_space")) {
+    extensions.push_back("XR_FB_color_space");
+    m_extColorSpaceAvailable = true;
+  } else {
+    LOGW("XR_FB_color_space extension not available\n");
+  }
+
+  if (isExtensionAvailable("XR_META_performance_metrics")) {
+    extensions.push_back("XR_META_performance_metrics");
+    m_extPerformanceMetricsAvailable = true;
+  } else {
+    LOGW("XR_META_performance_metrics extension not available\n");
+  }
+
+  if (isExtensionAvailable("XR_FB_space_warp")) {
+    extensions.push_back("XR_FB_space_warp");
+    m_extSpaceWarpAvailable = true;
+  } else {
+    LOGW("XR_FB_space_warp extension not available\n");
+  }
+
+  if (isExtensionAvailable("XR_META_environment_depth")) {
+    extensions.push_back("XR_META_environment_depth");
+    m_extEnvironmentDepthAvailable = true;
+  } else {
+    LOGW("XR_META_environment_depth extension not available\n");
+  }
+
+  if (isExtensionAvailable("XR_KHR_composition_layer_depth")) {
+    extensions.push_back("XR_KHR_composition_layer_depth");
+    m_extDepthExtensionAvailable = true;
+  } else {
+    LOGW("XR_KHR_composition_layer_depth extension not available\n");
+  }
+
+#ifdef _WIN32
+  if (isExtensionAvailable("XR_KHR_win32_convert_performance_counter_time")) {
+    extensions.push_back("XR_KHR_win32_convert_performance_counter_time");
+    m_extWin32PerfCounterAvailable = true;
+  }
+#endif
 
   XrInstanceCreateInfo createInfo{XR_TYPE_INSTANCE_CREATE_INFO};
   strcpy_s(createInfo.applicationInfo.applicationName, "vk_gaussian_splatting");
@@ -252,14 +310,16 @@ void GsOpenXr::loadXrFunctions()
   xrGetInstanceProcAddr(m_instance, "xrGetVulkanDeviceExtensionsKHR",
                         (PFN_xrVoidFunction*)&m_xrGetVulkanDeviceExtensionsKHR);
 
-  xrGetInstanceProcAddr(m_instance, "xrEnumeratePerformanceMetricsCounterPathsMETA",
-                        (PFN_xrVoidFunction*)&m_xrEnumeratePerformanceMetricsCounterPathsMETA);
-  xrGetInstanceProcAddr(m_instance, "xrSetPerformanceMetricsStateMETA",
-                        (PFN_xrVoidFunction*)&m_xrSetPerformanceMetricsStateMETA);
-  xrGetInstanceProcAddr(m_instance, "xrGetPerformanceMetricsStateMETA",
-                        (PFN_xrVoidFunction*)&m_xrGetPerformanceMetricsStateMETA);
-  xrGetInstanceProcAddr(m_instance, "xrQueryPerformanceMetricsCounterMETA",
-                        (PFN_xrVoidFunction*)&m_xrQueryPerformanceMetricsCounterMETA);
+  if (m_extPerformanceMetricsAvailable) {
+    xrGetInstanceProcAddr(m_instance, "xrEnumeratePerformanceMetricsCounterPathsMETA",
+                          (PFN_xrVoidFunction*)&m_xrEnumeratePerformanceMetricsCounterPathsMETA);
+    xrGetInstanceProcAddr(m_instance, "xrSetPerformanceMetricsStateMETA",
+                          (PFN_xrVoidFunction*)&m_xrSetPerformanceMetricsStateMETA);
+    xrGetInstanceProcAddr(m_instance, "xrGetPerformanceMetricsStateMETA",
+                          (PFN_xrVoidFunction*)&m_xrGetPerformanceMetricsStateMETA);
+    xrGetInstanceProcAddr(m_instance, "xrQueryPerformanceMetricsCounterMETA",
+                          (PFN_xrVoidFunction*)&m_xrQueryPerformanceMetricsCounterMETA);
+  }
 
   m_perfMetricsSupported = (m_xrEnumeratePerformanceMetricsCounterPathsMETA != nullptr &&
                             m_xrSetPerformanceMetricsStateMETA != nullptr &&
@@ -270,10 +330,12 @@ void GsOpenXr::loadXrFunctions()
     LOGI("XR_META_performance_metrics extension available\n");
   }
 
-  xrGetInstanceProcAddr(m_instance, "xrEnumerateColorSpacesFB",
-                        (PFN_xrVoidFunction*)&m_xrEnumerateColorSpacesFB);
-  xrGetInstanceProcAddr(m_instance, "xrSetColorSpaceFB",
-                        (PFN_xrVoidFunction*)&m_xrSetColorSpaceFB);
+  if (m_extColorSpaceAvailable) {
+    xrGetInstanceProcAddr(m_instance, "xrEnumerateColorSpacesFB",
+                          (PFN_xrVoidFunction*)&m_xrEnumerateColorSpacesFB);
+    xrGetInstanceProcAddr(m_instance, "xrSetColorSpaceFB",
+                          (PFN_xrVoidFunction*)&m_xrSetColorSpaceFB);
+  }
 
   m_colorSpaceSupported = (m_xrEnumerateColorSpacesFB != nullptr && m_xrSetColorSpaceFB != nullptr);
 
@@ -283,12 +345,28 @@ void GsOpenXr::loadXrFunctions()
   }
 
   // Load XR_FB_passthrough functions
-  xrGetInstanceProcAddr(m_instance, "xrCreatePassthroughFB", (PFN_xrVoidFunction*)&m_xrCreatePassthroughFB);
-  xrGetInstanceProcAddr(m_instance, "xrDestroyPassthroughFB", (PFN_xrVoidFunction*)&m_xrDestroyPassthroughFB);
-  xrGetInstanceProcAddr(m_instance, "xrPassthroughStartFB", (PFN_xrVoidFunction*)&m_xrPassthroughStartFB);
-  xrGetInstanceProcAddr(m_instance, "xrPassthroughPauseFB", (PFN_xrVoidFunction*)&m_xrPassthroughPauseFB);
-  xrGetInstanceProcAddr(m_instance, "xrCreatePassthroughLayerFB", (PFN_xrVoidFunction*)&m_xrCreatePassthroughLayerFB);
-  xrGetInstanceProcAddr(m_instance, "xrDestroyPassthroughLayerFB", (PFN_xrVoidFunction*)&m_xrDestroyPassthroughLayerFB);
+  if (m_extPassthroughAvailable) {
+    xrGetInstanceProcAddr(m_instance, "xrCreatePassthroughFB", (PFN_xrVoidFunction*)&m_xrCreatePassthroughFB);
+    xrGetInstanceProcAddr(m_instance, "xrDestroyPassthroughFB", (PFN_xrVoidFunction*)&m_xrDestroyPassthroughFB);
+    xrGetInstanceProcAddr(m_instance, "xrPassthroughStartFB", (PFN_xrVoidFunction*)&m_xrPassthroughStartFB);
+    xrGetInstanceProcAddr(m_instance, "xrPassthroughPauseFB", (PFN_xrVoidFunction*)&m_xrPassthroughPauseFB);
+    xrGetInstanceProcAddr(m_instance, "xrCreatePassthroughLayerFB", (PFN_xrVoidFunction*)&m_xrCreatePassthroughLayerFB);
+    xrGetInstanceProcAddr(m_instance, "xrDestroyPassthroughLayerFB", (PFN_xrVoidFunction*)&m_xrDestroyPassthroughLayerFB);
+  }
+
+  // Load XR_META_environment_depth functions
+  if (m_extEnvironmentDepthAvailable) {
+    xrGetInstanceProcAddr(m_instance, "xrCreateEnvironmentDepthProviderMETA", (PFN_xrVoidFunction*)&m_xrCreateEnvironmentDepthProviderMETA);
+    xrGetInstanceProcAddr(m_instance, "xrDestroyEnvironmentDepthProviderMETA", (PFN_xrVoidFunction*)&m_xrDestroyEnvironmentDepthProviderMETA);
+    xrGetInstanceProcAddr(m_instance, "xrStartEnvironmentDepthProviderMETA", (PFN_xrVoidFunction*)&m_xrStartEnvironmentDepthProviderMETA);
+    xrGetInstanceProcAddr(m_instance, "xrStopEnvironmentDepthProviderMETA", (PFN_xrVoidFunction*)&m_xrStopEnvironmentDepthProviderMETA);
+    xrGetInstanceProcAddr(m_instance, "xrCreateEnvironmentDepthSwapchainMETA", (PFN_xrVoidFunction*)&m_xrCreateEnvironmentDepthSwapchainMETA);
+    xrGetInstanceProcAddr(m_instance, "xrDestroyEnvironmentDepthSwapchainMETA", (PFN_xrVoidFunction*)&m_xrDestroyEnvironmentDepthSwapchainMETA);
+    xrGetInstanceProcAddr(m_instance, "xrGetEnvironmentDepthSwapchainStateMETA", (PFN_xrVoidFunction*)&m_xrGetEnvironmentDepthSwapchainStateMETA);
+    xrGetInstanceProcAddr(m_instance, "xrAcquireEnvironmentDepthImageMETA", (PFN_xrVoidFunction*)&m_xrAcquireEnvironmentDepthImageMETA);
+    xrGetInstanceProcAddr(m_instance, "xrEnumerateEnvironmentDepthSwapchainImagesMETA", (PFN_xrVoidFunction*)&m_xrEnumerateEnvironmentDepthSwapchainImagesMETA);
+    xrGetInstanceProcAddr(m_instance, "xrSetEnvironmentDepthHandRemovalMETA", (PFN_xrVoidFunction*)&m_xrSetEnvironmentDepthHandRemovalMETA);
+  }
 }
 
 bool GsOpenXr::queryRequiredVulkanExtensions(std::vector<std::string>& outInstanceExtensions,
@@ -928,14 +1006,14 @@ bool GsOpenXr::acquireSwapchainImages(VkImage& outColorImage, VkImage& outDepthI
 
   outColorImage = m_colorSwapchain.images[m_colorSwapchain.currentImageIndex];
   outDepthImage = m_depthSwapchain.images[m_depthSwapchain.currentImageIndex];
-  if(m_spaceWarpSupported)
-  {
-    outMotionImage = m_motionVectorSwapchain.images[m_motionVectorSwapchain.currentImageIndex];
-  }
-  else
-  {
-    outMotionImage = VK_NULL_HANDLE;
-  }
+    if(m_spaceWarpSupported)
+    {
+      outMotionImage = m_motionVectorSwapchain.images[m_motionVectorSwapchain.currentImageIndex];
+    }
+    else
+    {
+      outMotionImage = VK_NULL_HANDLE;
+    }
 
   m_swapchainImageState = SwapchainImageState::ACQUIRED;
   return true;
@@ -1030,9 +1108,13 @@ void GsOpenXr::endFrame()
     if(m_spaceWarpSupported)
     {
       spaceWarpInfos[i].type = XR_TYPE_COMPOSITION_LAYER_SPACE_WARP_INFO_FB;
-      spaceWarpInfos[i].next = &depthInfos[i]; // Chain depth info after space warp info? Or vice versa?
-                                               // Spec says: "add an XrCompositionLayerSpaceWarpInfoFB structure to the XrCompositionLayerProjectionView::next chain"
-                                               // It doesn't restrict order. Let's chain SpaceWarp -> Depth -> NULL
+      // Chain depth info if available
+      if (m_extDepthExtensionAvailable) {
+          spaceWarpInfos[i].next = &depthInfos[i];
+      } else {
+          spaceWarpInfos[i].next = nullptr;
+      }
+                                               
       spaceWarpInfos[i].layerFlags = 0;
       spaceWarpInfos[i].motionVectorSubImage = {m_motionVectorSwapchain.handle, imageRect, 0};
       spaceWarpInfos[i].appSpaceDeltaPose = appSpaceDeltaPose;
@@ -1046,7 +1128,11 @@ void GsOpenXr::endFrame()
     }
     else
     {
-      projectionViews[i].next = &depthInfos[i];
+      if (m_extDepthExtensionAvailable) {
+          projectionViews[i].next = &depthInfos[i];
+      } else {
+          projectionViews[i].next = nullptr;
+      }
     }
 
     projectionViews[i].type     = XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW;
@@ -2102,6 +2188,11 @@ void GsOpenXr::setPassthroughEnabled(bool enabled)
 void GsOpenXr::initSpaceWarp()
 {
   m_spaceWarpSupported = false;
+
+  if (!m_extSpaceWarpAvailable)
+  {
+    return;
+  }
   
   if (m_instance != XR_NULL_HANDLE && m_systemId != XR_NULL_SYSTEM_ID)
   {
@@ -2124,6 +2215,119 @@ void GsOpenXr::initSpaceWarp()
           LOGW("Space Warp extension enabled but failed to get properties. Disabling.\n");
       }
   }
+}
+
+
+void GsOpenXr::initEnvironmentDepth()
+{
+  if (!m_xrCreateEnvironmentDepthProviderMETA || m_session == XR_NULL_HANDLE)
+  {
+    return;
+  }
+
+  // Check if system supports environment depth
+  XrSystemEnvironmentDepthPropertiesMETA depthProps{XR_TYPE_SYSTEM_ENVIRONMENT_DEPTH_PROPERTIES_META};
+  XrSystemProperties systemProps{XR_TYPE_SYSTEM_PROPERTIES};
+  systemProps.next = &depthProps;
+
+  if (XR_SUCCEEDED(xrGetSystemProperties(m_instance, m_systemId, &systemProps)))
+  {
+    if (depthProps.supportsEnvironmentDepth)
+    {
+      m_environmentDepthSupported = true;
+      LOGI("XR Environment Depth supported\n");
+
+      // Create provider
+      XrEnvironmentDepthProviderCreateInfoMETA providerInfo{XR_TYPE_ENVIRONMENT_DEPTH_PROVIDER_CREATE_INFO_META};
+      if (XR_SUCCEEDED(m_xrCreateEnvironmentDepthProviderMETA(m_session, &providerInfo, &m_environmentDepthProvider)))
+      {
+          // Create swapchain
+          XrEnvironmentDepthSwapchainCreateInfoMETA swapchainInfo{XR_TYPE_ENVIRONMENT_DEPTH_SWAPCHAIN_CREATE_INFO_META};
+          if (XR_SUCCEEDED(m_xrCreateEnvironmentDepthSwapchainMETA(m_environmentDepthProvider, &swapchainInfo, &m_environmentDepthSwapchain)))
+          {
+              // Enumerate images
+              uint32_t imageCount = 0;
+              m_xrEnumerateEnvironmentDepthSwapchainImagesMETA(m_environmentDepthSwapchain, 0, &imageCount, nullptr);
+              
+              std::vector<XrSwapchainImageVulkanKHR> depthImages(imageCount, {XR_TYPE_SWAPCHAIN_IMAGE_VULKAN_KHR});
+              m_xrEnumerateEnvironmentDepthSwapchainImagesMETA(m_environmentDepthSwapchain, imageCount, &imageCount, 
+                  reinterpret_cast<XrSwapchainImageBaseHeader*>(depthImages.data()));
+
+              m_environmentDepthImages.resize(imageCount);
+              for(uint32_t i=0; i<imageCount; ++i) {
+                  m_environmentDepthImages[i] = depthImages[i].image;
+              }
+
+              // Start provider
+              m_xrStartEnvironmentDepthProviderMETA(m_environmentDepthProvider);
+              m_environmentDepthRunning = true;
+              m_environmentDepthEnabled = true; // Enable by default if supported
+              LOGI("XR Environment Depth started with %u images\n", imageCount);
+          }
+          else
+          {
+              LOGE("Failed to create XR environment depth swapchain\n");
+          }
+      }
+      else
+      {
+          LOGE("Failed to create XR environment depth provider\n");
+      }
+    }
+    else
+    {
+      LOGI("XR Environment Depth NOT supported by system\n");
+    }
+  }
+}
+
+bool GsOpenXr::acquireEnvironmentDepthImage(VkImage& outDepthImage, XrEnvironmentDepthImageMETA& outDepthInfo)
+{
+    if (!m_environmentDepthRunning || !m_xrAcquireEnvironmentDepthImageMETA)
+        return false;
+
+    XrEnvironmentDepthImageAcquireInfoMETA acquireInfo{XR_TYPE_ENVIRONMENT_DEPTH_IMAGE_ACQUIRE_INFO_META};
+    acquireInfo.space = m_referenceSpace;
+    acquireInfo.displayTime = m_predictedDisplayTime;
+
+    outDepthInfo.type = XR_TYPE_ENVIRONMENT_DEPTH_IMAGE_META;
+    outDepthInfo.next = nullptr;
+    outDepthInfo.views[0].type = XR_TYPE_ENVIRONMENT_DEPTH_IMAGE_VIEW_META;
+    outDepthInfo.views[0].next = nullptr;
+    outDepthInfo.views[1].type = XR_TYPE_ENVIRONMENT_DEPTH_IMAGE_VIEW_META;
+    outDepthInfo.views[1].next = nullptr;
+
+    XrResult result = m_xrAcquireEnvironmentDepthImageMETA(m_environmentDepthProvider, &acquireInfo, &outDepthInfo);
+    if (XR_FAILED(result))
+    {
+        return false;
+    }
+
+    if (outDepthInfo.swapchainIndex >= m_environmentDepthImages.size())
+        return false;
+
+    outDepthImage = m_environmentDepthImages[outDepthInfo.swapchainIndex];
+    return true;
+}
+
+void GsOpenXr::destroyEnvironmentDepth()
+{
+  if (m_environmentDepthSwapchain != XR_NULL_HANDLE && m_xrDestroyEnvironmentDepthSwapchainMETA)
+  {
+    m_xrDestroyEnvironmentDepthSwapchainMETA(m_environmentDepthSwapchain);
+    m_environmentDepthSwapchain = XR_NULL_HANDLE;
+  }
+
+  if (m_environmentDepthProvider != XR_NULL_HANDLE && m_xrDestroyEnvironmentDepthProviderMETA)
+  {
+    if (m_environmentDepthRunning && m_xrStopEnvironmentDepthProviderMETA)
+    {
+      m_xrStopEnvironmentDepthProviderMETA(m_environmentDepthProvider);
+    }
+    m_xrDestroyEnvironmentDepthProviderMETA(m_environmentDepthProvider);
+    m_environmentDepthProvider = XR_NULL_HANDLE;
+  }
+  m_environmentDepthRunning = false;
 }
 
 }  // namespace vk_gaussian_splatting

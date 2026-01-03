@@ -107,6 +107,71 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
       return;
     }
 
+    // Acquire Environment Depth if enabled
+    VkImage envDepthImage = VK_NULL_HANDLE;
+    XrEnvironmentDepthImageMETA envDepthInfo = {XR_TYPE_ENVIRONMENT_DEPTH_IMAGE_META};
+    
+    if (m_xr->isEnvironmentDepthEnabled() && m_xr->acquireEnvironmentDepthImage(envDepthImage, envDepthInfo))
+    {
+        // Get or create image view
+        VkImageView envDepthView = VK_NULL_HANDLE;
+        auto it = m_envDepthImageViews.find(envDepthInfo.swapchainIndex);
+        if (it != m_envDepthImageViews.end())
+        {
+            envDepthView = it->second;
+        }
+        else
+        {
+            // Create new view
+            // Assuming 2D Array with 2 layers (as per OpenXR extension spec)
+            VkImageViewCreateInfo viewInfo = {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+            viewInfo.image = envDepthImage;
+            viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+            viewInfo.format = m_depthFormat; // Environment depth typically uses the same format as swapchain depth
+            viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+            viewInfo.subresourceRange.baseMipLevel = 0;
+            viewInfo.subresourceRange.levelCount = 1;
+            viewInfo.subresourceRange.baseArrayLayer = 0;
+            viewInfo.subresourceRange.layerCount = 2; // Stereo
+            
+            vkCreateImageView(m_device, &viewInfo, nullptr, &envDepthView);
+            m_envDepthImageViews[envDepthInfo.swapchainIndex] = envDepthView;
+        }
+
+        if (m_descriptorSet != VK_NULL_HANDLE && envDepthView != VK_NULL_HANDLE)
+        {
+            VkDescriptorImageInfo imageInfo{};
+            imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL; 
+            imageInfo.imageView = envDepthView;
+            imageInfo.sampler = m_sampler; 
+
+            VkWriteDescriptorSet write{};
+            write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            write.dstSet = m_descriptorSet;
+            write.dstBinding = BINDING_ENV_DEPTH_TEXTURE;
+            write.dstArrayElement = 0;
+            write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            write.descriptorCount = 1;
+            write.pImageInfo = &imageInfo;
+
+            vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
+        }
+
+        prmFrame.envDepthAvailable = 1;
+        prmFrame.envDepthNear = envDepthInfo.nearZ;
+        prmFrame.envDepthFar = envDepthInfo.farZ;
+        
+        for (int i = 0; i < 2; ++i)
+        {
+            prmFrame.envDepthViewMatrixArray[i] = GsOpenXr::createViewMatrix(envDepthInfo.views[i].pose);
+            prmFrame.envDepthProjectionMatrixArray[i] = GsOpenXr::createProjectionMatrix(envDepthInfo.views[i].fov, envDepthInfo.nearZ, envDepthInfo.farZ);
+        }
+    }
+    else
+    {
+        prmFrame.envDepthAvailable = 0;
+    }
+
 
     // Locate views with current clip planes
     glm::vec2 clipPlanes = cameraManip->getClipPlanes();
@@ -675,11 +740,25 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
 #endif
 
   // RENDER LOOP FOR VIEWS (dual-pass fallback)
+  // Store original env depth matrices to restore them or for correct indexing
+  // (We use a local copy because we modify prmFrame in the loop)
+  glm::mat4 envViewMatrices[2] = {prmFrame.envDepthViewMatrixArray[0], prmFrame.envDepthViewMatrixArray[1]};
+  glm::mat4 envProjMatrices[2] = {prmFrame.envDepthProjectionMatrixArray[0], prmFrame.envDepthProjectionMatrixArray[1]};
+
   for(size_t viewIndex = 0; viewIndex < views.size(); ++viewIndex)
   {
     const auto& view = views[viewIndex];
 
     prmFrame.multiviewEnabled = 0;
+    
+    // Ensure the shader uses the correct environment depth matrix for the current eye
+    // In dual-pass rendering, SV_ViewID is always 0, so we must place the current eye's matrix at index 0
+    if (prmFrame.envDepthAvailable && viewIndex < 2)
+    {
+        prmFrame.envDepthViewMatrixArray[0] = envViewMatrices[viewIndex];
+        prmFrame.envDepthProjectionMatrixArray[0] = envProjMatrices[viewIndex];
+    }
+
     updateAndUploadFrameInfoUBO(cmd, splatCount, view.view, view.proj, view.eye,
 
                                 {view.viewport.width, view.viewport.height},

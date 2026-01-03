@@ -735,6 +735,13 @@ void GaussianSplatting::shutdownOpenXR()
 {
   deinitXrMultiviewResources();
   
+  // Cleanup environment depth views
+  for (auto& pair : m_envDepthImageViews)
+  {
+    vkDestroyImageView(m_device, pair.second, nullptr);
+  }
+  m_envDepthImageViews.clear();
+  
   if(m_xr)
   {
     m_xr->shutdown();

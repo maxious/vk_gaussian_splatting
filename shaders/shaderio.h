@@ -107,6 +107,7 @@
 // VDZ depth mesh rendering textures (for VISUALIZE_VDZ_MESH mode)
 #define BINDING_VDZ_VIDEO_TEXTURE 25
 #define BINDING_VDZ_DEPTH_TEXTURE 26
+#define BINDING_ENV_DEPTH_TEXTURE 27
 
 // bindings for set 1 of RTX
 #define RTX_BINDING_OUTIMAGE 0        // Ray tracer output image
@@ -249,6 +250,13 @@ struct FrameInfo
   int32_t vdzUseVideoTexture DEFAULT(0);  // 1 = use video RGB texture, 0 = use colormap
   int32_t vdzWorldSpaceMode DEFAULT(0);   // 0 = camera-attached (2.5D), 1 = world-space (VR)
   float4x4 vdzModelMatrix;                // Captured model matrix for world-space mode
+
+  // Environment Depth Occlusion
+  int32_t envDepthAvailable DEFAULT(0);   // 1 = enabled/available, 0 = disabled
+  float envDepthNear DEFAULT(0.01f);
+  float envDepthFar DEFAULT(100.0f);
+  float4x4 envDepthViewMatrixArray[2];
+  float4x4 envDepthProjectionMatrixArray[2];
 };
 
 // Push constant for raster
@@ -308,6 +316,7 @@ struct PushConstantRay
   bool meshDepthOnly;
   // viewport offset for SBS stereo rendering
   int2 viewportOffset DEFAULT(int2(0, 0));
+  int useNdcMotion DEFAULT(0); // 1 = enabled, 0 = disabled
 };
 
 #ifdef __cplusplus

@@ -81,6 +81,8 @@ struct FragmentOutput
 };
 
 [[vk::binding(BINDING_FRAME_INFO_UBO, 0)]] ConstantBuffer<FrameInfo> frameInfo;
+[[vk::binding(BINDING_ENV_DEPTH_TEXTURE, 0)]] Texture2DArray<float> envDepthTexture;
+[[vk::binding(BINDING_VDZ_DEPTH_TEXTURE, 0)]] Texture2DArray<float> vdzDepthTexture; // Not used here but needed for binding slots? No, separate descriptor sets? No, same set 0.
 
 // clang-format on
 
@@ -88,7 +90,9 @@ struct FragmentOutput
 // main fragment function when using Vertex shader pipeline
 
 [shader("fragment")]
-FragmentOutput main(VertexInput vert
+FragmentOutput main(VertexInput vert,
+                    float4 svPos : SV_Position,
+                    uint viewIndex : SV_ViewID
 #if USE_BARYCENTRIC || WIREFRAME
                     ,
                     float3 baryCoord: SV_Barycentrics
@@ -105,7 +109,7 @@ FragmentOutput main(VertexInput vert
   const float3 baryCoord = float3(0.0);  // placeholder
 #endif
 
-  return processFragment(inFragPos, vert.inSplatCol, baryCoord);
+  return processFragment(inFragPos, vert.inSplatCol, baryCoord, svPos, viewIndex);
 }
 
 ///////////////
@@ -113,7 +117,9 @@ FragmentOutput main(VertexInput vert
 
 [shader("fragment")]
 FragmentOutput main_mesh(MeshVertexInput                    vert,
-                         nointerpolation MeshPrimitiveInput prim
+                         nointerpolation MeshPrimitiveInput prim,
+                         float4 svPos : SV_Position,
+                         uint viewIndex : SV_ViewID
 #if USE_BARYCENTRIC || WIREFRAME
                          ,
                          float3 baryCoord: SV_Barycentrics
@@ -130,14 +136,14 @@ FragmentOutput main_mesh(MeshVertexInput                    vert,
   const float3 baryCoord = float3(0.0);  // placeholder
 #endif
 
-  return processFragment(inFragPos, prim.inSplatCol, baryCoord);
+  return processFragment(inFragPos, prim.inSplatCol, baryCoord, svPos, viewIndex);
 }
 
 ///////////////
 // common processing function (the hart of the shader)
 // #if USE_BARYCENTRIC : inFragPos is a placeholder (not used)
 // #if !USE_BARYCENTRIC && !WIREFRAME : baryCoord is a placeholder (not used)
-FragmentOutput processFragment(float2 inFragPos, float4 inSplatCol, float3 baryCoord)
+FragmentOutput processFragment(float2 inFragPos, float4 inSplatCol, float3 baryCoord, float4 svPos, uint viewIndex)
 {
   FragmentOutput output;
 
@@ -165,6 +171,69 @@ FragmentOutput processFragment(float2 inFragPos, float4 inSplatCol, float3 baryC
   // away than sqrt(8) standard deviations from the mean.
   if(A > 8.0)
     discard;
+
+  // Environment Depth Occlusion
+  if (frameInfo.envDepthAvailable != 0)
+  {
+      // 1. Reconstruct world position from SV_Position
+      // svPos.xy is in pixel coordinates (0..width, 0..height)
+      // svPos.z is depth (0..1)
+      // svPos.w is 1/w
+      
+      float2 ndcXY = (svPos.xy / frameInfo.viewport) * 2.0 - 1.0;
+      float4 clipPos = float4(ndcXY, svPos.z, 1.0);
+      
+      // Select appropriate inverse matrices
+      float4x4 viewInv, projInv;
+      if (frameInfo.multiviewEnabled != 0) {
+          viewInv = frameInfo.viewInverseArray[viewIndex];
+          projInv = frameInfo.projInverseArray[viewIndex];
+      } else {
+          viewInv = frameInfo.viewInverse;
+          projInv = frameInfo.projInverse;
+      }
+      
+      float4 viewPos = mul(clipPos, projInv);
+      viewPos /= viewPos.w;
+      float4 worldPos = mul(viewPos, viewInv);
+      
+      // 2. Project to Environment Depth Space
+      float4x4 envView = frameInfo.envDepthViewMatrixArray[viewIndex];
+      float4x4 envProj = frameInfo.envDepthProjectionMatrixArray[viewIndex];
+      
+      float4 envViewPos = mul(worldPos, envView);
+      float4 envClipPos = mul(envViewPos, envProj);
+      float3 envNDC = envClipPos.xyz / envClipPos.w;
+      
+      // Check if inside env depth view frustum
+      if (envNDC.x >= -1.0 && envNDC.x <= 1.0 && 
+          envNDC.y >= -1.0 && envNDC.y <= 1.0 && 
+          envNDC.z >= 0.0 && envNDC.z <= 1.0)
+      {
+          float2 envUV = envNDC.xy * 0.5 + 0.5;
+          // OpenXR depth is usually top-down? Vulkan coords are Y-down.
+          // If envProj is Vulkan-style (Y-flipped), then NDC Y is down (-1 top, 1 bottom).
+          // UV 0 should be top? 
+          // Usually standard UV: (0,0) top-left.
+          // If NDC Y is down (Vulkan), then (-1) is Top.
+          // envUV.y = (-1 * 0.5 + 0.5) = 0.
+          // So envUV matches standard texture coords if envProj matches Vulkan clip space.
+          
+          // Sample depth
+          // Using ViewID as array layer index
+          float envDepth = envDepthTexture.SampleLevel(envUV, viewIndex, 0).r;
+          
+          // Compare
+          // Add a small bias to prevent self-occlusion artifacts if surfaces are close
+          if (envNDC.z > envDepth + 0.005) // 5mm bias? Unit depends on Z buffer non-linearity
+          {
+             // Occluded
+             // Soft occlusion could be done by modulating opacity
+             // But usually hard occlusion for depth
+             discard; 
+          }
+      }
+  }
 
 #if DISABLE_OPACITY_GAUSSIAN
   const float opacity = 1.0;

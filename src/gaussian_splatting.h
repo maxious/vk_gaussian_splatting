@@ -370,6 +370,10 @@ protected:
   VkExtent2D    m_xrMultiviewExtent{};      // Per-eye extent for multiview
   bool          m_xrMultiviewInitialized = false;
   
+  // Environment Depth resources
+  // Map from swapchain index to image view
+  std::map<uint32_t, VkImageView> m_envDepthImageViews;
+  
   void initXrMultiviewResources(VkCommandBuffer cmd, VkExtent2D perEyeExtent);
   void deinitXrMultiviewResources();
   void renderMultiviewRaster(VkCommandBuffer cmd, uint32_t splatCount);
