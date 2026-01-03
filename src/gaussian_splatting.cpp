@@ -780,6 +780,7 @@ void GaussianSplatting::initializeOpenXR()
   }
 
   m_xrInitialized = true;
+  m_xrResizedThisFrame = true;  // Skip rendering on this frame to allow resources to sync
 
   // Get the XR resolution and resize our buffers to match
   VkExtent2D xrExtent = m_xr->getFullExtent();
@@ -787,6 +788,9 @@ void GaussianSplatting::initializeOpenXR()
 
   // Force SBS mode when XR is enabled
   m_renderSBS = true;
+
+  // Initialize hand meshes now that XR is ready
+  onXrInitialized();
 }
 
 void GaussianSplatting::shutdownOpenXR()

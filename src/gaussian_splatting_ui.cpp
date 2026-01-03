@@ -32,6 +32,7 @@
 #include <thread>
 #include <filesystem>
 #include <algorithm>  // for std::clamp
+#include <fstream>    // for debug mesh export
 
 #include <GLFW/glfw3.h>
 
@@ -72,9 +73,6 @@ GaussianSplattingUI::~GaussianSplattingUI(){
 void GaussianSplattingUI::onAttach(nvapp::Application* app)
 {
     GaussianSplatting::onAttach(app);
-
-    // Initialize hand meshes after OpenXR is set up
-    initHandMeshes();
 
   // we hide the UI dy default in benchmark mode
   m_showUI = !(*m_pBenchmarkEnabled);
@@ -196,7 +194,12 @@ void GaussianSplattingUI::onRender(VkCommandBuffer cmd)
 
 #ifdef WITH_OPENXR
   // Render hand meshes after main scene
-  if (m_xr && m_xr->handsSupported()) {
+  // Only render if XR is fully initialized and we have valid rendering resources
+  // Also wait a few frames after init to ensure all resources are ready
+  if (m_handMeshReadyFrameDelay > 0) {
+    m_handMeshReadyFrameDelay--;
+  }
+  if (m_xr && m_xr->handsSupported() && m_xrInitialized && m_descriptorSet != VK_NULL_HANDLE && m_handMeshReadyFrameDelay == 0) {
     auto poseToMatrix = [](const XrPosef& pose) -> glm::mat4 {
       glm::quat q(pose.orientation.w, pose.orientation.x, pose.orientation.y, pose.orientation.z);
       glm::vec3 t(pose.position.x, pose.position.y, pose.position.z);
@@ -208,11 +211,21 @@ void GaussianSplattingUI::onRender(VkCommandBuffer cmd)
       glm::mat4 wristTransform = poseToMatrix(leftHand.jointPoses[XR_HAND_JOINT_WRIST_EXT]);
       renderHandMesh(cmd, m_leftHandMesh, wristTransform);
     }
+    else if (m_leftHandMesh.initialized && m_debugForceRenderHands) {
+      // Debug: render at fixed position in front of camera when not tracked
+      glm::mat4 debugTransform = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -0.5f));
+      renderHandMesh(cmd, m_leftHandMesh, debugTransform);
+    }
 
     const auto& rightHand = m_xr->getHandInput(GsOpenXr::Hand::Right);
     if (rightHand.tracked) {
       glm::mat4 wristTransform = poseToMatrix(rightHand.jointPoses[XR_HAND_JOINT_WRIST_EXT]);
       renderHandMesh(cmd, m_rightHandMesh, wristTransform);
+    }
+    else if (m_rightHandMesh.initialized && m_debugForceRenderHands) {
+      // Debug: render at fixed position in front of camera when not tracked
+      glm::mat4 debugTransform = glm::translate(glm::mat4(1.0f), glm::vec3(0.2f, 0.0f, -0.5f));
+      renderHandMesh(cmd, m_rightHandMesh, debugTransform);
     }
   }
 #endif
@@ -4309,6 +4322,14 @@ void GaussianSplattingUI::onWristButtonPressed()
     m_showFilePicker = !m_showFilePicker;
 }
 
+void GaussianSplattingUI::onXrInitialized()
+{
+    // Initialize hand meshes now that XR session is ready with hand trackers
+    if (initHandMeshes()) {
+        LOGI("Hand meshes initialized successfully\n");
+    }
+}
+
 bool GaussianSplattingUI::initHandMeshes()
 {
     if (!m_xr || !m_xr->handsSupported())
@@ -4350,13 +4371,19 @@ bool GaussianSplattingUI::initHandMeshes()
         mesh.blendWeights.resize(handMesh.vertexCountOutput);
         mesh.indices.resize(handMesh.indexCountOutput);
 
-        // Set pointers for second call
+        // Set capacities and pointers for second call
+        handMesh.vertexCapacityInput = static_cast<uint32_t>(mesh.positions.size());
+        handMesh.indexCapacityInput = static_cast<uint32_t>(mesh.indices.size());
+        handMesh.jointCapacityInput = XR_HAND_JOINT_COUNT_EXT;
         handMesh.vertexPositions = mesh.positions.data();
         handMesh.vertexNormals = mesh.normals.data();
         handMesh.vertexUVs = mesh.uvs.data();
         handMesh.vertexBlendIndices = mesh.blendIndices.data();
         handMesh.vertexBlendWeights = mesh.blendWeights.data();
         handMesh.indices = reinterpret_cast<int16_t*>(mesh.indices.data());
+        handMesh.jointBindPoses = mesh.jointBindPoses.data();
+        handMesh.jointRadii = mesh.jointRadii.data();
+        handMesh.jointParents = mesh.jointParents.data();
 
         // Second call to fill data
         result = m_xr->getHandMeshFB(tracker, &handMesh);
@@ -4405,8 +4432,12 @@ bool GaussianSplattingUI::initHandMeshes()
         mesh.initialized = true;
         LOGI("Initialized hand mesh for %s hand: %d vertices, %d indices\n",
              hand == GsOpenXr::Hand::Left ? "left" : "right", (int)handMesh.vertexCountOutput, (int)handMesh.indexCountOutput);
+
     }
 
+    // Delay rendering for a few frames to ensure all resources are synchronized
+    m_handMeshReadyFrameDelay = 5;
+    
     return true;
 }
 
@@ -4477,14 +4508,22 @@ void GaussianSplattingUI::renderHandMesh(VkCommandBuffer cmd, const GaussianSpla
         return;
 
     // Validate all required resources exist
-    if (m_graphicsPipelineHandMesh == VK_NULL_HANDLE)
+    if (m_graphicsPipelineHandMesh == VK_NULL_HANDLE) {
+        LOGD("[Hand] renderHandMesh: pipeline is null\n");
         return;
-    if (m_descriptorSet == VK_NULL_HANDLE || m_pipelineLayout == VK_NULL_HANDLE)
+    }
+    if (m_descriptorSet == VK_NULL_HANDLE || m_pipelineLayout == VK_NULL_HANDLE) {
+        LOGD("[Hand] renderHandMesh: descriptor set or pipeline layout is null\n");
         return;
-    if (mesh.jointMatricesBuffer.buffer == VK_NULL_HANDLE)
+    }
+    if (mesh.jointMatricesBuffer.buffer == VK_NULL_HANDLE) {
+        LOGD("[Hand] renderHandMesh: joint matrices buffer is null\n");
         return;
-    if (mesh.vertexBuffer.buffer == VK_NULL_HANDLE || mesh.indexBuffer.buffer == VK_NULL_HANDLE)
+    }
+    if (mesh.vertexBuffer.buffer == VK_NULL_HANDLE || mesh.indexBuffer.buffer == VK_NULL_HANDLE) {
+        LOGD("[Hand] renderHandMesh: vertex or index buffer is null\n");
         return;
+    }
 
     // Update descriptor set with this hand's joint matrices buffer
     VkDescriptorBufferInfo bufferInfo{};

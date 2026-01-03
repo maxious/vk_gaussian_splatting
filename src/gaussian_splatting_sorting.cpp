@@ -95,6 +95,10 @@ void GaussianSplatting::processSortingOnGPU(VkCommandBuffer cmd, const uint32_t 
 {
   NVVK_DBG_SCOPE(cmd);
 
+  // Validate descriptor set is valid
+  if (m_descriptorSet == VK_NULL_HANDLE || m_pipelineLayout == VK_NULL_HANDLE)
+    return;
+
   // when GPU sorting, we sort at each frame, all buffer in device memory, no copy from RAM
 
   // 1. reset the draw indirect parameters and counters, will be updated by compute shader
@@ -162,6 +166,12 @@ void GaussianSplatting::processSortingOnGPU(VkCommandBuffer cmd, const uint32_t 
 void GaussianSplatting::drawSplatPrimitives(VkCommandBuffer cmd, const uint32_t splatCount)
 {
   NVVK_DBG_SCOPE(cmd);
+
+  // Validate descriptor set is valid
+  if (m_descriptorSet == VK_NULL_HANDLE || m_pipelineLayout == VK_NULL_HANDLE) {
+    LOGW("[Render] drawSplatPrimitives: descriptor set or pipeline layout is null, skipping\n");
+    return;
+  }
 
   // Do we need to activate depth test and Write ?
   bool needDepth = ((prmRaster.sortingMethod != SORTING_GPU_SYNC_RADIX) && prmRender.opacityGaussianDisabled)

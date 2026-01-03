@@ -1602,8 +1602,8 @@ void GsOpenXr::pollHandInput()
 
   static int functionCallCount = 0;
   functionCallCount++;
-  if (functionCallCount % 72 == 0) {
-    LOGI("pollHandInput called, time=%lld, baseSpace valid=%s", (long long)time, baseSpace != XR_NULL_HANDLE ? "YES" : "NO");
+  if (functionCallCount % 360 == 0) {  // Every ~5 seconds at 72fps
+    LOGI("[Hand] pollHandInput: time=%lld, baseSpace valid=%s\n", (long long)time, baseSpace != XR_NULL_HANDLE ? "YES" : "NO");
   }
 
   XrSpaceLocationFlags validFlags =
@@ -1646,8 +1646,8 @@ void GsOpenXr::pollHandInput()
     if (XR_FAILED(result)) {
       static int errorFrameCount = 0;
       errorFrameCount++;
-      if (errorFrameCount % 72 == 0) {
-        LOGW("xrLocateHandJointsEXT failed for %s hand: %d", (h == 0) ? "left" : "right", (int)result);
+      if (errorFrameCount % 360 == 0) {  // Every ~5 seconds
+        LOGW("[Hand] xrLocateHandJointsEXT failed for %s hand: %d\n", (h == 0) ? "left" : "right", (int)result);
       }
       continue;
     }
@@ -1655,8 +1655,8 @@ void GsOpenXr::pollHandInput()
     if (locations.isActive == XR_FALSE) {
       static int inactiveFrameCount = 0;
       inactiveFrameCount++;
-      if (inactiveFrameCount % 72 == 0) {
-        LOGI("%s hand: isActive = false", (h == 0) ? "Left" : "Right");
+      if (inactiveFrameCount % 360 == 0) {  // Every ~5 seconds
+        LOGI("[Hand] %s hand: isActive=false (put down controllers to enable hand tracking)\n", (h == 0) ? "Left" : "Right");
       }
       continue;
     }
@@ -1704,27 +1704,28 @@ void GsOpenXr::pollHandInput()
     }
   }
 
-  // Debug logging - log hand tracking status every ~1 second
+  // Debug logging - log hand tracking status every ~5 seconds
   static int frameCount = 0;
   frameCount++;
-  if (frameCount % 72 == 0) {  // ~1 second at 72 fps
+  if (frameCount % 360 == 0) {  // ~5 seconds at 72 fps
     const auto& left = m_handInputs[0];
     const auto& right = m_handInputs[1];
 
-    LOGI("Hand tracking status:");
-    LOGI("  Left hand: %s", left.tracked ? "TRACKED" : "NOT TRACKED");
+    LOGI("\n[Hand] === Hand Tracking Status (frame %d) ===\n", frameCount);
+    LOGI("[Hand]   Left:  %s\n", left.tracked ? "TRACKED" : "NOT TRACKED");
     if (left.tracked) {
-      LOGI("    Wrist pos: (%.3f, %.3f, %.3f)", left.wristPos.x, left.wristPos.y, left.wristPos.z);
-      LOGI("    Index tip pos: (%.3f, %.3f, %.3f)", left.indexTipPos.x, left.indexTipPos.y, left.indexTipPos.z);
-      LOGI("    Pinching: %s", left.indexPinching ? "YES" : "NO");
+      LOGI("[Hand]     Wrist: (%.3f, %.3f, %.3f)\n", left.wristPos.x, left.wristPos.y, left.wristPos.z);
+      LOGI("[Hand]     Index tip: (%.3f, %.3f, %.3f), Pinching: %s\n", 
+           left.indexTipPos.x, left.indexTipPos.y, left.indexTipPos.z, left.indexPinching ? "YES" : "NO");
     }
 
-    LOGI("  Right hand: %s", right.tracked ? "TRACKED" : "NOT TRACKED");
+    LOGI("[Hand]   Right: %s\n", right.tracked ? "TRACKED" : "NOT TRACKED");
     if (right.tracked) {
-      LOGI("    Wrist pos: (%.3f, %.3f, %.3f)", right.wristPos.x, right.wristPos.y, right.wristPos.z);
-      LOGI("    Index tip pos: (%.3f, %.3f, %.3f)", right.indexTipPos.x, right.indexTipPos.y, right.indexTipPos.z);
-      LOGI("    Pinching: %s", right.indexPinching ? "YES" : "NO");
+      LOGI("[Hand]     Wrist: (%.3f, %.3f, %.3f)\n", right.wristPos.x, right.wristPos.y, right.wristPos.z);
+      LOGI("[Hand]     Index tip: (%.3f, %.3f, %.3f), Pinching: %s\n",
+           right.indexTipPos.x, right.indexTipPos.y, right.indexTipPos.z, right.indexPinching ? "YES" : "NO");
     }
+    LOGI("[Hand] =====================================\n");
   }
 }
 

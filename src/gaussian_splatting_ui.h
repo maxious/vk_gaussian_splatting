@@ -304,6 +304,8 @@ private:
     std::array<glm::mat4, XR_HAND_JOINT_COUNT_EXT> jointMatrices{};
     // Bind poses from the mesh
     std::array<XrPosef, XR_HAND_JOINT_COUNT_EXT> jointBindPoses{};
+    std::array<float, XR_HAND_JOINT_COUNT_EXT> jointRadii{};
+    std::array<XrHandJointEXT, XR_HAND_JOINT_COUNT_EXT> jointParents{};
 
     // Rendering state
     bool initialized = false;
@@ -312,6 +314,8 @@ private:
 
   HandMeshVk m_leftHandMesh;
   HandMeshVk m_rightHandMesh;
+  bool m_debugForceRenderHands = true;  // Debug: force render hands even when not tracked
+  int m_handMeshReadyFrameDelay = 0;    // Delay rendering for a few frames after init
 
   // Hand mesh rendering functions
   bool initHandMeshes();
@@ -332,6 +336,7 @@ private:
 
   // Wrist button handler
   void onWristButtonPressed() override;
+  void onXrInitialized() override;
 };
 
 }  // namespace vk_gaussian_splatting

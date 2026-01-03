@@ -195,6 +195,8 @@ protected:
 
   // Virtual function for derived classes to handle wrist button
   virtual void onWristButtonPressed() {}
+  // Virtual function called after XR is initialized (for hand mesh init, etc.)
+  virtual void onXrInitialized() {}
 
   // Locomotion settings
   float m_xrMoveSpeed       = 2.0f;   // meters per second
