@@ -484,14 +484,16 @@ void main()
   // Linear depth: distance along the ray to the closest particle
   float linearDepth = closestParticleFound ? closestParticleDist : frameInfo.nearFar.y;
 #ifdef WITH_DLSS_RR
-  dlssLinearDepth[outputPixel] = linearDepth;
+  // dlssLinearDepth and dlssSpecHitDist are only bound when WITH_DLSS_RR is enabled
+  // But they are not declared in this shader yet?
+  // They are outputs: RTX_BINDING_DLSS_LINEAR_DEPTH and RTX_BINDING_DLSS_SPEC_HIT_DIST
 #endif
   
 #ifdef WITH_DLSS_RR
   // Specular hit distance: not applicable for diffuse Gaussian splats
-  dlssSpecHitDist[outputPixel] = 0.0;
 #endif // WITH_DLSS_RR
 #endif // WITH_DLSS_RR
+
 
 #endif // WITH_DLSS_RR || WITH_SPACE_WARP
 }

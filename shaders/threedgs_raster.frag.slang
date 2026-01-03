@@ -81,7 +81,7 @@ struct FragmentOutput
 };
 
 [[vk::binding(BINDING_FRAME_INFO_UBO, 0)]] ConstantBuffer<FrameInfo> frameInfo;
-[[vk::binding(BINDING_ENV_DEPTH_TEXTURE, 0)]] Texture2DArray<float> envDepthTexture;
+[[vk::binding(BINDING_ENV_DEPTH_TEXTURE, 0)]] Sampler2DArray envDepthTexture;
 [[vk::binding(BINDING_VDZ_DEPTH_TEXTURE, 0)]] Texture2DArray<float> vdzDepthTexture; // Not used here but needed for binding slots? No, separate descriptor sets? No, same set 0.
 
 // clang-format on
@@ -221,7 +221,7 @@ FragmentOutput processFragment(float2 inFragPos, float4 inSplatCol, float3 baryC
           
           // Sample depth
           // Using ViewID as array layer index
-          float envDepth = envDepthTexture.SampleLevel(envUV, viewIndex, 0).r;
+          float envDepth = envDepthTexture.SampleLevel(float3(envUV, float(viewIndex)), 0.0).r;
           
           // Compare
           // Add a small bias to prevent self-occlusion artifacts if surfaces are close

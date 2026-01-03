@@ -152,6 +152,49 @@ void GaussianSplatting::onAttach(nvapp::Application* app)
   // Use higher resolution (512x288) for better VR/World Space quality
   m_vdzMesh.initialize(m_device, &m_alloc, 512, 288);
 
+  // Initialize dummy texture for bindings
+  {
+      VkImageCreateInfo info = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+      info.imageType = VK_IMAGE_TYPE_2D;
+      info.format = VK_FORMAT_R8G8B8A8_UNORM;
+      info.extent = {1, 1, 1};
+      info.mipLevels = 1;
+      info.arrayLayers = 2; // Array size 2 to satisfy Texture2DArray binding
+      info.samples = VK_SAMPLE_COUNT_1_BIT;
+      info.tiling = VK_IMAGE_TILING_OPTIMAL;
+      info.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+      info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+      info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+      
+      m_alloc.createImage(m_dummyTextureArray.image, info);
+
+      VkImageViewCreateInfo viewInfo = {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+      viewInfo.image = m_dummyTextureArray.image.image;
+      viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+      viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+      viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+      viewInfo.subresourceRange.baseMipLevel = 0;
+      viewInfo.subresourceRange.levelCount = 1;
+      viewInfo.subresourceRange.baseArrayLayer = 0;
+      viewInfo.subresourceRange.layerCount = 2;
+      
+      vkCreateImageView(m_device, &viewInfo, nullptr, &m_dummyTextureArray.view);
+
+      // Transition to shader read only
+      VkCommandBuffer cmd = m_app->createTempCmdBuffer();
+      VkImageMemoryBarrier barrier = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+      barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+      barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+      barrier.srcAccessMask = 0;
+      barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+      barrier.image = m_dummyTextureArray.image.image;
+      barrier.subresourceRange = viewInfo.subresourceRange;
+      
+      vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 
+          0, 0, nullptr, 0, nullptr, 1, &barrier);
+      m_app->submitAndWaitTempCmdBuffer(cmd);
+  }
+
   // Log HDR support status
   {
     // Use global accessor instead of m_app->getSwapchain().getColorSpace()

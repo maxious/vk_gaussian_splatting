@@ -172,7 +172,20 @@ void GaussianSplatting::initPipelines()
     writeContainer.append(bindings.getWriteSet(BINDING_LIGHT_SET, m_descriptorSet), m_lightSet.lightsBuffer);
   }
 
+  // Initialize with dummy texture to ensure valid bindings
+  VkDescriptorImageInfo dummyInfo = {
+      .sampler     = m_sampler,
+      .imageView   = m_dummyTextureArray.view,
+      .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+
+  // Environment Depth Occlusion
+  writeContainer.append(bindings.getWriteSet(BINDING_ENV_DEPTH_TEXTURE, m_descriptorSet), &dummyInfo);
+
   // VDZ depth mesh textures
+  // Initialize with dummy first to prevent validation errors
+  writeContainer.append(bindings.getWriteSet(BINDING_VDZ_DEPTH_TEXTURE, m_descriptorSet), &dummyInfo);
+  writeContainer.append(bindings.getWriteSet(BINDING_VDZ_VIDEO_TEXTURE, m_descriptorSet), &dummyInfo);
+
   if(m_depthManager)
   {
     const auto& depthTexture = m_depthManager->getCurrentTexture();

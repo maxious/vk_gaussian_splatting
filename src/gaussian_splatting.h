@@ -607,7 +607,7 @@ protected:
 
 #ifdef WITH_VIDEO_DECODER
   std::unique_ptr<VideoDecoder> m_videoDecoder;
-  
+
   struct VideoTexture {
     nvvk::Image image;
     VkImageView view = VK_NULL_HANDLE;
@@ -615,6 +615,13 @@ protected:
     uint32_t height = 0;
   } m_videoTexture;
 #endif
+
+  // Dummy texture for binding initialization (1x1 2D array)
+  struct
+  {
+    nvvk::Image image;
+    VkImageView view = VK_NULL_HANDLE;
+  } m_dummyTextureArray;
 
   ///////////////////////////////
   // Post processing
