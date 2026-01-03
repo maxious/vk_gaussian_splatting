@@ -149,6 +149,10 @@ void GaussianSplatting::postProcess(VkCommandBuffer cmd)
 {
   NVVK_DBG_SCOPE(cmd);
 
+  if(m_descriptorSetPostProcess == VK_NULL_HANDLE || m_pipelineLayoutPostProcess == VK_NULL_HANDLE 
+     || m_computePipelinePostProcess == VK_NULL_HANDLE)
+    return;
+
   auto timerSection = m_profilerGpuTimer.cmdFrameSection(cmd, "Post process");
 
   vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_computePipelinePostProcess);

@@ -361,6 +361,10 @@ void GaussianSplatting::raytrace(const VkCommandBuffer& cmdBuf, bool meshDepthOn
 {
   NVVK_DBG_SCOPE(cmdBuf);
 
+  if(m_descriptorSet == VK_NULL_HANDLE || m_rtDescriptorSet == VK_NULL_HANDLE 
+     || m_rtPipeline == VK_NULL_HANDLE || m_rtPipelineLayout == VK_NULL_HANDLE)
+    return;
+
   const std::string name = meshDepthOnly ? "Raytracing prepass" : "Raytracing";
 
   auto timerSection = m_profilerGpuTimer.cmdFrameSection(cmdBuf, name);
@@ -437,6 +441,10 @@ void GaussianSplatting::raytraceMultiview(const VkCommandBuffer& cmdBuf, bool me
                                           glm::ivec2 viewportSize)
 {
   NVVK_DBG_SCOPE(cmdBuf);
+
+  if(m_descriptorSet == VK_NULL_HANDLE || m_rtDescriptorSet == VK_NULL_HANDLE 
+     || m_rtPipeline == VK_NULL_HANDLE || m_rtPipelineLayout == VK_NULL_HANDLE)
+    return;
 
   const std::string name = meshDepthOnly ? "Raytracing multiview prepass" : "Raytracing multiview";
 

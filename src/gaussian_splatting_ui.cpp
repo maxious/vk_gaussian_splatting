@@ -4435,6 +4435,11 @@ bool GaussianSplattingUI::initHandMeshes()
 
     }
 
+    // Upload the appended buffer data using a temporary command buffer
+    VkCommandBuffer cmd = m_app->createTempCmdBuffer();
+    m_uploader.cmdUploadAppended(cmd);
+    m_app->submitAndWaitTempCmdBuffer(cmd);
+
     // Delay rendering for a few frames to ensure all resources are synchronized
     m_handMeshReadyFrameDelay = 5;
     
