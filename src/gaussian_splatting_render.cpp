@@ -78,7 +78,11 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
       return;
     }
 
-    GsOpenXr::BeginFrameResult frameResult = m_xr->beginFrame();
+    GsOpenXr::BeginFrameResult frameResult;
+    {
+      auto timer = m_profilerTimeline->frameSection("XR BeginFrame");
+      frameResult = m_xr->beginFrame();
+    }
     
     if(frameResult == GsOpenXr::BeginFrameResult::SkipFully)
     {
@@ -175,18 +179,24 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
 
     // Locate views with current clip planes
     glm::vec2 clipPlanes = cameraManip->getClipPlanes();
-    if(!m_xr->locateViews(clipPlanes.x, clipPlanes.y))
     {
-      processUpdateRequests();
-      // Ensure swapchain images are released since we acquired them but won't render
-      m_xr->releaseSwapchainImages(); 
-      m_xr->endFrame();
-      return;
+      auto timer = m_profilerTimeline->frameSection("XR LocateViews");
+      if(!m_xr->locateViews(clipPlanes.x, clipPlanes.y))
+      {
+        processUpdateRequests();
+        // Ensure swapchain images are released since we acquired them but won't render
+        m_xr->releaseSwapchainImages(); 
+        m_xr->endFrame();
+        return;
+      }
     }
 
     // Update locomotion from controller input (must be after beginFrame for valid time)
-    m_xr->pollControllerInput();
-    m_xr->pollHandInput();
+    {
+      auto timer = m_profilerTimeline->frameSection("XR PollInput");
+      m_xr->pollControllerInput();
+      m_xr->pollHandInput();
+    }
 
     auto now = std::chrono::steady_clock::now();
     if(!m_xrFirstFrame)
@@ -730,7 +740,10 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
     updateRenderingMemoryStatistics(cmd, splatCount);
 
     m_xr->releaseSwapchainImages();
-    m_xr->endFrame();
+    {
+      auto timer = m_profilerTimeline->frameSection("XR EndFrame");
+      m_xr->endFrame();
+    }
     return;
   }
 #endif
@@ -864,7 +877,10 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
 
     // Release swapchain images and end the frame
     m_xr->releaseSwapchainImages();
-    m_xr->endFrame();
+    {
+      auto timer = m_profilerTimeline->frameSection("XR EndFrame");
+      m_xr->endFrame();
+    }
   }
 #endif
 }

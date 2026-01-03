@@ -290,6 +290,14 @@ bool GsOpenXr::createInstance()
     LOGW("XR_FB_hand_tracking_capsules extension not available\n");
   }
 
+  if (isExtensionAvailable(XR_EXT_HAND_TRACKING_DATA_SOURCE_EXTENSION_NAME)) {
+    extensions.push_back(XR_EXT_HAND_TRACKING_DATA_SOURCE_EXTENSION_NAME);
+    m_extHandTrackingDataSourceAvailable = true;
+    LOGI("XR_EXT_hand_tracking_data_source extension enabled\n");
+  } else {
+    LOGW("XR_EXT_hand_tracking_data_source extension not available\n");
+  }
+
 #ifdef _WIN32
   if (isExtensionAvailable("XR_KHR_win32_convert_performance_counter_time")) {
     extensions.push_back("XR_KHR_win32_convert_performance_counter_time");
@@ -629,9 +637,25 @@ bool GsOpenXr::createSession(VkInstance       vkInstance,
    if (m_handTrackingSupported && m_extHandTrackingAvailable && m_xrCreateHandTrackerEXT) {
      for (int i = 0; i < 2; ++i) {
        XrHandTrackerCreateInfoEXT ci{XR_TYPE_HAND_TRACKER_CREATE_INFO_EXT};
-       ci.next = nullptr;
        ci.handJointSet = XR_HAND_JOINT_SET_DEFAULT_EXT;
        ci.hand = (i == 0) ? XR_HAND_LEFT_EXT : XR_HAND_RIGHT_EXT;
+
+       // Request both camera-based (unobstructed) and controller-based hand tracking
+       XrHandTrackingDataSourceEXT dataSources[2] = {
+         XR_HAND_TRACKING_DATA_SOURCE_UNOBSTRUCTED_EXT,
+         XR_HAND_TRACKING_DATA_SOURCE_CONTROLLER_EXT,
+       };
+       XrHandTrackingDataSourceInfoEXT dataSourceInfo{XR_TYPE_HAND_TRACKING_DATA_SOURCE_INFO_EXT};
+       dataSourceInfo.next = nullptr;
+       dataSourceInfo.requestedDataSourceCount = 2;
+       dataSourceInfo.requestedDataSources = dataSources;
+
+       if (m_extHandTrackingDataSourceAvailable) {
+         ci.next = &dataSourceInfo;
+         LOGI("Requesting hand tracking data sources: UNOBSTRUCTED + CONTROLLER\n");
+       } else {
+         ci.next = nullptr;
+       }
 
        XrResult result = m_xrCreateHandTrackerEXT(m_session, &ci, &m_handTracker[i]);
        if (XR_FAILED(result)) {
@@ -1656,9 +1680,16 @@ void GsOpenXr::pollHandInput()
       static int inactiveFrameCount = 0;
       inactiveFrameCount++;
       if (inactiveFrameCount % 360 == 0) {  // Every ~5 seconds
-        LOGI("[Hand] %s hand: isActive=false (put down controllers to enable hand tracking)\n", (h == 0) ? "Left" : "Right");
+        LOGI("[Hand] %s hand: isActive=false (hands not detected by cameras)\n", (h == 0) ? "Left" : "Right");
       }
       continue;
+    }
+
+    // Log once when hand becomes active (not every frame)
+    static bool wasActive[2] = {false, false};
+    if (!wasActive[h]) {
+      LOGI("[Hand] %s hand is NOW ACTIVE!\n", (h == 0) ? "Left" : "Right");
+      wasActive[h] = true;
     }
 
     bool anyTracked = false;

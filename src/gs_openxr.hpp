@@ -65,6 +65,9 @@
 #ifndef XR_FB_HAND_TRACKING_CAPSULES_EXTENSION_NAME
 #define XR_FB_HAND_TRACKING_CAPSULES_EXTENSION_NAME "XR_FB_hand_tracking_capsules"
 #endif
+#ifndef XR_EXT_HAND_TRACKING_DATA_SOURCE_EXTENSION_NAME
+#define XR_EXT_HAND_TRACKING_DATA_SOURCE_EXTENSION_NAME "XR_EXT_hand_tracking_data_source"
+#endif
 
 namespace vk_gaussian_splatting {
 
@@ -324,6 +327,7 @@ private:
   bool m_extHandTrackingMeshAvailable = false;
   bool m_extHandTrackingAimAvailable = false;
   bool m_extHandTrackingCapsulesAvailable = false;
+  bool m_extHandTrackingDataSourceAvailable = false;
 
 
   // Helper methods
