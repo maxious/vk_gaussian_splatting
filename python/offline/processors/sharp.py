@@ -365,27 +365,22 @@ class SharpGaussianProcessor(GaussianProcessor):
                 # Convert linear RGB directly to SH coefficients (remove sRGB hack)
                 colors_sh = (colors_linear - 0.5) / SH_C0
 
-                # Filter out extreme chroma key Gaussians with impossible RGB marker values
-                if remove_black_splats:
-                    # SHARP internally replaces chroma key colors with [2, -1, 2] - impossible RGB values
-                    # This provides perfect, unambiguous chroma key detection
-                    extreme_rgb_marker = torch.tensor(
-                        [2.0, -1.0, 2.0], device=colors_linear.device, dtype=colors_linear.dtype
-                    )
+                # Always filter out impossible RGB marker [2, -1, 2] from chroma keying
+                # This marker is injected by SHARP internally for perfect background removal
+                extreme_rgb_marker = torch.tensor(
+                    [2.0, -1.0, 2.0], device=colors_linear.device, dtype=colors_linear.dtype
+                )
 
-                    # Check for exact match with extreme marker (no tolerance needed)
-                    chroma_key_mask = torch.all(
-                        colors_linear == extreme_rgb_marker,  # Exact match for impossible values
-                        dim=1,
-                    )
+                # Exact match filtering for impossible RGB values (chroma key markers)
+                chroma_key_mask = torch.all(colors_linear == extreme_rgb_marker, dim=1)
+                valid_mask = ~chroma_key_mask
 
-                    # Keep only non-chroma key Gaussians
-                    valid_mask = ~chroma_key_mask
-                    means_tensor = means_tensor[valid_mask]
-                    scales_tensor = scales_tensor[valid_mask]
-                    rotations_tensor = rotations_tensor[valid_mask]
-                    opacities_tensor = opacities_tensor[valid_mask]
-                    colors_sh = colors_sh[valid_mask]
+                # Filter all tensors to remove chroma key Gaussians
+                means_tensor = means_tensor[valid_mask]
+                scales_tensor = scales_tensor[valid_mask]
+                rotations_tensor = rotations_tensor[valid_mask]
+                opacities_tensor = opacities_tensor[valid_mask]
+                colors_sh = colors_sh[valid_mask]
 
                 # Single batched CPU transfer (only valid Gaussians)
                 means = means_tensor.cpu().numpy()
