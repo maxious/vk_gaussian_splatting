@@ -362,23 +362,23 @@ class SharpGaussianProcessor(GaussianProcessor):
                 colors_srgb = cs_utils.linearRGB2sRGB(colors_linear)
                 colors_sh = (colors_srgb - 0.5) / SH_C0
 
-                # Filter out green screen Gaussians on GPU before CPU transfer
+                # Filter out green screen Gaussians at SH level before RGB conversion
                 if remove_black_splats:
-                    # Precise green screen detection that preserves natural colors
-                    # Target pure chroma key green while avoiding natural greens
-                    # Natural greens: moderate G with some R/B
-                    # Pure green screen: G >> R,B with high saturation
-                    green_mask = (
-                        (colors_linear[:, 1] > 0.6)  # High green (allowing for model variations)
-                        & (colors_linear[:, 0] < 0.4)  # Low red (but more permissive)
-                        & (colors_linear[:, 2] < 0.4)  # Low blue (but more permissive)
-                        & (
-                            colors_linear[:, 1] > (colors_linear[:, 0] + colors_linear[:, 2]) * 1.2
-                        )  # G dominates RGB (relaxed from 1.5)
+                    # Pure green [0,255,0] becomes SH coefficients ≈ [-1.77, 1.77, -1.77]
+                    # Filter directly on SH coefficients for maximum accuracy
+                    coeff_degree0 = np.sqrt(1.0 / (4.0 * np.pi))  # ≈ 0.282
+                    expected_sh_green = torch.tensor(
+                        [-1.77, 1.77, -1.77], device=colors_sh.device, dtype=colors_sh.dtype
+                    )
+
+                    # Check if SH coefficients match green screen pattern (with tolerance)
+                    green_sh_mask = torch.all(
+                        torch.abs(colors_sh - expected_sh_green) < 0.5,  # Allow some variation
+                        dim=1,
                     )
 
                     # Keep only non-green screen Gaussians
-                    valid_mask = ~green_mask
+                    valid_mask = ~green_sh_mask
                     means_tensor = means_tensor[valid_mask]
                     scales_tensor = scales_tensor[valid_mask]
                     rotations_tensor = rotations_tensor[valid_mask]
