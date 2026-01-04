@@ -114,7 +114,9 @@ class AsyncImageLoader:
                 if mask is not None:
                     mask = cv2.cvtColor(mask, cv2.COLOR_BGR2RGB)
                     black_pixels = np.all(mask == 0, axis=2)
-                    img[black_pixels] = [0, 255, 0]  # Pure green for chroma keying
+                    # Novel approach: Set masked pixels to pure white marker (255,255,255)
+                    # This serves as a mask indicator that's very unlikely to occur naturally
+                    img[black_pixels] = [255, 255, 255]
                     mask_applied = True
 
         return PreloadedFrame(
@@ -361,25 +363,23 @@ class SharpGaussianProcessor(GaussianProcessor):
                 colors_srgb = cs_utils.linearRGB2sRGB(colors_linear)
                 colors_sh = (colors_srgb - 0.5) / SH_C0
 
-                # Filter out magenta chroma key Gaussians on GPU before CPU transfer
+                # Filter out Gaussians from white marker masked pixels on GPU before CPU transfer
                 if remove_black_splats:
-                    # More aggressive green screen detection
-                    # The SHARP model creates slight variations, so we need broader detection
-                    green_mask = (
-                        (colors_linear[:, 1] > 0.6)  # High green (allowing for model variations)
-                        & (colors_linear[:, 0] < 0.4)  # Low red (but more permissive)
-                        & (colors_linear[:, 2] < 0.4)  # Low blue (but more permissive)
-                        & (
-                            colors_linear[:, 1] > (colors_linear[:, 0] + colors_linear[:, 2]) * 1.2
-                        )  # G dominates RGB (relaxed from 1.5)
+                    # White marker (255,255,255) becomes (1.0, 1.0, 1.0) in linear RGB
+                    # Filter out Gaussians where all color channels are approximately 1.0
+                    white_marker_mask = (
+                        (colors_linear[:, 0] > 0.95)  # Allow small numerical differences
+                        & (colors_linear[:, 1] > 0.95)
+                        & (colors_linear[:, 2] > 0.95)
                     )
 
-                    # Keep only non-green screen Gaussians
-                    means_tensor = means_tensor[~green_mask]
-                    scales_tensor = scales_tensor[~green_mask]
-                    rotations_tensor = rotations_tensor[~green_mask]
-                    opacities_tensor = opacities_tensor[~green_mask]
-                    colors_sh = colors_sh[~green_mask]
+                    # Keep only non-marker Gaussians
+                    valid_mask = ~white_marker_mask
+                    means_tensor = means_tensor[valid_mask]
+                    scales_tensor = scales_tensor[valid_mask]
+                    rotations_tensor = rotations_tensor[valid_mask]
+                    opacities_tensor = opacities_tensor[valid_mask]
+                    colors_sh = colors_sh[valid_mask]
 
                 # Single batched CPU transfer (only valid Gaussians)
                 means = means_tensor.cpu().numpy()
