@@ -1075,6 +1075,29 @@ void SplatSetVk::rtxInitAccelerationStructures(SplatSet& splatSet)
     // estimate the memory usage and early return if max than authorized limit
     VkDeviceSize sizeBytes = std::span<VkAccelerationStructureInstanceKHR const>(tlasInstances).size_bytes();
 
+    // Check hardware limits
+    if(m_rtxUseInstances && instCount > m_accelStructProps.maxInstanceCount)
+    {
+      LOGW("Splat count (%zu) exceeds maxInstanceCount (%llu). Disabling RTX.\n", instCount,
+           (unsigned long long)m_accelStructProps.maxInstanceCount);
+      rtxValid = false;
+      rtxDeinitAccelerationStructures();
+      return;
+    }
+
+    if(!m_rtxUseInstances)
+    {
+      uint64_t primitiveCount = m_rtxUseAABBs ? m_splatModel.nbAABB : (m_splatModel.nbIndices / 3);
+      if(primitiveCount > m_accelStructProps.maxPrimitiveCount)
+      {
+        LOGW("Primitive count (%llu) exceeds maxPrimitiveCount (%llu). Disabling RTX.\n", primitiveCount,
+             (unsigned long long)m_accelStructProps.maxPrimitiveCount);
+        rtxValid = false;
+        rtxDeinitAccelerationStructures();
+        return;
+      }
+    }
+
     // TODO: Should query the device
     if(sizeBytes >= m_deviceInfo->properties11.maxMemoryAllocationSize)
     {

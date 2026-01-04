@@ -63,6 +63,10 @@ public:
     m_uploader   = uploader;
     m_sampler    = sampler;
     m_deviceInfo = deviceInfo;
+    if(accelStructProps)
+    {
+      m_accelStructProps = *accelStructProps;
+    }
     rtAccelerationStructures.init(m_alloc, m_uploader, m_app->getQueue(0), 2000, 2000);
   }
 
@@ -269,6 +273,9 @@ private:
   int   m_rtxKernelDegree;
   float m_rtxKernelMinResponse;
   bool  m_rtxKernelAdaptiveClamping;
+
+  VkPhysicalDeviceAccelerationStructurePropertiesKHR m_accelStructProps{
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR};
 
   nvapp::Application*       m_app        = nullptr;
   nvvk::ResourceAllocator*  m_alloc      = nullptr;

@@ -39,6 +39,8 @@
 #include <imgui/imgui.h>
 //
 #include <vulkan/vulkan_core.h>
+#include <unordered_map>
+#include <memory>
 // mathematics
 #include <glm/vec3.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -109,6 +111,8 @@
 #ifdef WITH_COMFYUI
 #include "comfyui_client.h"
 #endif
+
+#include "supersplat_client.h"
 
 // Json
 #include <tinygltf/json.hpp>
@@ -341,6 +345,26 @@ private:
   // Wrist button handler
   void onWristButtonPressed() override;
   void onXrInitialized() override;
+
+  void guiDrawFileDialog();
+  void guiDrawSupersplatDialog();
+  void createTextureFromRGBA(const std::vector<uint8_t>& data, int width, int height, nvvk::Image& texture, VkImageView& view);
+
+  std::unique_ptr<SupersplatClient> m_supersplatClient;
+  bool m_showFileDialog = false;
+  bool m_showSupersplatDialog = false;
+  std::vector<std::string> m_fileList;
+  std::vector<SupersplatClient::Scene> m_supersplatScenes;
+  std::string m_supersplatSearch;
+  std::unordered_map<std::string, nvvk::Image> m_thumbnailTextures;
+  std::unordered_map<std::string, VkImageView> m_thumbnailViews;
+  std::unordered_map<std::string, VkDescriptorSet> m_thumbnailDescriptors;
+  std::mutex m_thumbnailMutex;
+  struct PendingThumbnail { std::string url; std::vector<uint8_t> data; int w, h; };
+  std::vector<PendingThumbnail> m_pendingThumbnails;
+
+  bool m_showVrMenu = false;
+  void guiDrawVrMenu();
 };
 
 }  // namespace vk_gaussian_splatting

@@ -38,6 +38,8 @@
 
 #include "gaussian_splatting_ui.h"
 #include "vdz_loader.h"
+#include "utilities.h"
+#include <backends/imgui_impl_vulkan.h>
 #include <imgui/imgui_internal.h>
 
 namespace vk_gaussian_splatting {
@@ -63,7 +65,9 @@ GaussianSplattingUI::GaussianSplattingUI(nvutils::ProfilerManager*   profilerMan
                                   m_app->screenShot(m_screenshotFilename);
                                 }
                               }},
-                         {".png"}, &m_screenshotFilename);
+                          {".png"}, &m_screenshotFilename);
+
+  m_supersplatClient = std::make_unique<SupersplatClient>();
 };
 
 GaussianSplattingUI::~GaussianSplattingUI(){
@@ -255,6 +259,56 @@ void GaussianSplattingUI::onUIMenu()
       prmScene.sceneToLoadFilename = nvgui::windowOpenFileDialog(m_app->getWindowHandle(), "Add splat file",
                                                                  "All Files|*.ply;*.spz;*.sog;*.4dv|PLY Files|*.ply|SPZ files|*.spz|SOG files|*.sog|4DV files|*.4dv");
       prmScene.addSceneToExisting = true;
+    }
+    if(ImGui::MenuItem(ICON_MS_FOLDER_OPEN " Load from Resources...", ""))
+    {
+      m_showFileDialog = true;
+      m_fileList.clear();
+      std::vector<std::filesystem::path> resourceDirs = getResourcesDirs();
+      if (!resourceDirs.empty())
+      {
+        std::filesystem::path resourcesDir = resourceDirs[0];
+        if (std::filesystem::exists(resourcesDir))
+        {
+          for (const auto& entry : std::filesystem::directory_iterator(resourcesDir))
+          {
+            if (entry.is_regular_file())
+              m_fileList.push_back(entry.path().string());
+          }
+        }
+      }
+    }
+    if(ImGui::MenuItem(ICON_MS_CLOUD_DOWNLOAD " Supersplat...", ""))
+    {
+      m_showSupersplatDialog = true;
+      if (m_supersplatClient)
+      {
+        m_supersplatClient->fetchSceneList("", [this](const std::vector<SupersplatClient::Scene>& scenes) {
+          std::lock_guard<std::mutex> lock(m_thumbnailMutex);
+          m_supersplatScenes = scenes;
+          
+          for (const auto& scene : scenes) {
+              if (!scene.thumbnailUrl.empty()) {
+                  m_supersplatClient->fetchThumbnail(scene.thumbnailUrl, 
+                      [this, url=scene.thumbnailUrl](const std::vector<uint8_t>& data, int w, int h, int c) {
+                          if (data.empty()) return;
+                          std::lock_guard<std::mutex> lock(m_thumbnailMutex);
+                          std::vector<uint8_t> rgba = data;
+                          if (c == 3) {
+                              rgba.resize(w * h * 4);
+                              for (int i = w * h - 1; i >= 0; --i) {
+                                  rgba[i * 4 + 3] = 255;
+                                  rgba[i * 4 + 2] = data[i * 3 + 2];
+                                  rgba[i * 4 + 1] = data[i * 3 + 1];
+                                  rgba[i * 4 + 0] = data[i * 3 + 0];
+                              }
+                          }
+                          m_pendingThumbnails.push_back({url, rgba, w, h});
+                      });
+              }
+          }
+        });
+      }
     }
     if(ImGui::MenuItem(ICON_MS_CLOUD_DOWNLOAD " Load from SuperSplat URL...", ""))
     {
@@ -905,36 +959,28 @@ void GaussianSplattingUI::onUIRender()
     guiDrawPerformancePanel();
   }
 
-  // File picker from wrist button
-  if (m_showFilePicker)
+  // Process pending thumbnails
   {
-    if (ImGui::Begin("File Picker", &m_showFilePicker))
-    {
-      ImGui::Text("Select a file from _downloaded_resources:");
-
-      std::filesystem::path resourcesDir = getResourcesDirs()[0];
-      if (std::filesystem::exists(resourcesDir))
-      {
-        for (const auto& entry : std::filesystem::directory_iterator(resourcesDir))
-        {
-          if (entry.is_regular_file())
-          {
-            std::string filename = entry.path().filename().string();
-            if (ImGui::Selectable(filename.c_str()))
-            {
-              prmScene.sceneToLoadFilename = entry.path();
-              m_showFilePicker = false;
-            }
+      std::lock_guard<std::mutex> lock(m_thumbnailMutex);
+      for (const auto& pt : m_pendingThumbnails) {
+          if (m_thumbnailTextures.find(pt.url) == m_thumbnailTextures.end()) {
+              nvvk::Image texture;
+              VkImageView view;
+              createTextureFromRGBA(pt.data, pt.w, pt.h, texture, view);
+              m_thumbnailTextures[pt.url] = texture;
+              m_thumbnailViews[pt.url] = view;
+              
+              VkDescriptorSet ds = ImGui_ImplVulkan_AddTexture(m_sampler, view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+              m_thumbnailDescriptors[pt.url] = ds;
           }
-        }
       }
-      else
-      {
-        ImGui::Text("No _downloaded_resources directory found.");
-      }
-    }
-    ImGui::End();
+      m_pendingThumbnails.clear();
   }
+
+  guiDrawFileDialog();
+  guiDrawSupersplatDialog();
+  if (m_showVrMenu)
+    guiDrawVrMenu();
 
 #ifdef WITH_COMFYUI
   if (m_showComfyUIWindow)
@@ -4319,7 +4365,7 @@ void GaussianSplattingUI::guiDrawPerformancePanel()
 
 void GaussianSplattingUI::onWristButtonPressed()
 {
-    m_showFilePicker = !m_showFilePicker;
+    m_showVrMenu = !m_showVrMenu;
 }
 
 void GaussianSplattingUI::onXrInitialized()
@@ -4678,5 +4724,277 @@ void GaussianSplattingUI::renderHandMeshMultiview(VkCommandBuffer cmd, const Gau
 }
 #endif
 
-}  // namespace vk_gaussian_splatting
+// namespace vk_gaussian_splatting (continued)
 
+
+void GaussianSplattingUI::guiDrawFileDialog()
+{
+  if(m_showFileDialog)
+  {
+    ImGui::SetNextWindowSize(ImVec2(500, 440), ImGuiCond_FirstUseEver);
+    if(ImGui::Begin("Load Scene from Resources", &m_showFileDialog))
+    {
+      if(ImGui::BeginListBox("##files", ImVec2(-FLT_MIN, -FLT_MIN)))
+      {
+        for(size_t i = 0; i < m_fileList.size(); i++)
+        {
+          const bool is_selected = false;
+          std::string filename = std::filesystem::path(m_fileList[i]).filename().string();
+          if(ImGui::Selectable(filename.c_str(), is_selected))
+          {
+            prmScene.sceneToLoadFilename = m_fileList[i];
+            prmScene.addSceneToExisting = false;
+            m_showFileDialog = false;
+          }
+        }
+        ImGui::EndListBox();
+      }
+    }
+    ImGui::End();
+  }
+}
+
+void GaussianSplattingUI::guiDrawSupersplatDialog()
+{
+  if(m_showSupersplatDialog)
+  {
+    ImGui::SetNextWindowSize(ImVec2(800, 600), ImGuiCond_FirstUseEver);
+    if(ImGui::Begin("Supersplat Browser", &m_showSupersplatDialog))
+    {
+      static char searchBuf[256] = "";
+      if (m_supersplatSearch.size() < sizeof(searchBuf)) {
+          strncpy(searchBuf, m_supersplatSearch.c_str(), sizeof(searchBuf) - 1);
+          searchBuf[sizeof(searchBuf) - 1] = '\0';
+      }
+      bool triggerSearch = ImGui::InputText("Search", searchBuf, sizeof(searchBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+      ImGui::SameLine();
+      if(ImGui::Button("Go"))
+      {
+          triggerSearch = true;
+      }
+      
+      if(triggerSearch)
+      {
+        m_supersplatSearch = searchBuf;
+        if(m_supersplatClient)
+        {
+          m_supersplatClient->fetchSceneList(m_supersplatSearch, [this](const std::vector<SupersplatClient::Scene>& scenes) {
+            std::lock_guard<std::mutex> lock(m_thumbnailMutex);
+            m_supersplatScenes = scenes;
+            // Fetch thumbnails
+            for (const auto& scene : scenes) {
+              if (!scene.thumbnailUrl.empty()) {
+                  m_supersplatClient->fetchThumbnail(scene.thumbnailUrl, 
+                      [this, url=scene.thumbnailUrl](const std::vector<uint8_t>& data, int w, int h, int c) {
+                          if (data.empty()) return;
+                          std::lock_guard<std::mutex> lock(m_thumbnailMutex);
+                          std::vector<uint8_t> rgba = data;
+                          if (c == 3) {
+                              rgba.resize(w * h * 4);
+                              for (int i = w * h - 1; i >= 0; --i) {
+                                  rgba[i * 4 + 3] = 255;
+                                  rgba[i * 4 + 2] = data[i * 3 + 2];
+                                  rgba[i * 4 + 1] = data[i * 3 + 1];
+                                  rgba[i * 4 + 0] = data[i * 3 + 0];
+                              }
+                          }
+                          m_pendingThumbnails.push_back({url, rgba, w, h});
+                      });
+              }
+            }
+          });
+        }
+      }
+      else
+      {
+          m_supersplatSearch = searchBuf;
+      }
+
+      std::lock_guard<std::mutex> lock(m_thumbnailMutex);
+      if(ImGui::BeginTable("Scenes", 4))
+      {
+        for(const auto& scene : m_supersplatScenes)
+        {
+          ImGui::TableNextColumn();
+          ImGui::PushID(scene.id);
+          
+          ImTextureID texId = 0;
+          if(m_thumbnailDescriptors.count(scene.thumbnailUrl))
+            texId = (ImTextureID)m_thumbnailDescriptors[scene.thumbnailUrl];
+            
+          if(texId && ImGui::ImageButton("##img", texId, ImVec2(150, 100)))
+          {
+             if(!scene.viewUrl.empty())
+             {
+                prmScene.sceneToLoadFilename = scene.viewUrl;
+                prmScene.addSceneToExisting = false;
+                m_showSupersplatDialog = false;
+             }
+          }
+          else if (!texId)
+          {
+             if (ImGui::Button(scene.title.c_str(), ImVec2(150, 100))) // Placeholder
+             {
+                 if(!scene.viewUrl.empty())
+                 {
+                    prmScene.sceneToLoadFilename = scene.viewUrl;
+                    prmScene.addSceneToExisting = false;
+                    m_showSupersplatDialog = false;
+                 }
+             }
+          }
+          
+          ImGui::TextWrapped("%s", scene.title.c_str());
+          if(scene.size > 0)
+          {
+            ImGui::TextDisabled("%s", formatMemorySize(scene.size).c_str());
+          }
+          ImGui::PopID();
+        }
+        ImGui::EndTable();
+      }
+    }
+    ImGui::End();
+  }
+}
+
+void GaussianSplattingUI::createTextureFromRGBA(const std::vector<uint8_t>& data, int width, int height, nvvk::Image& texture, VkImageView& view)
+{
+    VkCommandBuffer cmd = m_app->createTempCmdBuffer();
+    
+    VkImageCreateInfo info = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    info.imageType = VK_IMAGE_TYPE_2D;
+    info.format = VK_FORMAT_R8G8B8A8_UNORM;
+    info.extent = {static_cast<uint32_t>(width), static_cast<uint32_t>(height), 1};
+    info.mipLevels = 1;
+    info.arrayLayers = 1;
+    info.samples = VK_SAMPLE_COUNT_1_BIT;
+    info.tiling = VK_IMAGE_TILING_OPTIMAL;
+    info.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    
+    m_alloc.createImage(texture, info);
+    
+    VkImageViewCreateInfo viewInfo = {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    viewInfo.image = texture.image;
+    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+    viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    viewInfo.subresourceRange.baseMipLevel = 0;
+    viewInfo.subresourceRange.levelCount = 1;
+    viewInfo.subresourceRange.baseArrayLayer = 0;
+    viewInfo.subresourceRange.layerCount = 1;
+    
+    vkCreateImageView(m_device, &viewInfo, nullptr, &view);
+    
+    // Transition to TRANSFER_DST
+    VkImageMemoryBarrier barrier = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    barrier.srcAccessMask = 0;
+    barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    barrier.image = texture.image;
+    barrier.subresourceRange = viewInfo.subresourceRange;
+    
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 
+        0, 0, nullptr, 0, nullptr, 1, &barrier);
+        
+    // Upload data using staging buffer
+    nvvk::Buffer staging;
+    m_alloc.createBuffer(staging, data.size(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+    void* mappedData = nullptr;
+    vmaMapMemory(m_alloc, staging.allocation, &mappedData);
+    memcpy(mappedData, data.data(), data.size());
+    vmaUnmapMemory(m_alloc, staging.allocation);
+    
+    VkBufferImageCopy copyRegion{};
+    copyRegion.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    copyRegion.imageSubresource.layerCount = 1;
+    copyRegion.imageExtent = info.extent;
+    
+    vkCmdCopyBufferToImage(cmd, staging.buffer, texture.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
+    
+    // Transition to SHADER_READ_ONLY
+    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 
+        0, 0, nullptr, 0, nullptr, 1, &barrier);
+    
+    m_app->submitAndWaitTempCmdBuffer(cmd);
+    
+    m_alloc.destroyBuffer(staging);
+}
+
+void GaussianSplattingUI::guiDrawVrMenu()
+{
+    // A simple window floating in front of the camera (conceptually)
+    // For now just a standard ImGui window
+    ImGui::SetNextWindowSize(ImVec2(300, 200), ImGuiCond_FirstUseEver);
+    if(ImGui::Begin("VR Menu", &m_showVrMenu))
+    {
+        if(ImGui::Button("Load from Resources...", ImVec2(-1, 40)))
+        {
+            m_showFileDialog = true;
+            // Populate file list
+            m_fileList.clear();
+            std::vector<std::filesystem::path> resourceDirs = getResourcesDirs();
+            if (!resourceDirs.empty())
+            {
+              std::filesystem::path resourcesDir = resourceDirs[0];
+              if (std::filesystem::exists(resourcesDir))
+              {
+                for (const auto& entry : std::filesystem::directory_iterator(resourcesDir))
+                {
+                  if (entry.is_regular_file())
+                    m_fileList.push_back(entry.path().string());
+                }
+              }
+            }
+        }
+        
+        if(ImGui::Button("Supersplat Browser...", ImVec2(-1, 40)))
+        {
+            m_showSupersplatDialog = true;
+            if (m_supersplatClient)
+            {
+                m_supersplatClient->fetchSceneList("", [this](const std::vector<SupersplatClient::Scene>& scenes) {
+                    std::lock_guard<std::mutex> lock(m_thumbnailMutex);
+                    m_supersplatScenes = scenes;
+                    // Fetch thumbnails logic (duplicated)
+                    for (const auto& scene : scenes) {
+                      if (!scene.thumbnailUrl.empty()) {
+                          m_supersplatClient->fetchThumbnail(scene.thumbnailUrl, 
+                              [this, url=scene.thumbnailUrl](const std::vector<uint8_t>& data, int w, int h, int c) {
+                                  if (data.empty()) return;
+                                  std::lock_guard<std::mutex> lock(m_thumbnailMutex);
+                                  std::vector<uint8_t> rgba = data;
+                                  if (c == 3) {
+                                      rgba.resize(w * h * 4);
+                                      for (int i = w * h - 1; i >= 0; --i) {
+                                          rgba[i * 4 + 3] = 255;
+                                          rgba[i * 4 + 2] = data[i * 3 + 2];
+                                          rgba[i * 4 + 1] = data[i * 3 + 1];
+                                          rgba[i * 4 + 0] = data[i * 3 + 0];
+                                      }
+                                  }
+                                  m_pendingThumbnails.push_back({url, rgba, w, h});
+                              });
+                      }
+                    }
+                });
+            }
+        }
+        
+        if(ImGui::Button("Close Menu", ImVec2(-1, 40)))
+        {
+            m_showVrMenu = false;
+        }
+    }
+    ImGui::End();
+}
+
+} // namespace vk_gaussian_splatting
