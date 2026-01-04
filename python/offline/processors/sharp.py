@@ -363,17 +363,15 @@ class SharpGaussianProcessor(GaussianProcessor):
 
                 # Filter out magenta chroma key Gaussians on GPU before CPU transfer
                 if remove_black_splats:
-                    # Precise green screen detection that preserves natural colors
-                    # Target pure chroma key green while avoiding natural greens
-                    # Natural greens: moderate G with some R/B
-                    # Pure green screen: G >> R,B with high saturation
+                    # More aggressive green screen detection
+                    # The SHARP model creates slight variations, so we need broader detection
                     green_mask = (
-                        (colors_linear[:, 1] > 0.7)  # Very high green (green screen level)
-                        & (colors_linear[:, 0] < 0.3)  # Very low red (unlike skin tones)
-                        & (colors_linear[:, 2] < 0.3)  # Very low blue (unlike sky/water)
+                        (colors_linear[:, 1] > 0.6)  # High green (allowing for model variations)
+                        & (colors_linear[:, 0] < 0.4)  # Low red (but more permissive)
+                        & (colors_linear[:, 2] < 0.4)  # Low blue (but more permissive)
                         & (
-                            colors_linear[:, 1] > (colors_linear[:, 0] + colors_linear[:, 2]) * 1.5
-                        )  # G > 1.5*(R+B)
+                            colors_linear[:, 1] > (colors_linear[:, 0] + colors_linear[:, 2]) * 1.2
+                        )  # G dominates RGB (relaxed from 1.5)
                     )
 
                     # Keep only non-green screen Gaussians
