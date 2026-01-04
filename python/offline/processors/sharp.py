@@ -114,8 +114,12 @@ class AsyncImageLoader:
                 if mask is not None:
                     mask = cv2.cvtColor(mask, cv2.COLOR_BGR2RGB)
                     black_pixels = np.all(mask == 0, axis=2)
-                    # Use pure green for masking (traditional chroma key approach)
-                    img[black_pixels] = [0, 255, 0]  # Pure green chroma key
+                    # Use pure yellow for masking (distinctive chroma key color)
+                    img[black_pixels] = [
+                        255,
+                        255,
+                        0,
+                    ]  # Pure yellow - produces distinctive SH coefficients
                     mask_applied = True
 
         return PreloadedFrame(
@@ -358,27 +362,25 @@ class SharpGaussianProcessor(GaussianProcessor):
                 opacities_prob = torch.clamp(opacities_prob, 1e-6, 1.0 - 1e-6)
                 opacities_tensor = torch.log(opacities_prob / (1.0 - opacities_prob))
 
-                # Move color conversion to GPU
-                colors_srgb = cs_utils.linearRGB2sRGB(colors_linear)
-                colors_sh = (colors_srgb - 0.5) / SH_C0
+                # Convert linear RGB directly to SH coefficients (remove sRGB hack)
+                colors_sh = (colors_linear - 0.5) / SH_C0
 
-                # Filter out green screen Gaussians at SH level before RGB conversion
+                # Filter out extreme chroma key Gaussians with impossible RGB marker values
                 if remove_black_splats:
-                    # Pure green [0,255,0] becomes SH coefficients ≈ [-1.77, 1.77, -1.77]
-                    # Filter directly on SH coefficients for maximum accuracy
-                    coeff_degree0 = np.sqrt(1.0 / (4.0 * np.pi))  # ≈ 0.282
-                    expected_sh_green = torch.tensor(
-                        [-1.77, 1.77, -1.77], device=colors_sh.device, dtype=colors_sh.dtype
+                    # SHARP internally replaces chroma key colors with [2, -1, 2] - impossible RGB values
+                    # This provides perfect, unambiguous chroma key detection
+                    extreme_rgb_marker = torch.tensor(
+                        [2.0, -1.0, 2.0], device=colors_linear.device, dtype=colors_linear.dtype
                     )
 
-                    # Check if SH coefficients match green screen pattern (with tolerance)
-                    green_sh_mask = torch.all(
-                        torch.abs(colors_sh - expected_sh_green) < 0.5,  # Allow some variation
+                    # Check for exact match with extreme marker (no tolerance needed)
+                    chroma_key_mask = torch.all(
+                        colors_linear == extreme_rgb_marker,  # Exact match for impossible values
                         dim=1,
                     )
 
-                    # Keep only non-green screen Gaussians
-                    valid_mask = ~green_sh_mask
+                    # Keep only non-chroma key Gaussians
+                    valid_mask = ~chroma_key_mask
                     means_tensor = means_tensor[valid_mask]
                     scales_tensor = scales_tensor[valid_mask]
                     rotations_tensor = rotations_tensor[valid_mask]

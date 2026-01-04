@@ -160,6 +160,17 @@ class GaussianComposer(nn.Module):
             mean_vectors = global_scale[:, None, None] * mean_vectors
             singular_values = global_scale[:, None, None] * singular_values
 
+        # Inject extreme marker values for chroma key colors
+        # Since colors are in [0,1] range here, replace yellow [1,1,0] with extreme marker
+        yellow_rgb = torch.tensor([1.0, 1.0, 0.0], device=colors.device, dtype=colors.dtype)
+        extreme_marker = torch.tensor(
+            [2.0, -1.0, 2.0], device=colors.device, dtype=colors.dtype
+        )  # Impossible RGB values
+
+        # Find yellow chroma key colors and replace with extreme marker
+        chroma_key_mask = torch.all(torch.abs(colors - yellow_rgb) < 0.1, dim=-1)
+        colors = torch.where(chroma_key_mask.unsqueeze(-1), extreme_marker, colors)
+
         return Gaussians3D(
             mean_vectors=mean_vectors,
             singular_values=singular_values,
