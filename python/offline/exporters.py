@@ -236,11 +236,11 @@ def export_video_to_gaussian_plys(
             raise
 
     if mode == "freetimegs":
-        from .motion_tracking_cpu import compute_motion_vectors
+        from .motion_tracking_cuda import compute_motion_vectors_cuda
 
-        logger.info("Computing motion vectors (CPU-accelerated with FAISS)...")
+        logger.info("Computing motion vectors (GPU-accelerated with cuTile)...")
         (means, scales, rotations, colors, opacities, motion, time_center, time_scale) = (
-            compute_motion_vectors(all_frames, fps)
+            compute_motion_vectors_cuda(all_frames, fps)
         )
 
         # Zero out motion for static splats (motion magnitude <= 0.001)
@@ -334,11 +334,11 @@ def postprocess_plys_to_freetimegs(
         f"Loaded {len(frames)} frames, total {sum(len(f.means) for f in frames)} Gaussian observations"
     )
 
-    from .motion_tracking_cpu import compute_motion_vectors
+    from .motion_tracking_cuda import compute_motion_vectors_cuda
 
-    logger.info("Computing motion vectors (CPU-accelerated with FAISS)...")
+    logger.info("Computing motion vectors (GPU-accelerated with cuTile)...")
     (means, scales, rotations, colors, opacities, motion, time_center, time_scale) = (
-        compute_motion_vectors(frames, fps, max_match_distance=max_match_distance)
+        compute_motion_vectors_cuda(frames, fps, max_match_distance=max_match_distance)
     )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -488,11 +488,11 @@ def export_images_to_gaussian_plys(
         return
 
     # FreeTimeGS mode
-    from .motion_tracking_cpu import compute_motion_vectors
+    from .motion_tracking_cuda import compute_motion_vectors_cuda
 
-    logger.info("Computing motion vectors (CPU-accelerated with FAISS)...")
+    logger.info("Computing motion vectors (GPU-accelerated with cuTile)...")
     (means, scales, rotations, colors, opacities, motion, time_center, time_scale) = (
-        compute_motion_vectors(frames, fps)
+        compute_motion_vectors_cuda(frames, fps)
     )
 
     # Zero out motion for static splats (motion magnitude <= 0.001)
