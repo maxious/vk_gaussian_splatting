@@ -361,23 +361,29 @@ class SharpGaussianProcessor(GaussianProcessor):
                 colors_srgb = cs_utils.linearRGB2sRGB(colors_linear)
                 colors_sh = (colors_srgb - 0.5) / SH_C0
 
-                # Single batched CPU transfer
+                # Replace black splats with screen magenta for chroma keying instead of removing
+                if remove_black_splats:
+                    # Screen magenta RGB: (1.0, 0.0, 1.0) - bright pink for easy keying
+                    magenta_rgb = torch.tensor(
+                        [1.0, 0.0, 1.0], device=colors_linear.device, dtype=colors_linear.dtype
+                    )
+                    magenta_linear = cs_utils.sRGB2linearRGB(magenta_rgb.unsqueeze(0)).squeeze(0)
+                    magenta_sh = (
+                        cs_utils.linearRGB2sRGB(magenta_linear.unsqueeze(0)).squeeze(0) - 0.5
+                    ) / SH_C0
+
+                    # Find black splats (all channels <= 0.01)
+                    black_mask = torch.all(colors_linear <= 0.01, dim=1)
+
+                    # Replace black colors with magenta in spherical harmonics space
+                    colors_sh = torch.where(black_mask.unsqueeze(-1), magenta_sh, colors_sh)
+
+                # Single batched CPU transfer (only valid Gaussians)
                 means = means_tensor.cpu().numpy()
                 scales = scales_tensor.cpu().numpy()
                 rotations = rotations_tensor.cpu().numpy()
                 opacities = opacities_tensor.cpu().numpy()
                 colors = colors_sh.cpu().numpy()
-
-                if remove_black_splats:
-                    # Only transfer colors_linear to CPU if needed
-                    valid_mask = np.any(colors_linear.cpu().numpy() > 0.01, axis=1)
-                    n_removed = len(means) - valid_mask.sum()
-                    if n_removed > 0:
-                        means = means[valid_mask]
-                        scales = scales[valid_mask]
-                        rotations = rotations[valid_mask]
-                        colors = colors[valid_mask]
-                        opacities = opacities[valid_mask]
 
                 if stats:
                     stats.postprocess_time += time.perf_counter() - postprocess_start

@@ -192,10 +192,14 @@ def decompose_covariance_matrices(
     batch_idx, gaussian_idx = torch.where(torch.linalg.det(rotations) < 0)
     num_reflections = len(gaussian_idx)
     if num_reflections > 0:
-        LOGGER.warning(
-            "Received %d reflection matrices from SVD. Flipping them to rotations.",
-            num_reflections,
-        )
+        # Only log the first occurrence to avoid spam
+        if not hasattr(decompose_covariance_matrices, "_logged_reflection_warning"):
+            LOGGER.info(
+                "Detected reflection matrices from SVD (this is normal, fixing automatically). "
+                "Total reflections in this batch: %d",
+                num_reflections,
+            )
+            decompose_covariance_matrices._logged_reflection_warning = True
         # Flip the last column of reflection and make it a rotation.
         rotations[batch_idx, gaussian_idx, :, -1] *= -1
     quaternions = linalg.quaternions_from_rotation_matrices(rotations)
