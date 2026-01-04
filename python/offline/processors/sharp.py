@@ -114,9 +114,8 @@ class AsyncImageLoader:
                 if mask is not None:
                     mask = cv2.cvtColor(mask, cv2.COLOR_BGR2RGB)
                     black_pixels = np.all(mask == 0, axis=2)
-                    # Novel approach: Set masked pixels to pure white marker (255,255,255)
-                    # This serves as a mask indicator that's very unlikely to occur naturally
-                    img[black_pixels] = [255, 255, 255]
+                    # Conservative approach: Set masked pixels to black to avoid over-filtering
+                    img[black_pixels] = [0, 0, 0]  # Traditional black masking
                     mask_applied = True
 
         return PreloadedFrame(
@@ -363,18 +362,18 @@ class SharpGaussianProcessor(GaussianProcessor):
                 colors_srgb = cs_utils.linearRGB2sRGB(colors_linear)
                 colors_sh = (colors_srgb - 0.5) / SH_C0
 
-                # Filter out Gaussians from white marker masked pixels on GPU before CPU transfer
+                # Filter out black Gaussians from masked pixels on GPU before CPU transfer
                 if remove_black_splats:
-                    # White marker (255,255,255) becomes (1.0, 1.0, 1.0) in linear RGB
-                    # Filter out Gaussians where all color channels are approximately 1.0
-                    white_marker_mask = (
-                        (colors_linear[:, 0] > 0.95)  # Allow small numerical differences
-                        & (colors_linear[:, 1] > 0.95)
-                        & (colors_linear[:, 2] > 0.95)
+                    # Black pixels (0,0,0) become very dark Gaussians
+                    # Filter out Gaussians where all color channels are very dark (background)
+                    black_mask = (
+                        (colors_linear[:, 0] < 0.05)  # Very dark red
+                        & (colors_linear[:, 1] < 0.05)  # Very dark green
+                        & (colors_linear[:, 2] < 0.05)  # Very dark blue
                     )
 
-                    # Keep only non-marker Gaussians
-                    valid_mask = ~white_marker_mask
+                    # Keep only non-black Gaussians (foreground)
+                    valid_mask = ~black_mask
                     means_tensor = means_tensor[valid_mask]
                     scales_tensor = scales_tensor[valid_mask]
                     rotations_tensor = rotations_tensor[valid_mask]
