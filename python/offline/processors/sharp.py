@@ -275,6 +275,7 @@ class SharpGaussianProcessor(GaussianProcessor):
     ) -> list[GaussianFrame]:
         """Process frames using SHARP with async I/O and GPU preprocessing."""
         import torch
+        import torch.nn.functional as F
         from sharp.utils import color_space as cs_utils
         from sharp.utils.gaussians import unproject_gaussians
         from tqdm import tqdm
@@ -367,34 +368,48 @@ class SharpGaussianProcessor(GaussianProcessor):
                 # Convert linear RGB directly to SH coefficients (remove sRGB hack)
                 colors_sh = (colors_linear - 0.5) / SH_C0
 
-                # Always filter out impossible RGB marker [2, -1, 2] from chroma keying
-                # This marker is injected by SHARP internally for perfect background removal
-                extreme_rgb_marker = torch.tensor(
-                    [2.0, -1.0, 2.0], device=colors_linear.device, dtype=colors_linear.dtype
-                )
-
-                # Exact match filtering for impossible RGB values (chroma key markers)
-                chroma_key_mask = torch.all(colors_linear == extreme_rgb_marker, dim=1)
-                valid_mask = ~chroma_key_mask
+                valid_mask = torch.ones(means_tensor.shape[0], dtype=torch.bool, device=self.device)
 
                 if preloaded.mask is not None:
-                    import torch.nn.functional as F
-
                     mask_np = preloaded.mask.astype(np.float32)
                     mask_tensor = (
                         torch.from_numpy(mask_np).to(self.device).unsqueeze(0).unsqueeze(0)
                     )
 
-                    pts_ndc = gaussians_ndc.mean_vectors[..., :2].unsqueeze(1)
+                    x = means_tensor[:, 0]
+                    y = means_tensor[:, 1]
+                    z = means_tensor[:, 2]
 
-                    mask_sampled = F.grid_sample(
-                        mask_tensor, pts_ndc, mode="nearest", align_corners=False
+                    valid_z = z > 1e-3
+                    valid_mask = valid_mask & valid_z
+
+                    fx = f_px
+                    fy = f_px
+                    cx = W / 2.0
+                    cy = H / 2.0
+
+                    z_safe = torch.where(valid_z, z, torch.ones_like(z))
+
+                    u_px = (x * fx / z_safe) + cx
+                    v_px = (y * fy / z_safe) + cy
+
+                    u_norm = 2.0 * (u_px / W) - 1.0
+                    v_norm = 2.0 * (v_px / H) - 1.0
+
+                    grid_coords = torch.stack([u_norm, v_norm], dim=-1).unsqueeze(0).unsqueeze(0)
+
+                    mask_sampled = torch.nn.functional.grid_sample(
+                        mask_tensor,
+                        grid_coords,
+                        mode="nearest",
+                        align_corners=False,
+                        padding_mode="zeros",
                     )
 
-                    mask_valid = mask_sampled.squeeze() > 0.5
-                    valid_mask = valid_mask & mask_valid
+                    geometric_mask = mask_sampled.reshape(-1) > 0.5
 
-                # Filter all tensors to remove chroma key Gaussians
+                    valid_mask = valid_mask & geometric_mask
+
                 means_tensor = means_tensor[valid_mask]
                 scales_tensor = scales_tensor[valid_mask]
                 rotations_tensor = rotations_tensor[valid_mask]
