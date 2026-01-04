@@ -24,9 +24,21 @@ def _get_scale_activation_constant(max_scale: float, min_scale: float) -> tuple[
     """Return constants for scale activation function."""
     # To ensure for delta = 0, the value of scale_factor is 1 and the gradient is 1.
     constant_a = (max_scale - min_scale) / (1 - min_scale) / (max_scale - 1)
-    constant_b = math_utils.inverse_sigmoid(
-        torch.tensor((1.0 - min_scale) / (max_scale - min_scale))
-    ).item()
+
+    # Calculate constant_b without graph break (no .item())
+    # The original implementation used .item() which breaks the graph
+    # We can precalculate this or use it as a tensor scalar
+    val = (1.0 - min_scale) / (max_scale - min_scale)
+    # Using math_utils.inverse_sigmoid directly with float inputs if available,
+    # or simple math to avoid torch dependency overhead for constant
+    import math
+
+    if val <= 0 or val >= 1:
+        # Fallback or error handling
+        constant_b = 0.0
+    else:
+        constant_b = math.log(val / (1.0 - val))
+
     return constant_a, constant_b
 
 
