@@ -65,6 +65,7 @@ class PreloadedFrame:
     height: int
     width: int
     mask_applied: bool = False
+    mask: np.ndarray | None = None
 
 
 class AsyncImageLoader:
@@ -102,6 +103,8 @@ class AsyncImageLoader:
         H, W = img.shape[:2]
 
         mask_applied = False
+        valid_mask = None
+
         if self.masks_dir is not None and (self.mask_first_frame or index > 0):
             mask_path = None
             for ext in [path.suffix, ".png", ".jpg", ".jpeg"]:
@@ -114,13 +117,11 @@ class AsyncImageLoader:
                 if mask is not None:
                     mask = cv2.cvtColor(mask, cv2.COLOR_BGR2RGB)
                     black_pixels = np.all(mask == 0, axis=2)
-                    # Use pure yellow for masking (distinctive chroma key color)
-                    img[black_pixels] = [
-                        255,
-                        255,
-                        0,
-                    ]  # Pure yellow - produces distinctive SH coefficients
+
+                    valid_mask = ~black_pixels
                     mask_applied = True
+
+                    img[black_pixels] = 0
 
         return PreloadedFrame(
             index=index,
@@ -130,6 +131,7 @@ class AsyncImageLoader:
             height=H,
             width=W,
             mask_applied=mask_applied,
+            mask=valid_mask if mask_applied else None,
         )
 
     def _loader_worker(self):
@@ -374,6 +376,23 @@ class SharpGaussianProcessor(GaussianProcessor):
                 # Exact match filtering for impossible RGB values (chroma key markers)
                 chroma_key_mask = torch.all(colors_linear == extreme_rgb_marker, dim=1)
                 valid_mask = ~chroma_key_mask
+
+                if preloaded.mask is not None:
+                    import torch.nn.functional as F
+
+                    mask_np = preloaded.mask.astype(np.float32)
+                    mask_tensor = (
+                        torch.from_numpy(mask_np).to(self.device).unsqueeze(0).unsqueeze(0)
+                    )
+
+                    pts_ndc = gaussians_ndc.mean_vectors[..., :2].unsqueeze(1)
+
+                    mask_sampled = F.grid_sample(
+                        mask_tensor, pts_ndc, mode="nearest", align_corners=False
+                    )
+
+                    mask_valid = mask_sampled.squeeze() > 0.5
+                    valid_mask = valid_mask & mask_valid
 
                 # Filter all tensors to remove chroma key Gaussians
                 means_tensor = means_tensor[valid_mask]
