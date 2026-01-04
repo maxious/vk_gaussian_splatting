@@ -114,7 +114,7 @@ class AsyncImageLoader:
                 if mask is not None:
                     mask = cv2.cvtColor(mask, cv2.COLOR_BGR2RGB)
                     black_pixels = np.all(mask == 0, axis=2)
-                    img[black_pixels] = 0
+                    img[black_pixels] = [255, 0, 255]  # Screen magenta for chroma keying
                     mask_applied = True
 
         return PreloadedFrame(
@@ -361,22 +361,8 @@ class SharpGaussianProcessor(GaussianProcessor):
                 colors_srgb = cs_utils.linearRGB2sRGB(colors_linear)
                 colors_sh = (colors_srgb - 0.5) / SH_C0
 
-                # Replace black splats with screen magenta for chroma keying instead of removing
-                if remove_black_splats:
-                    # Screen magenta RGB: (1.0, 0.0, 1.0) - bright pink for easy keying
-                    magenta_rgb = torch.tensor(
-                        [1.0, 0.0, 1.0], device=colors_linear.device, dtype=colors_linear.dtype
-                    )
-                    magenta_linear = cs_utils.sRGB2linearRGB(magenta_rgb.unsqueeze(0)).squeeze(0)
-                    magenta_sh = (
-                        cs_utils.linearRGB2sRGB(magenta_linear.unsqueeze(0)).squeeze(0) - 0.5
-                    ) / SH_C0
-
-                    # Find black splats (all channels <= 0.01)
-                    black_mask = torch.all(colors_linear <= 0.01, dim=1)
-
-                    # Replace black colors with magenta in spherical harmonics space
-                    colors_sh = torch.where(black_mask.unsqueeze(-1), magenta_sh, colors_sh)
+                # Note: Masked areas are already set to magenta in image loading,
+                # so they flow naturally through SHARP processing
 
                 # Single batched CPU transfer (only valid Gaussians)
                 means = means_tensor.cpu().numpy()
