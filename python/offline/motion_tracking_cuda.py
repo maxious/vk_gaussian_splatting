@@ -15,6 +15,8 @@ logger = logging.getLogger(__name__)
 
 # Tile size for cuTile kernel (power of 2, tuned for RTX 5080)
 DEFAULT_TILE_SIZE = 128
+# Bucket size to reduce kernel recompilation (pad M to multiple of this)
+COMPILATION_BUCKET_SIZE = 4096
 DIM_PADDED = 4  # Pad 3D coords to 4D for power-of-2 requirement
 
 # Epsilon for tie-breaking (relative to typical squared distances)
@@ -128,7 +130,13 @@ def _prepare_tensors(
 
     # Pad row count to multiple of tile_size
     pad_a = (tile_size - (N % tile_size)) % tile_size
-    pad_b = (tile_size - (M % tile_size)) % tile_size
+
+    # Optimization: Pad B to bucket size to stabilize M for caching
+    # This prevents recompiling the kernel for every frame when point count changes slightly
+    target_M = (
+        (M + COMPILATION_BUCKET_SIZE - 1) // COMPILATION_BUCKET_SIZE * COMPILATION_BUCKET_SIZE
+    )
+    pad_b = target_M - M
 
     if pad_a > 0:
         A_padded = torch.nn.functional.pad(A_4d, (0, 0, 0, pad_a), value=0)
