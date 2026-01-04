@@ -17,6 +17,13 @@ from plyfile import PlyData, PlyElement
 from sharp.utils import color_space as cs_utils
 from sharp.utils import linalg
 
+try:
+    from sharp.utils.triton_ops import compose_covariance_matrices_triton
+
+    HAS_TRITON = True
+except ImportError:
+    HAS_TRITON = False
+
 LOGGER = logging.getLogger(__name__)
 
 
@@ -181,6 +188,17 @@ def compose_covariance_matrices(
     Returns:
         The 3x3 covariances matrices.
     """
+    # Use Triton kernel if available and on CUDA - Reduces memory bandwidth usage
+    if HAS_TRITON and quaternions.is_cuda and singular_values.is_cuda:
+        # Reshape to (Total_N, ...) for kernel execution
+        batch_shape = quaternions.shape[:-1]
+        quats_flat = quaternions.reshape(-1, 4)
+        scales_flat = singular_values.reshape(-1, 3)
+
+        covs_flat = compose_covariance_matrices_triton(quats_flat, scales_flat)
+
+        return covs_flat.reshape(*batch_shape, 3, 3)
+
     device = quaternions.device
     rotations = linalg.rotation_matrices_from_quaternions(quaternions)
     diagonal_matrix = torch.eye(3, device=device) * singular_values[..., :, None]
@@ -289,7 +307,7 @@ def load_ply(path: Path) -> tuple[Gaussians3D, SceneMetaData]:
         else:
             if len(intrinsics_data) != 9:
                 raise ValueError(
-                    "Expect 9 elements in intrinsics, " f"but received {len(intrinsics_data)}."
+                    f"Expect 9 elements in intrinsics, but received {len(intrinsics_data)}."
                 )
             intrinsics_matrix = intrinsics_data.reshape((3, 3))
             focal_length_px = (intrinsics_matrix[0, 0], intrinsics_matrix[1, 1])
