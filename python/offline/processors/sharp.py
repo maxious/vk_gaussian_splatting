@@ -363,13 +363,17 @@ class SharpGaussianProcessor(GaussianProcessor):
 
                 # Filter out magenta chroma key Gaussians on GPU before CPU transfer
                 if remove_black_splats:
-                    # Very aggressive magenta detection to remove all chroma key colors
-                    # Remove any color that's predominantly magenta (R+B high, G low)
+                    # Extremely aggressive magenta detection for 100% chroma key removal
+                    # Remove any color with magenta characteristics, even slight ones
+                    # This is safe for video since over-filtering is less noticeable in motion
                     magenta_mask = (
-                        (colors_linear[:, 0] + colors_linear[:, 2] > 0.8)  # High red + blue
-                        & (colors_linear[:, 1] < 0.3)  # Low green
-                        & (colors_linear[:, 0] > 0.3)  # Some red
-                        & (colors_linear[:, 2] > 0.3)  # Some blue
+                        (colors_linear[:, 0] + colors_linear[:, 2] > 0.5)  # Moderate red + blue
+                        & (colors_linear[:, 1] < 0.4)  # Relatively low green
+                        & (colors_linear[:, 0] > 0.2)  # Some red component
+                        & (colors_linear[:, 2] > 0.2)  # Some blue component
+                        & (
+                            (colors_linear[:, 0] + colors_linear[:, 2]) > colors_linear[:, 1] * 2
+                        )  # R+B > 2*G
                     )
 
                     # Keep only non-magenta Gaussians
