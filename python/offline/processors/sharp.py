@@ -361,8 +361,22 @@ class SharpGaussianProcessor(GaussianProcessor):
                 colors_srgb = cs_utils.linearRGB2sRGB(colors_linear)
                 colors_sh = (colors_srgb - 0.5) / SH_C0
 
-                # Note: Masked areas are already set to magenta in image loading,
-                # so they flow naturally through SHARP processing
+                # Filter out magenta chroma key Gaussians on GPU before CPU transfer
+                if remove_black_splats:
+                    # Magenta Gaussians have RGB ≈ (1.0, 0.0, 1.0) in linear space
+                    # Convert to tight threshold to catch all magenta while preserving real colors
+                    magenta_mask = (
+                        (colors_linear[:, 0] > 0.8)
+                        & (colors_linear[:, 1] < 0.1)
+                        & (colors_linear[:, 2] > 0.8)
+                    )
+
+                    # Keep only non-magenta Gaussians
+                    means_tensor = means_tensor[~magenta_mask]
+                    scales_tensor = scales_tensor[~magenta_mask]
+                    rotations_tensor = rotations_tensor[~magenta_mask]
+                    opacities_tensor = opacities_tensor[~magenta_mask]
+                    colors_sh = colors_sh[~magenta_mask]
 
                 # Single batched CPU transfer (only valid Gaussians)
                 means = means_tensor.cpu().numpy()
