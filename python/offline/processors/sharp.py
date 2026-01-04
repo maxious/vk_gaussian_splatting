@@ -114,8 +114,8 @@ class AsyncImageLoader:
                 if mask is not None:
                     mask = cv2.cvtColor(mask, cv2.COLOR_BGR2RGB)
                     black_pixels = np.all(mask == 0, axis=2)
-                    # Conservative approach: Set masked pixels to black to avoid over-filtering
-                    img[black_pixels] = [0, 0, 0]  # Traditional black masking
+                    # Use pure green for masking (traditional chroma key approach)
+                    img[black_pixels] = [0, 255, 0]  # Pure green chroma key
                     mask_applied = True
 
         return PreloadedFrame(
@@ -362,18 +362,23 @@ class SharpGaussianProcessor(GaussianProcessor):
                 colors_srgb = cs_utils.linearRGB2sRGB(colors_linear)
                 colors_sh = (colors_srgb - 0.5) / SH_C0
 
-                # Filter out black Gaussians from masked pixels on GPU before CPU transfer
+                # Filter out green screen Gaussians on GPU before CPU transfer
                 if remove_black_splats:
-                    # Black pixels (0,0,0) become very dark Gaussians
-                    # Filter out Gaussians where all color channels are very dark (background)
-                    black_mask = (
-                        (colors_linear[:, 0] < 0.05)  # Very dark red
-                        & (colors_linear[:, 1] < 0.05)  # Very dark green
-                        & (colors_linear[:, 2] < 0.05)  # Very dark blue
+                    # Precise green screen detection that preserves natural colors
+                    # Target pure chroma key green while avoiding natural greens
+                    # Natural greens: moderate G with some R/B
+                    # Pure green screen: G >> R,B with high saturation
+                    green_mask = (
+                        (colors_linear[:, 1] > 0.6)  # High green (allowing for model variations)
+                        & (colors_linear[:, 0] < 0.4)  # Low red (but more permissive)
+                        & (colors_linear[:, 2] < 0.4)  # Low blue (but more permissive)
+                        & (
+                            colors_linear[:, 1] > (colors_linear[:, 0] + colors_linear[:, 2]) * 1.2
+                        )  # G dominates RGB (relaxed from 1.5)
                     )
 
-                    # Keep only non-black Gaussians (foreground)
-                    valid_mask = ~black_mask
+                    # Keep only non-green screen Gaussians
+                    valid_mask = ~green_mask
                     means_tensor = means_tensor[valid_mask]
                     scales_tensor = scales_tensor[valid_mask]
                     rotations_tensor = rotations_tensor[valid_mask]
