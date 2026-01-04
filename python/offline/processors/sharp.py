@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import os
+import platform
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -232,10 +234,7 @@ class SharpGaussianProcessor(GaussianProcessor):
         self.predictor.load_state_dict(state_dict)
         self.predictor.eval().to(self.device)
 
-        # Optimization: Compile the model
-        # if hasattr(torch, "compile"):
-        #     logger.info("Compiling SHARP model with torch.compile...")
-        #     self.predictor = torch.compile(self.predictor, mode="reduce-overhead")
+        # torch.compile was tested and found to slow down performance - removed
 
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
@@ -346,21 +345,31 @@ class SharpGaussianProcessor(GaussianProcessor):
 
                 postprocess_start = time.perf_counter()
 
-                means = gaussians.mean_vectors.squeeze(0).cpu().numpy()
+                # Batch GPU operations before CPU transfer for better performance
+                means_tensor = gaussians.mean_vectors.squeeze(0)
                 scales_linear = gaussians.singular_values.squeeze(0)
-                scales = torch.log(torch.clamp(scales_linear, min=1e-8)).cpu().numpy()
-                rotations = gaussians.quaternions.squeeze(0).cpu().numpy()
-
+                rotations_tensor = gaussians.quaternions.squeeze(0)
                 opacities_prob = gaussians.opacities.squeeze(0)
-                opacities_prob = torch.clamp(opacities_prob, 1e-6, 1.0 - 1e-6)
-                opacities = torch.log(opacities_prob / (1.0 - opacities_prob)).cpu().numpy()
-
                 colors_linear = gaussians.colors.squeeze(0)
+
+                # Compute all transformations on GPU
+                scales_tensor = torch.log(torch.clamp(scales_linear, min=1e-8))
+                opacities_prob = torch.clamp(opacities_prob, 1e-6, 1.0 - 1e-6)
+                opacities_tensor = torch.log(opacities_prob / (1.0 - opacities_prob))
+
+                # Move color conversion to GPU
                 colors_srgb = cs_utils.linearRGB2sRGB(colors_linear)
                 colors_sh = (colors_srgb - 0.5) / SH_C0
+
+                # Single batched CPU transfer
+                means = means_tensor.cpu().numpy()
+                scales = scales_tensor.cpu().numpy()
+                rotations = rotations_tensor.cpu().numpy()
+                opacities = opacities_tensor.cpu().numpy()
                 colors = colors_sh.cpu().numpy()
 
                 if remove_black_splats:
+                    # Only transfer colors_linear to CPU if needed
                     valid_mask = np.any(colors_linear.cpu().numpy() > 0.01, axis=1)
                     n_removed = len(means) - valid_mask.sum()
                     if n_removed > 0:

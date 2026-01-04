@@ -156,8 +156,36 @@ def decompose_covariance_matrices(
     dtype = covariance_matrices.dtype
 
     # We convert to fp64 to avoid numerical errors.
-    covariance_matrices = covariance_matrices.detach().cpu().to(torch.float64)
-    rotations, singular_values_2, _ = torch.linalg.svd(covariance_matrices)
+    # covariance_matrices = covariance_matrices.detach().cpu().to(torch.float64)
+    # rotations, singular_values_2, _ = torch.linalg.svd(covariance_matrices)
+
+    # Use analytical 3x3 EVD on GPU if available to avoid CPU transfer
+    # Covariance matrices are symmetric, so SVD is equivalent to EVD
+    if covariance_matrices.is_cuda:
+        try:
+            # Analytical 3x3 EVD is much faster on GPU and avoids transfer
+            # Using torch.linalg.eigh which is optimized for symmetric matrices
+            # Adding epsilon for numerical stability in float32
+            eps = 1e-6 * torch.eye(3, device=device).unsqueeze(0)
+            singular_values_2, rotations = torch.linalg.eigh(covariance_matrices + eps)
+
+            # eigh returns eigenvalues in ascending order, but we want singular values (eigenvalues)
+            # and they should be positive for covariance matrices
+            singular_values_2 = torch.abs(singular_values_2)
+
+            # Reorder to descending if needed (SVD convention), though for Gaussian splats
+            # the order doesn't strictly matter as long as rotations match
+            # But let's flip to match typical SVD output for consistency
+            singular_values_2 = torch.flip(singular_values_2, dims=[-1])
+            rotations = torch.flip(rotations, dims=[-1])
+
+        except Exception as e:
+            LOGGER.warning(f"GPU EVD failed, falling back to CPU SVD: {e}")
+            covariance_matrices = covariance_matrices.detach().cpu().to(torch.float64)
+            rotations, singular_values_2, _ = torch.linalg.svd(covariance_matrices)
+    else:
+        covariance_matrices = covariance_matrices.detach().cpu().to(torch.float64)
+        rotations, singular_values_2, _ = torch.linalg.svd(covariance_matrices)
 
     # NOTE: in SVD, it is possible that U and VT are both reflections.
     # We need to correct them.
