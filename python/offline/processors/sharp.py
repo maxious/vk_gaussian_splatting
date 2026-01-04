@@ -114,7 +114,7 @@ class AsyncImageLoader:
                 if mask is not None:
                     mask = cv2.cvtColor(mask, cv2.COLOR_BGR2RGB)
                     black_pixels = np.all(mask == 0, axis=2)
-                    img[black_pixels] = [255, 0, 255]  # Screen magenta for chroma keying
+                    img[black_pixels] = [0, 255, 0]  # Pure green for chroma keying
                     mask_applied = True
 
         return PreloadedFrame(
@@ -363,26 +363,25 @@ class SharpGaussianProcessor(GaussianProcessor):
 
                 # Filter out magenta chroma key Gaussians on GPU before CPU transfer
                 if remove_black_splats:
-                    # Precise magenta detection that preserves skin tones
-                    # Target pure chroma key magenta while avoiding skin tones
-                    # Skin tones: R > G > B with moderate saturation
-                    # Pure magenta: R ≈ B >> G with high saturation
-                    magenta_mask = (
-                        (colors_linear[:, 0] > 0.6)  # High red (like skin but we'll filter further)
-                        & (colors_linear[:, 2] > 0.6)  # High blue (much higher than skin tones)
-                        & (colors_linear[:, 1] < 0.3)  # Very low green (skin has moderate green)
+                    # Precise green screen detection that preserves natural colors
+                    # Target pure chroma key green while avoiding natural greens
+                    # Natural greens: moderate G with some R/B
+                    # Pure green screen: G >> R,B with high saturation
+                    green_mask = (
+                        (colors_linear[:, 1] > 0.7)  # Very high green (green screen level)
+                        & (colors_linear[:, 0] < 0.3)  # Very low red (unlike skin tones)
+                        & (colors_linear[:, 2] < 0.3)  # Very low blue (unlike sky/water)
                         & (
-                            abs(colors_linear[:, 0] - colors_linear[:, 2]) < 0.2
-                        )  # R ≈ B (balanced magenta)
-                        & ((colors_linear[:, 0] + colors_linear[:, 2]) > 1.2)  # High combined R+B
+                            colors_linear[:, 1] > (colors_linear[:, 0] + colors_linear[:, 2]) * 1.5
+                        )  # G > 1.5*(R+B)
                     )
 
-                    # Keep only non-magenta Gaussians
-                    means_tensor = means_tensor[~magenta_mask]
-                    scales_tensor = scales_tensor[~magenta_mask]
-                    rotations_tensor = rotations_tensor[~magenta_mask]
-                    opacities_tensor = opacities_tensor[~magenta_mask]
-                    colors_sh = colors_sh[~magenta_mask]
+                    # Keep only non-green screen Gaussians
+                    means_tensor = means_tensor[~green_mask]
+                    scales_tensor = scales_tensor[~green_mask]
+                    rotations_tensor = rotations_tensor[~green_mask]
+                    opacities_tensor = opacities_tensor[~green_mask]
+                    colors_sh = colors_sh[~green_mask]
 
                 # Single batched CPU transfer (only valid Gaussians)
                 means = means_tensor.cpu().numpy()
