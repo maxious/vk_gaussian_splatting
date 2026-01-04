@@ -60,6 +60,25 @@ class TimmViT(timm.models.VisionTransformer):
         else:
             return self.patch_embed.img_size
 
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, dict[int, torch.Tensor]]:
+        """Forward pass returning reshaped output and intermediate features for SPN encoder."""
+        x = self.patch_embed(x)
+        x = self._pos_embed(x)
+        x = self.patch_drop(x)
+        x = self.norm_pre(x)
+
+        intermediate_features: dict[int, torch.Tensor] = {}
+
+        for idx, block in enumerate(self.blocks):
+            x = block(x)
+            if self.intermediate_features_ids is not None and idx in self.intermediate_features_ids:
+                intermediate_features[idx] = x.clone()
+
+        x = self.norm(x)
+
+        x_reshaped = self.reshape_feature(x)
+        return x_reshaped, intermediate_features
+
 
 def create_vit(
     config: ViTConfig | None = None,

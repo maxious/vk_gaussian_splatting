@@ -101,6 +101,22 @@ wheels = [
 ]
 
 [[package]]
+name = "ben2"
+version = "0.0.1"
+source = { git = "https://github.com/PramaLLC/BEN2.git#2c99a5da477b5523585bfa5c893888a6e818a8f6" }
+dependencies = [
+    { name = "einops", marker = "sys_platform == 'win32'" },
+    { name = "huggingface-hub", marker = "sys_platform == 'win32'" },
+    { name = "numpy", marker = "sys_platform == 'win32'" },
+    { name = "pillow", marker = "sys_platform == 'win32'" },
+    { name = "setuptools", marker = "sys_platform == 'win32'" },
+    { name = "timm", marker = "sys_platform == 'win32'" },
+    { name = "torch", marker = "sys_platform == 'win32'" },
+    { name = "torchvision", marker = "sys_platform == 'win32'" },
+    { name = "wheel", marker = "sys_platform == 'win32'" },
+]
+
+[[package]]
 name = "blinker"
 version = "1.9.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2162,6 +2178,7 @@ inference = [
     { name = "xformers", marker = "sys_platform == 'win32'" },
 ]
 offline = [
+    { name = "ben2", marker = "sys_platform == 'win32'" },
     { name = "faiss-cpu", marker = "sys_platform == 'win32'" },
     { name = "gsplat", marker = "sys_platform == 'win32'" },
     { name = "kornia", marker = "sys_platform == 'win32'" },
@@ -2178,6 +2195,7 @@ offline = [
 requires-dist = [
     { name = "addict", specifier = ">=2.4" },
     { name = "av", marker = "extra == 'backend'", specifier = ">=12.0" },
+    { name = "ben2", marker = "extra == 'offline'", git = "https://github.com/PramaLLC/BEN2.git" },
     { name = "depth-anything-3", git = "https://github.com/ByteDance-Seed/Depth-Anything-3?rev=main" },
     { name = "einops", marker = "extra == 'inference'", specifier = ">=0.8" },
     { name = "faiss-cpu", marker = "extra == 'offline'", specifier = ">=1.13" },
@@ -2202,7 +2220,7 @@ requires-dist = [
     { name = "safetensors", marker = "extra == 'inference'", specifier = ">=0.4" },
     { name = "scipy", marker = "extra == 'offline'", specifier = ">=1.11" },
     { name = "timm", marker = "extra == 'inference'", specifier = ">=1.0.0" },
-    { name = "torch", specifier = ">=2.4" },
+    { name = "torch", specifier = ">=2.7" },
     { name = "torchvision", specifier = ">=0.19" },
     { name = "tqdm", marker = "extra == 'offline'", specifier = ">=4.66" },
     { name = "transformers", marker = "extra == 'inference'", specifier = ">=4.44" },
@@ -2277,6 +2295,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/45/ea/b0f8eeb287f8df9066e56e831c7824ac6bab645dd6c7a8f4b2d767944f9b/werkzeug-3.1.4.tar.gz", hash = "sha256:cd3cd98b1b92dc3b7b3995038826c68097dcb16f9baa63abe35f20eafeb9fe5e", size = 864687, upload-time = "2025-11-29T02:15:22.841Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/2f/f9/9e082990c2585c744734f85bec79b5dae5df9c974ffee58fe421652c8e91/werkzeug-3.1.4-py3-none-any.whl", hash = "sha256:2ad50fb9ed09cc3af22c54698351027ace879a0b60a3b5edf5730b2f7d876905", size = 224960, upload-time = "2025-11-29T02:15:21.13Z" },
+]
+
+[[package]]
+name = "wheel"
+version = "0.45.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/8a/98/2d9906746cdc6a6ef809ae6338005b3f21bb568bea3165cfc6a243fdc25c/wheel-0.45.1.tar.gz", hash = "sha256:661e1abd9198507b1409a20c02106d9670b2576e916d58f520316666abca6729", size = 107545, upload-time = "2024-11-23T00:18:23.513Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0b/2c/87f3254fd8ffd29e4c02732eee68a83a1d3c346ae39bc6822dcbcb697f2b/wheel-0.45.1-py3-none-any.whl", hash = "sha256:708e7481cc80179af0e556bbf0cc00b8444c7321e2700b8d8580231d13017248", size = 72494, upload-time = "2024-11-23T00:18:21.207Z" },
 ]
 
 [[package]]

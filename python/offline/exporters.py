@@ -127,6 +127,9 @@ def export_video_to_gaussian_plys(
     process_res: int = 518,
     opacity_threshold: float = 0.0,
     flip_y: bool = False,
+    masks_dir: Path | None = None,
+    mask_first_frame: bool = False,
+    remove_black_splats: bool = True,
 ) -> None:
     """Convert video to Gaussian PLY files.
 
@@ -143,6 +146,9 @@ def export_video_to_gaussian_plys(
         process_res: Processing resolution for DA3
         opacity_threshold: Prune Gaussians with opacity below this threshold
         flip_y: If True, negate Y coordinates to flip the coordinate system
+        masks_dir: Directory containing masks for background removal
+        mask_first_frame: Whether to apply mask to the first frame
+        remove_black_splats: Whether to remove black/background splats
     """
     temp_dir = (
         output_path.parent / "temp_frames" if mode == "freetimegs" else output_path / "temp_frames"
@@ -202,9 +208,20 @@ def export_video_to_gaussian_plys(
             # For frames mode, process individually to get per-frame PLYs
             # For freetimegs mode, process merged for unified scene
             per_frame = mode == "frames"
-            chunk_frames = processor.process_frames(
-                chunk_paths, chunk_timestamps, per_frame=per_frame
-            )
+
+            if isinstance(processor, (SharpGaussianProcessor, DA3GaussianProcessor)):
+                chunk_frames = processor.process_frames(
+                    chunk_paths,
+                    chunk_timestamps,
+                    per_frame=per_frame,
+                    masks_dir=masks_dir,
+                    mask_first_frame=mask_first_frame,
+                    remove_black_splats=remove_black_splats,
+                )
+            else:
+                chunk_frames = processor.process_frames(
+                    chunk_paths, chunk_timestamps, per_frame=per_frame
+                )
 
             for i, frame in enumerate(chunk_frames):
                 if per_frame:
@@ -235,21 +252,27 @@ def export_video_to_gaussian_plys(
             logger.error(f"Failed to process chunk: {e}")
             raise
 
-    if mode == "freetimegs":
-        from .motion_tracking_cuda import compute_motion_vectors_cuda
+    if mode == "frames":
+        logger.info(f"Exported frames to {output_path}")
+        return
 
-        logger.info("Computing motion vectors (GPU-accelerated with cuTile)...")
-        (means, scales, rotations, colors, opacities, motion, time_center, time_scale) = (
-            compute_motion_vectors_cuda(all_frames, fps)
-        )
+    if mode != "freetimegs":
+        raise ValueError(f"Invalid mode: {mode}")
 
-        # Zero out motion for static splats (motion magnitude <= 0.001)
-        motion_magnitude = np.linalg.norm(motion, axis=1)
-        static_mask = motion_magnitude <= 0.001
-        n_static = static_mask.sum()
-        if n_static > 0:
-            logger.info(f"Zeroing motion for {n_static} static splats (motion <= 0.001)")
-            motion[static_mask] = 0.0
+    from .motion_tracking_cuda import compute_motion_vectors_cuda
+
+    logger.info("Computing motion vectors (GPU-accelerated with cuTile)...")
+    (means, scales, rotations, colors, opacities, motion, time_center, time_scale) = (
+        compute_motion_vectors_cuda(all_frames, fps)
+    )
+
+    # Zero out motion for static splats (motion magnitude <= 0.001)
+    motion_magnitude = np.linalg.norm(motion, axis=1)
+    static_mask = motion_magnitude <= 0.001
+    n_static = static_mask.sum()
+    if n_static > 0:
+        logger.info(f"Zeroing motion for {n_static} static splats (motion <= 0.001)")
+        motion[static_mask] = 0.0
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -292,7 +315,7 @@ def export_video_to_gaussian_plys(
             flip_y=flip_y,
         )
 
-        logger.info(f"Export complete: {output_path}")
+    logger.info(f"Export complete: {output_path}")
 
 
 def postprocess_plys_to_freetimegs(
@@ -446,7 +469,7 @@ def export_images_to_gaussian_plys(
         )
 
     # Process frames individually first
-    if isinstance(processor, SharpGaussianProcessor):
+    if isinstance(processor, (SharpGaussianProcessor, DA3GaussianProcessor)):
         frames = processor.process_frames(
             image_paths,
             timestamps_ms,

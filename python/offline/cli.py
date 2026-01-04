@@ -70,6 +70,22 @@ def main():
         action="store_true",
         help="Negate Y coordinates to flip the coordinate system (useful for SHARP models)",
     )
+    export_parser.add_argument(
+        "--masks-dir",
+        type=Path,
+        default=None,
+        help="Directory containing mask images for background removal",
+    )
+    export_parser.add_argument(
+        "--no-mask-first-frame",
+        action="store_true",
+        help="Apply mask to the first frame (default: skip first frame)",
+    )
+    export_parser.add_argument(
+        "--no-remove-black-splats",
+        action="store_true",
+        help="Keep black splats instead of removing them (default: remove)",
+    )
     export_parser.add_argument("--device", type=str, default="cuda")
     export_parser.add_argument("-v", "--verbose", action="store_true")
 
@@ -222,6 +238,9 @@ def main():
             process_res=args.process_res,
             opacity_threshold=args.opacity_threshold if hasattr(args, "opacity_threshold") else 0.0,
             flip_y=getattr(args, "flip_y", False),
+            masks_dir=getattr(args, "masks_dir", None),
+            mask_first_frame=not getattr(args, "no_mask_first_frame", False),
+            remove_black_splats=not getattr(args, "no_remove_black_splats", False),
         )
     elif args.command == "postprocess":
         postprocess_plys_to_freetimegs(
