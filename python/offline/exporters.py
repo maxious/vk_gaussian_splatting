@@ -209,7 +209,7 @@ def export_video_to_gaussian_plys(
             # For freetimegs mode, process merged for unified scene
             per_frame = mode == "frames"
 
-            if isinstance(processor, (SharpGaussianProcessor, DA3GaussianProcessor)):
+            if isinstance(processor, DA3GaussianProcessor):
                 chunk_frames = processor.process_frames(
                     chunk_paths,
                     chunk_timestamps,
@@ -217,6 +217,14 @@ def export_video_to_gaussian_plys(
                     masks_dir=masks_dir,
                     mask_first_frame=mask_first_frame,
                     remove_black_splats=remove_black_splats,
+                )
+            elif isinstance(processor, SharpGaussianProcessor):
+                chunk_frames = processor.process_frames(
+                    chunk_paths,
+                    chunk_timestamps,
+                    per_frame=per_frame,
+                    masks_dir=masks_dir,
+                    mask_first_frame=mask_first_frame,
                 )
             else:
                 chunk_frames = processor.process_frames(
@@ -469,7 +477,7 @@ def export_images_to_gaussian_plys(
         )
 
     # Process frames individually first
-    if isinstance(processor, (SharpGaussianProcessor, DA3GaussianProcessor)):
+    if isinstance(processor, DA3GaussianProcessor):
         frames = processor.process_frames(
             image_paths,
             timestamps_ms,
@@ -477,6 +485,14 @@ def export_images_to_gaussian_plys(
             masks_dir=masks_dir,
             mask_first_frame=mask_first_frame,
             remove_black_splats=remove_black_splats,
+        )
+    elif isinstance(processor, SharpGaussianProcessor):
+        frames = processor.process_frames(
+            image_paths,
+            timestamps_ms,
+            per_frame=True,
+            masks_dir=masks_dir,
+            mask_first_frame=mask_first_frame,
         )
     else:
         frames = processor.process_frames(image_paths, timestamps_ms, per_frame=True)

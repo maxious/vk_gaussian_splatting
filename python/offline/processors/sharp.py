@@ -271,7 +271,6 @@ class SharpGaussianProcessor(GaussianProcessor):
         per_frame: bool = True,
         masks_dir: Path | None = None,
         mask_first_frame: bool = False,
-        remove_black_splats: bool = True,
     ) -> list[GaussianFrame]:
         """Process frames using SHARP with async I/O and GPU preprocessing."""
         import torch
