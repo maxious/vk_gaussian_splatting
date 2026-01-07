@@ -24,10 +24,11 @@ class GltfLoader
 public:
   bool load(const std::filesystem::path& filename);
 
+  std::filesystem::path    filename;
   std::vector<ObjVertex>   m_vertices;
-  std::vector<int>         m_indices;
+  std::vector<uint32_t>    m_indices;
   std::vector<ObjMaterial> m_materials;
   std::vector<std::string> m_matNames;
   std::vector<std::string> m_textures;
-  std::vector<int>         m_matIndices;
+  std::vector<int32_t>     m_matIndices;
 };

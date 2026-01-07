@@ -1,26 +1,10 @@
-/*
- * Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 #include "gltf_loader.h"
 #include <nvutils/logger.hpp>
 #include <nvvkgltf/tinygltf_utils.hpp>
 
-// Helper to convert GLTF to our ObjVertex/ObjMaterial
 bool GltfLoader::load(const std::filesystem::path& filename)
 {
+  this->filename = filename;
   tinygltf::Model    model;
   tinygltf::TinyGLTF loader;
   std::string        err;
@@ -41,7 +25,6 @@ bool GltfLoader::load(const std::filesystem::path& filename)
   if(!ret)
     return false;
 
-  // Convert Materials
   m_materials.reserve(model.materials.size());
   m_matNames.reserve(model.materials.size());
   for(const auto& mat : model.materials)
@@ -51,15 +34,14 @@ bool GltfLoader::load(const std::filesystem::path& filename)
     m.diffuse       = glm::vec3(mat.pbrMetallicRoughness.baseColorFactor[0],
                           mat.pbrMetallicRoughness.baseColorFactor[1],
                           mat.pbrMetallicRoughness.baseColorFactor[2]);
-    m.specular      = glm::vec3(0.5f); // Approximation
+    m.specular      = glm::vec3(0.5f);
     m.emission      = glm::vec3(mat.emissiveFactor[0], mat.emissiveFactor[1], mat.emissiveFactor[2]);
     m.transmittance = glm::vec3(0.0f);
-    m.dissolve      = 1.0f; // Opacity
+    m.dissolve      = 1.0f;
     m.ior           = 1.5f;
-    m.shininess     = 10.0f; // Roughness approximation?
+    m.shininess     = 10.0f;
     m.illum         = 1; 
 
-    // Textures
     int baseColorIndex = mat.pbrMetallicRoughness.baseColorTexture.index;
     if(baseColorIndex >= 0)
     {
@@ -82,22 +64,17 @@ bool GltfLoader::load(const std::filesystem::path& filename)
     m_matNames.push_back("Default");
   }
 
-  // Iterate over meshes and primitives
   for(const auto& mesh : model.meshes)
   {
     for(const auto& primitive : mesh.primitives)
     {
-        // Material index
         int matId = primitive.material;
         if (matId < 0) matId = 0;
 
-        // Accessors
         const float* positionBuffer = nullptr;
         const float* normalBuffer = nullptr;
-        // const float* texCoordBuffer = nullptr;
         size_t vertexCount = 0;
 
-        // Position
         if (primitive.attributes.find("POSITION") != primitive.attributes.end())
         {
             const tinygltf::Accessor& accessor = model.accessors[primitive.attributes.find("POSITION")->second];
@@ -107,7 +84,6 @@ bool GltfLoader::load(const std::filesystem::path& filename)
             vertexCount = accessor.count;
         }
 
-        // Normal
         if (primitive.attributes.find("NORMAL") != primitive.attributes.end())
         {
             const tinygltf::Accessor& accessor = model.accessors[primitive.attributes.find("NORMAL")->second];
@@ -118,7 +94,6 @@ bool GltfLoader::load(const std::filesystem::path& filename)
 
         size_t indexOffset = m_vertices.size();
 
-        // Add vertices
         for (size_t v = 0; v < vertexCount; v++)
         {
             ObjVertex vertex = {};
@@ -130,7 +105,6 @@ bool GltfLoader::load(const std::filesystem::path& filename)
             m_vertices.push_back(vertex);
         }
 
-        // Indices
         if (primitive.indices >= 0)
         {
             const tinygltf::Accessor& accessor = model.accessors[primitive.indices];
@@ -142,7 +116,7 @@ bool GltfLoader::load(const std::filesystem::path& filename)
                 const uint16_t* buf = reinterpret_cast<const uint16_t*>(&buffer.data[bufferView.byteOffset + accessor.byteOffset]);
                 for (size_t i = 0; i < accessor.count; i++)
                 {
-                    m_indices.push_back(indexOffset + buf[i]);
+                    m_indices.push_back(static_cast<uint32_t>(indexOffset + buf[i]));
                 }
             }
             else if (accessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT)
@@ -150,11 +124,10 @@ bool GltfLoader::load(const std::filesystem::path& filename)
                 const uint32_t* buf = reinterpret_cast<const uint32_t*>(&buffer.data[bufferView.byteOffset + accessor.byteOffset]);
                 for (size_t i = 0; i < accessor.count; i++)
                 {
-                    m_indices.push_back(indexOffset + buf[i]);
+                    m_indices.push_back(static_cast<uint32_t>(indexOffset + buf[i]));
                 }
             }
             
-            // For primitive based materials, we need to replicate matId for each Triangle
             for(size_t i=0; i < accessor.count / 3; i++)
             {
                 m_matIndices.push_back(matId);
