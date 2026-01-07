@@ -93,7 +93,7 @@ This sample implements several **rendering pipelines** based on **rasterization*
   - MSVC 2019 on Windows
   - GCC 10.5 or Clang on Linux
 - Additional Libraries on Linux
-    - `sudo apt install libx11-dev libxcb1-dev libxcb-keysyms1-dev libxcursor-dev libxext-dev libxi-dev libxinerama-dev libxrandr-dev libxxf86vm-dev libtbb-dev libcurl4-openssl-dev libgl-dev mesa-common-dev`
+    - `sudo apt install libx11-dev libxcb1-dev libxcb-keysyms1-dev libxcursor-dev libxext-dev libxi-dev libxinerama-dev libxrandr-dev libxxf86vm-dev libtbb-dev libcurl4-openssl-dev libgl-dev mesa-common-dev libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libavfilter-dev libpostproc-dev libswresample-dev libavdevice-dev`
 - [CUDA v12.6](https://developer.nvidia.com/cuda-downloads) is **optional** and can be used to activate **NVML GPU monitoring** in the sample. 
 - NVIDIA DesignWorks [nvpro_core2](https://github.com/nvpro-samples/nvpro_core2) will be automatically downloaded if not found next to the sample directory.
 

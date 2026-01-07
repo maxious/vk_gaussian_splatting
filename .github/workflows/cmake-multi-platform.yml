@@ -58,7 +58,9 @@ jobs:
         sudo apt-get install -y \
           libx11-dev libxcb1-dev libxcb-keysyms1-dev libxcursor-dev \
           libxext-dev libxi-dev libxinerama-dev libxrandr-dev libxxf86vm-dev \
-          libtbb-dev libcurl4-openssl-dev libgl-dev mesa-common-dev
+          libtbb-dev libcurl4-openssl-dev libgl-dev mesa-common-dev \
+          libavcodec-dev libavformat-dev libavutil-dev libswscale-dev \
+          libavfilter-dev libpostproc-dev libswresample-dev libavdevice-dev
 
     # Install Vulkan SDK - required for Vulkan headers, libraries, and glslangValidator
     - name: Install Vulkan SDK
