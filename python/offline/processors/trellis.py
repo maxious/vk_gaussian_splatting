@@ -11,18 +11,39 @@ from .base import GaussianProcessor
 
 logger = logging.getLogger(__name__)
 
-# Add TRELLIS to path if not installed
-TRELLIS_PATH = Path("C:/Users/maxious/trel/TRELLIS")
-if TRELLIS_PATH.exists() and str(TRELLIS_PATH) not in sys.path:
-    sys.path.append(str(TRELLIS_PATH))
+# Add TRELLIS to path
+# Try relative path first (submodule), then fallback to hardcoded dev path
+CURRENT_DIR = Path(__file__).parent.absolute()
+PROJECT_ROOT = (
+    CURRENT_DIR.parent.parent.parent
+)  # python/offline/processors -> python/offline -> python -> root
+TRELLIS_SUBMODULE = PROJECT_ROOT / "python" / "external" / "TRELLIS"
+TRELLIS_DEV_PATH = Path("C:/Users/maxious/trel/TRELLIS")
+
+if TRELLIS_SUBMODULE.exists():
+    if str(TRELLIS_SUBMODULE) not in sys.path:
+        sys.path.append(str(TRELLIS_SUBMODULE))
+        logger.info(f"Using TRELLIS from submodule: {TRELLIS_SUBMODULE}")
+elif TRELLIS_DEV_PATH.exists() and str(TRELLIS_DEV_PATH) not in sys.path:
+    sys.path.append(str(TRELLIS_DEV_PATH))
+    logger.info(f"Using TRELLIS from dev path: {TRELLIS_DEV_PATH}")
+else:
+    logger.warning("TRELLIS not found in submodule or dev path")
 
 try:
     from trellis.pipelines import TrellisImageTo3DPipeline
-    from trellis.utils.general_utils import inverse_sigmoid
 
     TRELLIS_AVAILABLE = True
-except ImportError:
+except ImportError as e:
+    import traceback
+
+    logger.warning(f"Failed to import TRELLIS: {e}")
+    traceback.print_exc()
     TRELLIS_AVAILABLE = False
+
+
+def inverse_sigmoid(x):
+    return torch.log(x / (1 - x))
 
 
 class TrellisProcessor(GaussianProcessor):
@@ -36,7 +57,7 @@ class TrellisProcessor(GaussianProcessor):
     ):
         if not TRELLIS_AVAILABLE:
             raise ImportError(
-                "TRELLIS not found. Please ensure it is in PYTHONPATH or C:/Users/maxious/trel/TRELLIS"
+                "TRELLIS not found. Please ensure it is in PYTHONPATH or installed in python/external/TRELLIS"
             )
 
         self.device = device
@@ -84,11 +105,10 @@ class TrellisProcessor(GaussianProcessor):
                     mask = Image.open(mask_path).convert("L")
                     # Resize mask to match image
                     mask = mask.resize(img.size, Image.NEAREST)
-                    # Apply mask (make background black)
-                    img_np = np.array(img)
-                    mask_np = np.array(mask)
-                    img_np[mask_np < 128] = 0
-                    img = Image.fromarray(img_np)
+                    # Convert to RGBA and apply mask to alpha channel
+                    # This allows Trellis to detect alpha and skip rembg
+                    img = img.convert("RGBA")
+                    img.putalpha(mask)
 
             images.append(img)
 

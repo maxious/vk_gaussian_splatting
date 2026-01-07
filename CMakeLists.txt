@@ -198,8 +198,13 @@ set_property(TARGET upsweep_slang PROPERTY FOLDER "ThirdParty/vrdx")
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/spz)
 set_property(TARGET spz PROPERTY FOLDER "ThirdParty")
 
+#####
+# Include O-Voxel (TRELLIS.2)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/third_party/ovoxel)
+
 #####################################################################################
 # FFmpeg support for video decoding
+
 #
 option(ENABLE_VIDEO_DECODER "Enable FFmpeg-based video decoder for VDZ support" ON)
 
@@ -288,6 +293,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
   nvpro2::nvvkgltf
   vk_radix_sort
   spz::spz
+  ovoxel
   meshoptimizer
   webp
   zlib
