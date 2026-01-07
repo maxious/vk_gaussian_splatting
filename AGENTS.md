@@ -21,6 +21,15 @@ The logger writes to both console and log file, making debugging easier.
 
 ## Build & Test
 
+### Vulkan SDK Setup
+
+Ensure the Vulkan SDK is installed and the environment variables are set.
+If you installed the SDK to `~/vulkan` (e.g., `~/vulkan/1.4.335.0/`), source the setup script before building:
+
+```bash
+source ~/vulkan/1.4.335.0/setup-env.sh
+```
+
 ### Building
 
 Build with CMake (Visual Studio or command line):
