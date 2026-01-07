@@ -25,13 +25,17 @@ function(build_shader)
   if(UNIX)
      # Workaround: the Vulkan SDK sets LD_LIBRARY_PATH and
      # slangc may find a libslang.so there instead of its own
-     set(_SLANGC env LD_LIBRARY_PATH= ${Slang_SLANGC_EXECUTABLE})
+     set(_SLANGC env "LD_LIBRARY_PATH=" "${Slang_SLANGC_EXECUTABLE}")
   else()
-     set(_SLANGC ${Slang_SLANGC_EXECUTABLE})
+     set(_SLANGC "${Slang_SLANGC_EXECUTABLE}")
   endif()
+
+  # Convert list to space-separated string for environment variable
+  string(REPLACE ";" " " _SLANGC_STR "${_SLANGC}")
 
   add_custom_target(${OUTPUT} ALL
     COMMAND
+      ${CMAKE_COMMAND} -E env "SLANGC_CMD=${_SLANGC_STR}"
       /usr/bin/python3 ${CMAKE_CURRENT_SOURCE_DIR}/tools/slangc_to_header.py
       -target spirv
       -fvk-t-shift 0 0
