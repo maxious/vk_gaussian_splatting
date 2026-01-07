@@ -765,6 +765,12 @@ void GaussianSplatting::initializeOpenXR()
     m_xr = std::make_unique<GsOpenXr>();
   }
 
+#ifndef _WIN32
+  // Suppress OpenXR loader error messages on Linux when no runtime is installed
+  // These errors are expected when running without VR hardware
+  setenv("XR_SUPPRESS_LOADER_MESSAGES", "1", 1);
+#endif
+
   // Use SRGB format for XR swapchain - GPU will automatically convert linear->sRGB on write
   // This is the correct way to handle color space for VR displays
   VkFormat xrColorFormat = VK_FORMAT_R8G8B8A8_SRGB;
@@ -772,7 +778,13 @@ void GaussianSplatting::initializeOpenXR()
   if(!m_xr->initialize(m_app->getInstance(), m_app->getPhysicalDevice(), m_app->getDevice(),
                        m_app->getQueue(0).familyIndex, 0, xrColorFormat, m_depthFormat))
   {
+#ifndef _WIN32
+    // On Linux, OpenXR is typically not available without VR hardware
+    // Log at info level instead of error since this is expected
+    LOGI("OpenXR not available (no runtime installed). Running in desktop mode.\n");
+#else
     LOGE("Failed to initialize OpenXR\n");
+#endif
     m_xr.reset();
     m_xrInitialized = false;
     m_useXrHmd      = false;

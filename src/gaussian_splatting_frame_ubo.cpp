@@ -54,8 +54,10 @@ void GaussianSplatting::updateAndUploadFrameInfoUBO(VkCommandBuffer cmd, const u
   const float focalAdjustment      = focalMultiplier;
   prmFrame.orthoZoom               = 1.0f;
   prmFrame.orthographicMode        = 0;  // disabled (uses perspective) TODO: activate support for orthographic
-  prmFrame.viewport                = glm::vec2(m_viewSize.x * devicePixelRatio, m_viewSize.y * devicePixelRatio);
-  prmFrame.basisViewport           = glm::vec2(1.0f / m_viewSize.x, 1.0f / m_viewSize.y);
+  prmFrame.viewport = glm::vec2(m_viewSize.x * devicePixelRatio, m_viewSize.y * devicePixelRatio);
+  // Guard against division by zero if viewSize is uninitialized
+  prmFrame.basisViewport = glm::vec2(m_viewSize.x > 0 ? 1.0f / m_viewSize.x : 1.0f,
+                                      m_viewSize.y > 0 ? 1.0f / m_viewSize.y : 1.0f);
   prmFrame.viewportOffset          = glm::vec2(0.0f, 0.0f);  // No offset for mono rendering
   prmFrame.stereoShift             = glm::vec2(0.0f, 0.0f);  // No stereo shift for mono rendering
   prmFrame.inverseFocalAdjustment  = 1.0f / focalAdjustment;
