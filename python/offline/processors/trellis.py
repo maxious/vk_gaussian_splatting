@@ -41,6 +41,8 @@ class TrellisProcessor(GaussianProcessor):
         model_id: str = "microsoft/TRELLIS-image-large",
         device: str = "cuda",
         low_vram: bool = False,
+        preprocess: bool = True,
+        bbox_scale: float = 1.2,
     ):
         if not TRELLIS_AVAILABLE:
             raise ImportError(
@@ -49,6 +51,8 @@ class TrellisProcessor(GaussianProcessor):
 
         self.device = device
         self.model_id = model_id
+        self.preprocess = preprocess
+        self.bbox_scale = bbox_scale
 
         # Configure environment variables as per example
         os.environ["SPCONV_ALGO"] = "native"
@@ -70,6 +74,48 @@ class TrellisProcessor(GaussianProcessor):
             # other than standard torch optimizations
             pass
 
+    def _crop_to_mask(self, img: Image.Image) -> Image.Image:
+        """Crop image to the bounding box of the mask (alpha channel).
+
+        Args:
+            img: RGBA PIL Image
+
+        Returns:
+            Cropped RGBA Image
+        """
+        if img.mode != "RGBA":
+            img = img.convert("RGBA")
+
+        alpha = np.array(img)[:, :, 3]
+        # Find non-zero alpha pixels
+        rows = np.any(alpha > 0, axis=1)
+        cols = np.any(alpha > 0, axis=0)
+
+        if not np.any(rows) or not np.any(cols):
+            logger.warning("No non-zero alpha pixels found, returning original image")
+            return img
+
+        rmin, rmax = np.where(rows)[0][[0, -1]]
+        cmin, cmax = np.where(cols)[0][[0, -1]]
+
+        # Calculate center and size
+        center = ((cmin + cmax) / 2, (rmin + rmax) / 2)
+        size = max(cmax - cmin, rmax - rmin) * self.bbox_scale
+
+        # Calculate crop bbox
+        left = int(center[0] - size / 2)
+        top = int(center[1] - size / 2)
+        right = int(center[0] + size / 2)
+        bottom = int(center[1] + size / 2)
+
+        # Crop with bounds checking
+        left = max(0, left)
+        top = max(0, top)
+        right = min(img.width, right)
+        bottom = min(img.height, bottom)
+
+        return img.crop((left, top, right, bottom))
+
     def process_frames(
         self,
         frame_paths: list[Path],
@@ -86,23 +132,34 @@ class TrellisProcessor(GaussianProcessor):
         images = []
         for p in frame_paths:
             img = Image.open(p).convert("RGB")
+
             # Apply mask if available
             if masks_dir:
                 mask_path = None
-                for ext in [p.suffix, ".png", ".jpg", ".jpeg"]:
-                    candidate = masks_dir / f"{p.stem}{ext}"
-                    if candidate.exists():
-                        mask_path = candidate
+
+                # Try different mask path patterns:
+                # 1. masks_dir/{stem}.png (direct mask files)
+                # 2. masks_dir/{folder}/{stem}.png (nested structure like masks.tar/masks/00/000000.png)
+                for pattern in [
+                    masks_dir / f"{p.stem}.png",
+                    masks_dir / f"{p.stem}{p.suffix}",
+                    masks_dir / f"{p.parent.name}" / f"{p.stem}.png",
+                    masks_dir / "masks" / f"{p.parent.name}" / f"{p.stem}.png",
+                ]:
+                    if pattern.exists():
+                        mask_path = pattern
                         break
 
                 if mask_path:
                     mask = Image.open(mask_path).convert("L")
                     # Resize mask to match image
-                    mask = mask.resize(img.size, Image.NEAREST)
+                    mask = mask.resize(img.size, Image.Resampling.NEAREST)
                     # Convert to RGBA and apply mask to alpha channel
-                    # This allows Trellis to detect alpha and skip rembg
                     img = img.convert("RGBA")
                     img.putalpha(mask)
+
+                    # Pre-crop to mask bounding box to skip TRELLIS's internal preprocessing
+                    img = self._crop_to_mask(img)
 
             images.append(img)
 
@@ -115,8 +172,9 @@ class TrellisProcessor(GaussianProcessor):
                 outputs = self.pipeline.run_multi_image(
                     images,
                     seed=1,
-                    sparse_structure_sampler_params={"steps": 12, "cfg_strength": 7.5},
-                    slat_sampler_params={"steps": 12, "cfg_strength": 3},
+                    sparse_structure_sampler_params={"steps": 25, "cfg_strength": 7.5},
+                    slat_sampler_params={"steps": 25, "cfg_strength": 3},
+                    preprocess_image=self.preprocess,
                 )
                 self._extract_gaussian(
                     outputs,
