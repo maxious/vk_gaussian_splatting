@@ -32,7 +32,7 @@ function(build_shader)
 
   add_custom_target(${OUTPUT} ALL
     COMMAND
-      python ${CMAKE_CURRENT_SOURCE_DIR}/tools/slangc_to_header.py
+      /usr/bin/python3 ${CMAKE_CURRENT_SOURCE_DIR}/tools/slangc_to_header.py
       -target spirv
       -fvk-t-shift 0 0
       -fvk-u-shift 0 0

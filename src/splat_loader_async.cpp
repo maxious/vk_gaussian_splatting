@@ -38,6 +38,9 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <winhttp.h>
+#elif defined(USE_WINHTTPPAL)
+#include <winhttppal.h>
+#include <regex>
 #endif
 
 using namespace vk_gaussian_splatting;
@@ -78,55 +81,89 @@ std::vector<uint8_t> readFileLocal(const std::filesystem::path& path)
   return buffer;
 }
 
-#ifdef _WIN32
+#if defined(_WIN32) || defined(USE_WINHTTPPAL)
+
+struct UrlParts {
+  std::string host;
+  std::string path;
+  uint16_t port = 80;
+  bool isHttps = false;
+};
+
+bool parseUrl(const std::string& url, UrlParts& parts)
+{
+  std::regex urlRegex(R"(^(https?)://([^/:]+)(?::(\d+))?(.*)$)");
+  std::smatch match;
+  
+  if (!std::regex_match(url, match, urlRegex))
+    return false;
+  
+  parts.isHttps = (match[1].str() == "https");
+  parts.host = match[2].str();
+  parts.port = match[3].length() > 0 ? static_cast<uint16_t>(std::stoi(match[3].str())) 
+                                      : (parts.isHttps ? 443 : 80);
+  parts.path = match[4].length() > 0 ? match[4].str() : "/";
+  return true;
+}
+
 namespace {
 bool downloadFile(const std::string& url, const std::filesystem::path& destPath)
 {
-  URL_COMPONENTS urlComp;
-  ZeroMemory(&urlComp, sizeof(urlComp));
-  urlComp.dwStructSize = sizeof(urlComp);
-
-  wchar_t hostName[256] = {0};
-  wchar_t urlPath[2048] = {0};
-  urlComp.lpszHostName = hostName;
-  urlComp.dwHostNameLength = sizeof(hostName) / sizeof(wchar_t);
-  urlComp.lpszUrlPath = urlPath;
-  urlComp.dwUrlPathLength = sizeof(urlPath) / sizeof(wchar_t);
-
-  std::wstring wideUrl(url.begin(), url.end());
-
-  if (!WinHttpCrackUrl(wideUrl.c_str(), static_cast<DWORD>(wideUrl.length()), 0, &urlComp))
+  UrlParts parts;
+  if (!parseUrl(url, parts))
   {
-    LOGE("Failed to parse URL: %s (error %lu)\n", url.c_str(), GetLastError());
+    LOGE("Failed to parse URL: %s\n", url.c_str());
     return false;
   }
 
-  HINTERNET hSession = WinHttpOpen(L"VkGaussianSplatting/1.0",
+#ifdef _WIN32
+  std::wstring wideAgent(L"VkGaussianSplatting/1.0");
+  std::wstring wideHost(parts.host.begin(), parts.host.end());
+  std::wstring widePath(parts.path.begin(), parts.path.end());
+  
+  HINTERNET hSession = WinHttpOpen(wideAgent.c_str(),
                                    WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
                                    WINHTTP_NO_PROXY_NAME,
                                    WINHTTP_NO_PROXY_BYPASS, 0);
+#else
+  HINTERNET hSession = WinHttpOpen("VkGaussianSplatting/1.0",
+                                   WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+                                   WINHTTP_NO_PROXY_NAME,
+                                   WINHTTP_NO_PROXY_BYPASS, 0);
+#endif
   if (!hSession)
   {
-    LOGE("WinHttpOpen failed (error %lu)\n", GetLastError());
+    LOGE("WinHttpOpen failed (error %d)\n", GetLastError());
     return false;
   }
 
-  HINTERNET hConnect = WinHttpConnect(hSession, hostName, urlComp.nPort, 0);
+#ifdef _WIN32
+  HINTERNET hConnect = WinHttpConnect(hSession, wideHost.c_str(), parts.port, 0);
+#else
+  HINTERNET hConnect = WinHttpConnect(hSession, parts.host.c_str(), parts.port, 0);
+#endif
   if (!hConnect)
   {
-    LOGE("WinHttpConnect failed (error %lu)\n", GetLastError());
+    LOGE("WinHttpConnect failed (error %d)\n", GetLastError());
     WinHttpCloseHandle(hSession);
     return false;
   }
 
-  DWORD dwFlags = (urlComp.nScheme == INTERNET_SCHEME_HTTPS) ? WINHTTP_FLAG_SECURE : 0;
-  HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"GET", urlPath,
+  DWORD dwFlags = parts.isHttps ? WINHTTP_FLAG_SECURE : 0;
+#ifdef _WIN32
+  HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"GET", widePath.c_str(),
                                           NULL, WINHTTP_NO_REFERER,
                                           WINHTTP_DEFAULT_ACCEPT_TYPES,
                                           dwFlags);
+#else
+  HINTERNET hRequest = WinHttpOpenRequest(hConnect, "GET", parts.path.c_str(),
+                                          NULL, WINHTTP_NO_REFERER,
+                                          WINHTTP_DEFAULT_ACCEPT_TYPES,
+                                          dwFlags);
+#endif
   if (!hRequest)
   {
-    LOGE("WinHttpOpenRequest failed (error %lu)\n", GetLastError());
+    LOGE("WinHttpOpenRequest failed (error %d)\n", GetLastError());
     WinHttpCloseHandle(hConnect);
     WinHttpCloseHandle(hSession);
     return false;
@@ -135,7 +172,7 @@ bool downloadFile(const std::string& url, const std::filesystem::path& destPath)
   if (!WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
                           WINHTTP_NO_REQUEST_DATA, 0, 0, 0))
   {
-    LOGE("WinHttpSendRequest failed (error %lu)\n", GetLastError());
+    LOGE("WinHttpSendRequest failed (error %d)\n", GetLastError());
     WinHttpCloseHandle(hRequest);
     WinHttpCloseHandle(hConnect);
     WinHttpCloseHandle(hSession);
@@ -144,7 +181,7 @@ bool downloadFile(const std::string& url, const std::filesystem::path& destPath)
 
   if (!WinHttpReceiveResponse(hRequest, NULL))
   {
-    LOGE("WinHttpReceiveResponse failed (error %lu)\n", GetLastError());
+    LOGE("WinHttpReceiveResponse failed (error %d)\n", GetLastError());
     WinHttpCloseHandle(hRequest);
     WinHttpCloseHandle(hConnect);
     WinHttpCloseHandle(hSession);
@@ -156,7 +193,7 @@ bool downloadFile(const std::string& url, const std::filesystem::path& destPath)
   if (!WinHttpQueryHeaders(hRequest, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
                            WINHTTP_HEADER_NAME_BY_INDEX, &dwStatusCode, &dwSize, WINHTTP_NO_HEADER_INDEX))
   {
-    LOGE("WinHttpQueryHeaders failed (error %lu)\n", GetLastError());
+    LOGE("WinHttpQueryHeaders failed (error %d)\n", GetLastError());
     WinHttpCloseHandle(hRequest);
     WinHttpCloseHandle(hConnect);
     WinHttpCloseHandle(hSession);
@@ -165,7 +202,7 @@ bool downloadFile(const std::string& url, const std::filesystem::path& destPath)
 
   if (dwStatusCode != 200)
   {
-    LOGE("Download failed: HTTP %d\n", dwStatusCode);
+    LOGE("Download failed: HTTP %lu\n", dwStatusCode);
     WinHttpCloseHandle(hRequest);
     WinHttpCloseHandle(hConnect);
     WinHttpCloseHandle(hSession);
@@ -191,7 +228,7 @@ bool downloadFile(const std::string& url, const std::filesystem::path& destPath)
     dwSizeAvail = 0;
     if (!WinHttpQueryDataAvailable(hRequest, &dwSizeAvail))
     {
-      LOGE("WinHttpQueryDataAvailable failed (error %lu)\n", GetLastError());
+      LOGE("WinHttpQueryDataAvailable failed (error %d)\n", GetLastError());
       break;
     }
 
@@ -205,7 +242,7 @@ bool downloadFile(const std::string& url, const std::filesystem::path& destPath)
       }
       else
       {
-        LOGE("WinHttpReadData failed (error %lu)\n", GetLastError());
+        LOGE("WinHttpReadData failed (error %d)\n", GetLastError());
         break;
       }
     }
@@ -332,7 +369,7 @@ bool SplatLoaderAsync::innerLoad(std::filesystem::path filename, SplatSet& outpu
   std::string pathStr = filename.string();
   if (pathStr.find("http://") == 0 || pathStr.find("https://") == 0)
   {
-#ifdef _WIN32
+#if defined(_WIN32) || defined(USE_WINHTTPPAL)
     std::string superSplatId = extractSuperSplatId(pathStr);
     std::filesystem::path cacheDir = std::filesystem::temp_directory_path() / "vk_gaussian_splatting_cache";
     

@@ -329,18 +329,30 @@ endif()
 
 # OpenXR linkage
 if(ENABLE_OPENXR AND OpenXR_FOUND)
-  target_compile_definitions(${PROJECT_NAME} PRIVATE WITH_OPENXR XR_USE_PLATFORM_WIN32 XR_USE_GRAPHICS_API_VULKAN)
+  target_compile_definitions(${PROJECT_NAME} PRIVATE WITH_OPENXR XR_USE_GRAPHICS_API_VULKAN)
+  if(WIN32)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE XR_USE_PLATFORM_WIN32)
+  else()
+    target_compile_definitions(${PROJECT_NAME} PRIVATE XR_USE_PLATFORM_XLIB)
+  endif()
   if(TARGET OpenXR::openxr_loader)
     target_link_libraries(${PROJECT_NAME} PRIVATE OpenXR::openxr_loader)
   else()
-  target_link_libraries(${PROJECT_NAME} PRIVATE openxr_loader)
+    target_link_libraries(${PROJECT_NAME} PRIVATE openxr_loader)
     target_include_directories(${PROJECT_NAME} PRIVATE ${openxr-sdk_SOURCE_DIR}/include)
   endif()
 endif()
 
-# WinHTTP support for Windows
+# HTTP download support: WinHTTP on Windows, WinHttpPAL (libcurl wrapper) on Linux
 if(WIN32)
   target_link_libraries(${PROJECT_NAME} PRIVATE winhttp)
+else()
+  # WinHttpPAL provides WinHTTP-compatible API on Linux using libcurl
+  find_package(CURL 7.57 REQUIRED)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/winhttppal)
+  set_property(TARGET winhttppal PROPERTY FOLDER "ThirdParty")
+  target_link_libraries(${PROJECT_NAME} PRIVATE winhttppal::winhttppal)
+  target_compile_definitions(${PROJECT_NAME} PRIVATE USE_WINHTTPPAL)
 endif()
 
 add_project_definitions(${PROJECT_NAME})

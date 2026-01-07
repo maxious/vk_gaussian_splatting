@@ -19,19 +19,24 @@ jobs:
       # Set up a matrix to run the following 3 configurations:
       # 1. <Windows, Release, latest MSVC compiler toolchain on the default runner image, default generator>
       # 2. <Linux, Release, latest GCC compiler toolchain on the default runner image, default generator>
-      # 3. <Linux, Release, latest Clang compiler toolchain on the default runner image, default generator>
       #
       # To add more build types (Release, Debug, RelWithDebInfo, etc.) customize the build_type list.
-      # Linux builds disabled due to websocketpp incompatibility with GCC 13+
-      # See: https://github.com/zaphoyd/websocketpp/issues/1168
       matrix:
-        os: [windows-latest]
+        os: [windows-latest, ubuntu-latest]
         build_type: [Release]
-        c_compiler: [cl]
+        c_compiler: [cl, gcc]
         include:
           - os: windows-latest
             c_compiler: cl
             cpp_compiler: cl
+          - os: ubuntu-latest
+            c_compiler: gcc
+            cpp_compiler: g++
+        exclude:
+          - os: windows-latest
+            c_compiler: gcc
+          - os: ubuntu-latest
+            c_compiler: cl
 
     steps:
     - uses: actions/checkout@v4
@@ -44,6 +49,16 @@ jobs:
       shell: bash
       run: |
         echo "build-output-dir=${{ github.workspace }}/build" >> "$GITHUB_OUTPUT"
+
+    # Install Linux dependencies
+    - name: Install Linux dependencies
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          libx11-dev libxcb1-dev libxcb-keysyms1-dev libxcursor-dev \
+          libxext-dev libxi-dev libxinerama-dev libxrandr-dev libxxf86vm-dev \
+          libtbb-dev libcurl4-openssl-dev libgl-dev mesa-common-dev
 
     # Install Vulkan SDK - required for Vulkan headers, libraries, and glslangValidator
     - name: Install Vulkan SDK
@@ -61,13 +76,17 @@ jobs:
         key: cmake-deps-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', 'nvpro_core2/cmake/FindSlang.cmake', 'nvpro_core2/cmake/FindNGX.cmake') }}
 
     - name: Configure CMake
-      # Use Visual Studio generator (sccache doesn't work well with MSVC parallel builds)
       # OpenXR SDK is fetched via FetchContent in CMakeLists.txt if not found
+      # DLSS-RR is Windows-only, disabled on Linux
+      # X11_Xcursor_INCLUDE_PATH workaround for Ubuntu's non-standard header location
       run: >
         cmake -B ${{ steps.strings.outputs.build-output-dir }}
         -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+        -DCMAKE_C_COMPILER=${{ matrix.c_compiler }}
+        -DCMAKE_CXX_COMPILER=${{ matrix.cpp_compiler }}
         -DDISABLE_DEFAULT_SCENE=ON
         -DDISABLE_MESH_ASSETS_DOWNLOAD=ON
+        ${{ runner.os == 'Linux' && '-DENABLE_DLSS_RR=OFF -DX11_Xcursor_INCLUDE_PATH=/usr/include' || '' }}
         -S ${{ github.workspace }}
 
     - name: Build

@@ -27,7 +27,15 @@
 #include <thread>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <sstream>
+
+// Cross-platform string copy macro for OpenXR structures
+#ifdef _WIN32
+#define XR_STRCPY(dst, src) XR_STRCPY(dst, src)
+#else
+#define XR_STRCPY(dst, src) strncpy(dst, src, sizeof(dst) - 1)
+#endif
 
 #ifndef XR_FB_space_warp
 #define XR_FB_space_warp 1
@@ -306,9 +314,14 @@ bool GsOpenXr::createInstance()
 #endif
 
   XrInstanceCreateInfo createInfo{XR_TYPE_INSTANCE_CREATE_INFO};
-  strcpy_s(createInfo.applicationInfo.applicationName, "vk_gaussian_splatting");
+#ifdef _WIN32
+  XR_STRCPY(createInfo.applicationInfo.applicationName, "vk_gaussian_splatting");
+  XR_STRCPY(createInfo.applicationInfo.engineName, "nvpro_core2");
+#else
+  strncpy(createInfo.applicationInfo.applicationName, "vk_gaussian_splatting", XR_MAX_APPLICATION_NAME_SIZE - 1);
+  strncpy(createInfo.applicationInfo.engineName, "nvpro_core2", XR_MAX_ENGINE_NAME_SIZE - 1);
+#endif
   createInfo.applicationInfo.applicationVersion = 1;
-  strcpy_s(createInfo.applicationInfo.engineName, "nvpro_core2");
   createInfo.applicationInfo.engineVersion       = 1;
   createInfo.applicationInfo.apiVersion          = XR_API_VERSION_1_0;
   createInfo.enabledExtensionCount               = static_cast<uint32_t>(extensions.size());
@@ -1263,8 +1276,13 @@ bool GsOpenXr::createActionSet()
 {
   // Create action set
   XrActionSetCreateInfo actionSetInfo{XR_TYPE_ACTION_SET_CREATE_INFO};
-  strcpy_s(actionSetInfo.actionSetName, "gameplay");
-  strcpy_s(actionSetInfo.localizedActionSetName, "Gameplay");
+#ifdef _WIN32
+  XR_STRCPY(actionSetInfo.actionSetName, "gameplay");
+  XR_STRCPY(actionSetInfo.localizedActionSetName, "Gameplay");
+#else
+  strncpy(actionSetInfo.actionSetName, "gameplay", XR_MAX_ACTION_SET_NAME_SIZE - 1);
+  strncpy(actionSetInfo.localizedActionSetName, "Gameplay", XR_MAX_LOCALIZED_ACTION_SET_NAME_SIZE - 1);
+#endif
   actionSetInfo.priority = 0;
 
   XrResult result = xrCreateActionSet(m_instance, &actionSetInfo, &m_actionSet);
@@ -1283,8 +1301,8 @@ bool GsOpenXr::createActionSet()
   {
     XrActionCreateInfo actionInfo{XR_TYPE_ACTION_CREATE_INFO};
     actionInfo.actionType = XR_ACTION_TYPE_VECTOR2F_INPUT;
-    strcpy_s(actionInfo.actionName, "thumbstick");
-    strcpy_s(actionInfo.localizedActionName, "Thumbstick");
+    XR_STRCPY(actionInfo.actionName, "thumbstick");
+    XR_STRCPY(actionInfo.localizedActionName, "Thumbstick");
     actionInfo.countSubactionPaths = 2;
     actionInfo.subactionPaths = handPaths;
     XR_CHECK(xrCreateAction(m_actionSet, &actionInfo, &m_thumbstickAction), "Failed to create thumbstick action");
@@ -1294,8 +1312,8 @@ bool GsOpenXr::createActionSet()
   {
     XrActionCreateInfo actionInfo{XR_TYPE_ACTION_CREATE_INFO};
     actionInfo.actionType = XR_ACTION_TYPE_FLOAT_INPUT;
-    strcpy_s(actionInfo.actionName, "trigger");
-    strcpy_s(actionInfo.localizedActionName, "Trigger");
+    XR_STRCPY(actionInfo.actionName, "trigger");
+    XR_STRCPY(actionInfo.localizedActionName, "Trigger");
     actionInfo.countSubactionPaths = 2;
     actionInfo.subactionPaths = handPaths;
     XR_CHECK(xrCreateAction(m_actionSet, &actionInfo, &m_triggerAction), "Failed to create trigger action");
@@ -1305,8 +1323,8 @@ bool GsOpenXr::createActionSet()
   {
     XrActionCreateInfo actionInfo{XR_TYPE_ACTION_CREATE_INFO};
     actionInfo.actionType = XR_ACTION_TYPE_FLOAT_INPUT;
-    strcpy_s(actionInfo.actionName, "grip");
-    strcpy_s(actionInfo.localizedActionName, "Grip");
+    XR_STRCPY(actionInfo.actionName, "grip");
+    XR_STRCPY(actionInfo.localizedActionName, "Grip");
     actionInfo.countSubactionPaths = 2;
     actionInfo.subactionPaths = handPaths;
     XR_CHECK(xrCreateAction(m_actionSet, &actionInfo, &m_gripAction), "Failed to create grip action");
@@ -1316,8 +1334,8 @@ bool GsOpenXr::createActionSet()
   {
     XrActionCreateInfo actionInfo{XR_TYPE_ACTION_CREATE_INFO};
     actionInfo.actionType = XR_ACTION_TYPE_BOOLEAN_INPUT;
-    strcpy_s(actionInfo.actionName, "thumbstick_click");
-    strcpy_s(actionInfo.localizedActionName, "Thumbstick Click");
+    XR_STRCPY(actionInfo.actionName, "thumbstick_click");
+    XR_STRCPY(actionInfo.localizedActionName, "Thumbstick Click");
     actionInfo.countSubactionPaths = 2;
     actionInfo.subactionPaths = handPaths;
     XR_CHECK(xrCreateAction(m_actionSet, &actionInfo, &m_thumbstickClickAction), "Failed to create thumbstick click action");
@@ -1327,8 +1345,8 @@ bool GsOpenXr::createActionSet()
   {
     XrActionCreateInfo actionInfo{XR_TYPE_ACTION_CREATE_INFO};
     actionInfo.actionType = XR_ACTION_TYPE_BOOLEAN_INPUT;
-    strcpy_s(actionInfo.actionName, "primary_button");
-    strcpy_s(actionInfo.localizedActionName, "Primary Button");
+    XR_STRCPY(actionInfo.actionName, "primary_button");
+    XR_STRCPY(actionInfo.localizedActionName, "Primary Button");
     actionInfo.countSubactionPaths = 2;
     actionInfo.subactionPaths = handPaths;
     XR_CHECK(xrCreateAction(m_actionSet, &actionInfo, &m_primaryButtonAction), "Failed to create primary button action");
@@ -1338,8 +1356,8 @@ bool GsOpenXr::createActionSet()
   {
     XrActionCreateInfo actionInfo{XR_TYPE_ACTION_CREATE_INFO};
     actionInfo.actionType = XR_ACTION_TYPE_BOOLEAN_INPUT;
-    strcpy_s(actionInfo.actionName, "secondary_button");
-    strcpy_s(actionInfo.localizedActionName, "Secondary Button");
+    XR_STRCPY(actionInfo.actionName, "secondary_button");
+    XR_STRCPY(actionInfo.localizedActionName, "Secondary Button");
     actionInfo.countSubactionPaths = 2;
     actionInfo.subactionPaths = handPaths;
     XR_CHECK(xrCreateAction(m_actionSet, &actionInfo, &m_secondaryButtonAction), "Failed to create secondary button action");
@@ -1349,8 +1367,8 @@ bool GsOpenXr::createActionSet()
   {
     XrActionCreateInfo actionInfo{XR_TYPE_ACTION_CREATE_INFO};
     actionInfo.actionType = XR_ACTION_TYPE_BOOLEAN_INPUT;
-    strcpy_s(actionInfo.actionName, "menu_button");
-    strcpy_s(actionInfo.localizedActionName, "Menu Button");
+    XR_STRCPY(actionInfo.actionName, "menu_button");
+    XR_STRCPY(actionInfo.localizedActionName, "Menu Button");
     actionInfo.countSubactionPaths = 2;
     actionInfo.subactionPaths = handPaths;
     XR_CHECK(xrCreateAction(m_actionSet, &actionInfo, &m_menuButtonAction), "Failed to create menu button action");
@@ -1360,8 +1378,8 @@ bool GsOpenXr::createActionSet()
   {
     XrActionCreateInfo actionInfo{XR_TYPE_ACTION_CREATE_INFO};
     actionInfo.actionType = XR_ACTION_TYPE_POSE_INPUT;
-    strcpy_s(actionInfo.actionName, "hand_pose");
-    strcpy_s(actionInfo.localizedActionName, "Hand Pose");
+    XR_STRCPY(actionInfo.actionName, "hand_pose");
+    XR_STRCPY(actionInfo.localizedActionName, "Hand Pose");
     actionInfo.countSubactionPaths = 2;
     actionInfo.subactionPaths = handPaths;
     XR_CHECK(xrCreateAction(m_actionSet, &actionInfo, &m_poseAction), "Failed to create pose action");
@@ -1853,14 +1871,20 @@ void GsOpenXr::trackingThreadLoop()
   using namespace std::chrono;
   const auto sampleInterval = microseconds(1000000 / TRACKING_SAMPLE_RATE_HZ);
 
+#ifdef _WIN32
   PFN_xrConvertWin32PerformanceCounterToTimeKHR convertTimeFunc = nullptr;
   xrGetInstanceProcAddr(m_instance, "xrConvertWin32PerformanceCounterToTimeKHR",
                         (PFN_xrVoidFunction*)&convertTimeFunc);
+#else
+  // Linux/X11: timing handled differently via OpenXR runtime
+  (void)0;
+#endif
 
   while(!m_trackingThreadShouldStop.load())
   {
     auto loopStart = steady_clock::now();
 
+#ifdef _WIN32
     if(m_session != XR_NULL_HANDLE && m_referenceSpace != XR_NULL_HANDLE && m_sessionRunning && convertTimeFunc)
     {
       LARGE_INTEGER perfCount;
@@ -1909,6 +1933,7 @@ void GsOpenXr::trackingThreadLoop()
         }
       }
     }
+#endif
 
     auto loopEnd = steady_clock::now();
     auto elapsed = duration_cast<microseconds>(loopEnd - loopStart);
