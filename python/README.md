@@ -61,8 +61,11 @@ uv pip install -e ".[offline,inference]"
 # For everything
 uv pip install -e ".[backend,offline,inference,dev]"
 
-# Install CUDA-enabled PyTorch (recommended for GPU acceleration)
+# Install CUDA-enabled PyTorch (recommended for NVIDIA GPU acceleration)
 uv pip install torch torchvision xformers --index-url https://download.pytorch.org/whl/cu130
+
+# Or install XPU-enabled PyTorch for Intel GPU acceleration (Arc, Data Center GPU, 集成显卡)
+uv pip install torch torchvision --index-url https://download.pytorch.org/whl/xpu
 
 # Windows-specific: Install triton-windows for xformers optimization
 if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" ]]; then

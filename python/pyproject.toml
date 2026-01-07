@@ -57,6 +57,19 @@ offline = [
     "ben2 @ git+https://github.com/PramaLLC/BEN2.git",
 ]
 
+# GPU acceleration backends (mutually exclusive - choose one)
+# CUDA (NVIDIA)
+cuda = [
+    "torch>=2.4",
+    "torchvision>=0.19",
+]
+
+# XPU (Intel Arc, Intel Data Center GPU, Intel集成显卡)
+xpu = [
+    "torch>=2.4",
+    "torchvision>=0.19",
+]
+
 dev = [
     "pytest>=8.2",
     "pytest-asyncio>=0.24",

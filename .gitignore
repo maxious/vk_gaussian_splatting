@@ -7,6 +7,7 @@ _autogen/
 _benchmark*/
 _downloaded_resources/
 generated/
+logs/
 .vs
 ffmpeg-8.0.1-full_build-shared/
 ffmpeg-8.0.1-full_build_shared/
