@@ -83,7 +83,7 @@ def write_static_gaussian_ply(
         for i in range(sh_rest.shape[1]):
             elements[f"f_rest_{i}"] = sh_rest[:, i]
 
-    elements["opacity"] = opacities
+    elements["opacity"] = opacities.squeeze(-1) if opacities.ndim > 1 else opacities
     elements["scale_0"] = scales[:, 0]
     elements["scale_1"] = scales[:, 1]
     elements["scale_2"] = scales[:, 2]
@@ -245,7 +245,7 @@ def write_freetimegs_ply(
         for i in range(sh_rest.shape[1]):
             elements[f"f_rest_{i}"] = sh_rest[:, i]
 
-    elements["opacity"] = opacities
+    elements["opacity"] = opacities.squeeze(-1) if opacities.ndim > 1 else opacities
     elements["scale_0"] = scales[:, 0]
     elements["scale_1"] = scales[:, 1]
     elements["scale_2"] = scales[:, 2]

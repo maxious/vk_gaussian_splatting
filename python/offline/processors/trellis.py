@@ -70,6 +70,13 @@ class TrellisProcessor(GaussianProcessor):
         self.pipeline = TrellisImageTo3DPipeline.from_pretrained(model_id)
         self.pipeline.to(device)
 
+        # Cast image conditioning model to float16 for compatibility with xformers/flash-attn on newer GPUs
+        if "image_cond_model" in self.pipeline.models:
+            self.pipeline.models["image_cond_model"] = self.pipeline.models["image_cond_model"].to(
+                torch.float16
+            )
+            logger.info("Cast image_cond_model to float16 for attention compatibility")
+
         if low_vram:
             # Optional: Enable some optimizations for low VRAM if available
             # Current TRELLIS implementation doesn't expose much explicit low-vram flags
@@ -191,27 +198,12 @@ class TrellisProcessor(GaussianProcessor):
         rotations = gs.get_rotation.detach().cpu().numpy().astype(np.float32)
 
         # Colors (SH DC)
-        # get_features returns SH. shape: [N, 3, (sh_degree+1)^2] ?
-        # Code says: cat(_features_dc, _features_rest)
-        # _features_dc shape: [N, 3, 1] usually
-        features = gs.get_features
-        # Extract DC (first coeff)
-        # Assuming features are [N, 3, K] or [N, K, 3]?
-        # gaussian_model.py:
-        # _features_dc = features (from_features)
-        # save_ply: f_dc = self._features_dc.detach().transpose(1, 2).flatten(start_dim=1)
-        # This implies _features_dc is [N, 3, 1].
-        # Transpose(1,2) -> [N, 1, 3]. Flatten -> [N, 3].
-        # So it's RGB order.
-
-        if features.dim() == 3:
-            # Take DC component
-            # TRELLIS stores as [N, 3, 1] typically for DC
-            dc = features[:, :, 0]  # [N, 3]
-        else:
-            dc = features  # Assuming just DC
-
-        colors = dc.detach().cpu().numpy().astype(np.float32)
+        # TRELLIS stores DC features in _features_dc with shape [N, 3, 1]
+        # Transform to [N, 3] by transposing and flattening
+        features_dc = gs._features_dc.detach().cpu().numpy()
+        colors = (
+            np.transpose(features_dc, (0, 2, 1)).reshape(features_dc.shape[0], 3).astype(np.float32)
+        )
 
         results.append(
             GaussianFrame(

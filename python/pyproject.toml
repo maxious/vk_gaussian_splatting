@@ -55,6 +55,21 @@ offline = [
     "kornia>=0.8",
     "lapjv>=1.3",
     "ben2 @ git+https://github.com/PramaLLC/BEN2.git",
+    # TRELLIS dependencies (converted from setup.sh --basic)
+    "imageio>=2.34",
+    "imageio-ffmpeg>=0.5",
+    "easydict>=1.13",
+    "ninja>=1.11",
+    "rembg>=2.0",
+    "onnxruntime>=1.18",
+    "open3d>=0.19",
+    "xatlas>=0.0.9",
+    "pyvista>=0.43",
+    "pymeshfix>=0.17",
+    "igraph>=0.11",
+    "utils3d @ git+https://github.com/EasternJournalist/utils3d.git@9a4eb15e4021b67b12c460c7057d642626897ec8",
+    # TRELLIS training dependencies (kaolin for flexicubes)
+    "kaolin>=0.17; sys_platform != 'win32'",
 ]
 
 # GPU acceleration backends (mutually exclusive - choose one)
@@ -104,4 +119,3 @@ include = ["*"]
 exclude = ["sharp/"]
 
 [tool.uv]
-environments = ["sys_platform == 'win32'"]
