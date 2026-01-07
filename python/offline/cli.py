@@ -148,9 +148,9 @@ def main():
     )
     images_parser.add_argument(
         "--format",
-        choices=["ply", "sog", "4dv"],
+        choices=["ply", "sog", "4dv", "glb", "vxz"],
         default="ply",
-        help="Output format: 'ply' (standard), 'sog' (compressed static/dynamic), '4dv' (compressed dynamic)",
+        help="Output format: 'ply' (standard), 'sog' (compressed static/dynamic), '4dv' (compressed dynamic), 'glb' (TRELLIS.2 mesh), 'vxz' (TRELLIS.2 o-voxel)",
     )
     images_parser.add_argument(
         "--fps", type=float, default=30.0, help="Frame rate for temporal normalization"
@@ -205,6 +205,90 @@ def main():
     legacy_parser.add_argument("--process-res", type=int, default=518)
     legacy_parser.add_argument("--device", type=str, default="cuda")
     legacy_parser.add_argument("-v", "--verbose", action="store_true")
+
+    trellis2_xpu_parser = subparsers.add_parser(
+        "trellis2-xpu", help="Stage 1: Run TRELLIS.2 on XPU and save mesh data to disk"
+    )
+    trellis2_xpu_parser.add_argument(
+        "--input", "-i", type=Path, required=True, help="Input image or directory of images"
+    )
+    trellis2_xpu_parser.add_argument(
+        "--output", "-o", type=Path, required=True, help="Output directory for .pt mesh files"
+    )
+    trellis2_xpu_parser.add_argument(
+        "--model",
+        type=str,
+        default="microsoft/TRELLIS.2-4B",
+        help="TRELLIS.2 model ID (e.g., 'microsoft/TRELLIS.2-4B')",
+    )
+    trellis2_xpu_parser.add_argument(
+        "--xpu-device", type=str, default="xpu:0", help="XPU device (e.g., 'xpu:0', 'xpu:1')"
+    )
+    trellis2_xpu_parser.add_argument(
+        "--pattern", type=str, default="*.{jpg,jpeg,png,webp}", help="Glob pattern for image files"
+    )
+    trellis2_xpu_parser.add_argument(
+        "--pipeline-type",
+        choices=["512", "1024", "1024_cascade", "1536_cascade"],
+        default="1024_cascade",
+        help="TRELLIS.2 pipeline type",
+    )
+    trellis2_xpu_parser.add_argument(
+        "--max-num-tokens", type=int, default=49152, help="Maximum tokens for cascade pipeline"
+    )
+    trellis2_xpu_parser.add_argument(
+        "--num-samples", type=int, default=1, help="Number of samples per image"
+    )
+    trellis2_xpu_parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    trellis2_xpu_parser.add_argument("-v", "--verbose", action="store_true")
+
+    trellis2_cuda_parser = subparsers.add_parser(
+        "trellis2-cuda", help="Stage 2: Load saved mesh data and export to GLB/VXZ using CUDA"
+    )
+    trellis2_cuda_parser.add_argument(
+        "--input",
+        "-i",
+        type=Path,
+        required=True,
+        help="Input directory or file containing .pt mesh files",
+    )
+    trellis2_cuda_parser.add_argument(
+        "--output", "-o", type=Path, required=True, help="Output directory for GLB/VXZ files"
+    )
+    trellis2_cuda_parser.add_argument(
+        "--format",
+        choices=["glb", "vxz"],
+        default="glb",
+        help="Output format: 'glb' (mesh with texture), 'vxz' (o-voxel format)",
+    )
+    trellis2_cuda_parser.add_argument(
+        "--cuda-device", type=str, default="cuda:0", help="CUDA device (e.g., 'cuda:0')"
+    )
+    trellis2_cuda_parser.add_argument(
+        "--pattern", type=str, default="*.pt", help="Glob pattern for .pt mesh files"
+    )
+    trellis2_cuda_parser.add_argument(
+        "--decimation-target",
+        type=int,
+        default=1000000,
+        help="Target face count for mesh simplification",
+    )
+    trellis2_cuda_parser.add_argument(
+        "--texture-size", type=int, default=4096, help="Texture resolution for GLB export"
+    )
+    trellis2_cuda_parser.add_argument(
+        "--chunk-size", type=int, default=256, help="Chunk size for VXZ export"
+    )
+    trellis2_cuda_parser.add_argument(
+        "--compression",
+        choices=["lzma", "zlib", "none"],
+        default="lzma",
+        help="Compression for VXZ export",
+    )
+    trellis2_cuda_parser.add_argument(
+        "--compression-level", type=int, default=9, help="Compression level for VXZ export (0-9)"
+    )
+    trellis2_cuda_parser.add_argument("-v", "--verbose", action="store_true")
 
     args = parser.parse_args()
 
@@ -269,6 +353,88 @@ def main():
             remove_black_splats=not getattr(args, "no_remove_black_splats", False),
             flip_y=getattr(args, "flip_y", False),
         )
+    elif args.command == "trellis2-xpu":
+        from .processors.trellis2_xpu import Trellis2XPUProcessor
+
+        processor = Trellis2XPUProcessor(
+            model_id=args.model,
+            xpu_device=args.xpu_device,
+        )
+
+        if args.input.is_file():
+            mesh_path = args.output / f"{args.input.stem}.pt"
+            processor.infer_and_save(
+                args.input,
+                mesh_path,
+                pipeline_type=args.pipeline_type,
+                num_samples=args.num_samples,
+                seed=args.seed,
+                max_num_tokens=args.max_num_tokens,
+            )
+        else:
+            image_paths = sorted(args.input.glob(args.pattern))
+            args.output.mkdir(parents=True, exist_ok=True)
+
+            for i, image_path in enumerate(image_paths, 1):
+                logger.info(f"Processing {i}/{len(image_paths)}: {image_path}")
+                mesh_path = args.output / f"{image_path.stem}.pt"
+                processor.infer_and_save(
+                    image_path,
+                    mesh_path,
+                    pipeline_type=args.pipeline_type,
+                    num_samples=args.num_samples,
+                    seed=args.seed,
+                    max_num_tokens=args.max_num_tokens,
+                )
+    elif args.command == "trellis2-cuda":
+        from .processors.trellis2_cuda import Trellis2CUDAProcessor
+
+        processor = Trellis2CUDAProcessor(cuda_device=args.cuda_device)
+
+        if args.input.is_file():
+            output_path = (
+                args.output
+                if args.output.suffix == f".{args.format}"
+                else args.output / args.input.with_suffix(f".{args.format}").name
+            )
+            if args.format == "glb":
+                processor.load_and_export_glb(
+                    args.input,
+                    output_path,
+                    decimation_target=args.decimation_target,
+                    texture_size=args.texture_size,
+                )
+            else:
+                processor.load_and_export_vxz(
+                    args.input,
+                    output_path,
+                    chunk_size=args.chunk_size,
+                    compression=args.compression,
+                    compression_level=args.compression_level,
+                )
+        else:
+            mesh_paths = sorted(args.input.glob(args.pattern))
+            args.output.mkdir(parents=True, exist_ok=True)
+
+            for i, mesh_path in enumerate(mesh_paths, 1):
+                logger.info(f"Exporting {i}/{len(mesh_paths)}: {mesh_path}")
+                output_path = args.output / f"{mesh_path.stem}.{args.format}"
+
+                if args.format == "glb":
+                    processor.load_and_export_glb(
+                        mesh_path,
+                        output_path,
+                        decimation_target=args.decimation_target,
+                        texture_size=args.texture_size,
+                    )
+                else:
+                    processor.load_and_export_vxz(
+                        mesh_path,
+                        output_path,
+                        chunk_size=args.chunk_size,
+                        compression=args.compression,
+                        compression_level=args.compression_level,
+                    )
 
 
 if __name__ == "__main__":

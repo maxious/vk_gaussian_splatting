@@ -474,22 +474,38 @@ def export_images_to_gaussian_plys(
 
         processor = Trellis2Processor(model_id=model_id, device=device)
 
-        # TRELLIS.2 Special handling for GLB export
+        # TRELLIS.2 produces GLB meshes or VXZ o-voxel files, not Gaussians
+        # Determine output format based on --format arg or file extension
+        output_format = format.lower() if format else "glb"
+
+        # Handle frames mode (export each image separately)
         if mode == "frames":
             output_path.mkdir(parents=True, exist_ok=True)
             for i, p in enumerate(image_paths):
-                out_file = output_path / f"{p.stem}.glb"
-                processor.export_glb(p, out_file)
+                if output_format == "vxz":
+                    out_file = output_path / f"{p.stem}.vxz"
+                    processor.export_vxz(p, out_file)
+                else:
+                    # Default to GLB
+                    out_file = output_path / f"{p.stem}.glb"
+                    processor.export_glb(p, out_file)
             return
-        else:
-            if output_path.suffix == "":
-                output_path.mkdir(parents=True, exist_ok=True)
-                out_file = output_path / f"{image_paths[0].stem}.glb"
-            else:
-                out_file = output_path
 
+        # Handle single output mode
+        if output_path.suffix == "":
+            output_path.mkdir(parents=True, exist_ok=True)
+            if output_format == "vxz":
+                out_file = output_path / f"{image_paths[0].stem}.vxz"
+            else:
+                out_file = output_path / f"{image_paths[0].stem}.glb"
+        else:
+            out_file = output_path
+
+        if output_format == "vxz":
+            processor.export_vxz(image_paths[0], out_file)
+        else:
             processor.export_glb(image_paths[0], out_file)
-            return
+        return
 
     elif "trellis" in model_id.lower():
         from .processors.trellis import TrellisProcessor

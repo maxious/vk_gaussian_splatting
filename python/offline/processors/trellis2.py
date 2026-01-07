@@ -2,29 +2,46 @@ import os
 import sys
 import logging
 from pathlib import Path
+
+# Add vendored TRELLIS.2 package to path
+_VKGS_TRELLIS2_PARENT = Path(__file__).parent.parent
+if str(_VKGS_TRELLIS2_PARENT) not in sys.path:
+    sys.path.insert(0, str(_VKGS_TRELLIS2_PARENT))
+
 import numpy as np
 import torch
 from PIL import Image
-import cv2
 
 from ..types import GaussianFrame
 from .base import GaussianProcessor
 
 logger = logging.getLogger(__name__)
 
-# Add TRELLIS.2 to path if not installed
-TRELLIS2_PATH = Path("C:/Users/maxious/trel/TRELLIS.2")
-if TRELLIS2_PATH.exists() and str(TRELLIS2_PATH) not in sys.path:
-    sys.path.append(str(TRELLIS2_PATH))
-
 try:
-    from trellis2.pipelines import Trellis2ImageTo3DPipeline
-    from trellis2.renderers import EnvMap
-    import o_voxel
+    from vkgs_trellis2.pipelines import Trellis2ImageTo3DPipeline
+    from vkgs_trellis2.renderers import EnvMap
+
+    # o-voxel is a separate package with C++ extensions that needs to be installed
+    # See: https://github.com/microsoft/TRELLIS.2/tree/main/o-voxel
+    try:
+        import o_voxel
+
+        O_VOXEL_AVAILABLE = True
+    except ImportError:
+        O_VOXEL_AVAILABLE = False
+        logger.warning(
+            "o-voxel package not found. GLB export will be disabled. "
+            "Install with: pip install o-voxel (requires CUDA compilation)"
+        )
 
     TRELLIS2_AVAILABLE = True
-except ImportError:
+except ImportError as e:
+    import traceback
+
+    logger.warning(f"Failed to import TRELLIS.2: {e}")
+    traceback.print_exc()
     TRELLIS2_AVAILABLE = False
+    O_VOXEL_AVAILABLE = False
 
 
 class Trellis2Processor(GaussianProcessor):
@@ -37,7 +54,7 @@ class Trellis2Processor(GaussianProcessor):
     ):
         if not TRELLIS2_AVAILABLE:
             raise ImportError(
-                "TRELLIS.2 not found. Please ensure it is in PYTHONPATH or C:/Users/maxious/trel/TRELLIS.2"
+                "TRELLIS.2 not found. The vendored package should be in offline/vkgs_trellis2/"
             )
 
         self.device = device
@@ -71,6 +88,12 @@ class Trellis2Processor(GaussianProcessor):
 
     def export_glb(self, image_path: Path, output_path: Path):
         """Export GLB using TRELLIS.2"""
+        if not O_VOXEL_AVAILABLE:
+            raise ImportError(
+                "o-voxel package is required for GLB export. "
+                "Install from https://github.com/microsoft/TRELLIS.2/tree/main/o-voxel"
+            )
+
         logger.info(f"Running TRELLIS.2 on {image_path}")
         image = Image.open(image_path)
 
@@ -99,3 +122,37 @@ class Trellis2Processor(GaussianProcessor):
         )
         glb.export(str(output_path), extension_webp=True)
         logger.info("GLB export complete")
+
+    def export_vxz(self, image_path: Path, output_path: Path):
+        """Export VXZ o-voxel file using TRELLIS.2"""
+        if not O_VOXEL_AVAILABLE:
+            raise ImportError(
+                "o-voxel package is required for VXZ export. "
+                "Install from https://github.com/microsoft/TRELLIS.2/tree/main/o-voxel"
+            )
+
+        logger.info(f"Running TRELLIS.2 on {image_path}")
+        image = Image.open(image_path)
+
+        # Run pipeline
+        mesh = self.pipeline.run(image)[0]
+
+        logger.info(f"Exporting VXZ o-voxel to {output_path}")
+
+        # Convert mesh to o-voxel format and export
+        from o_voxel.convert import mesh_to_voxel
+
+        voxel = mesh_to_voxel(mesh)
+
+        # Export to VXZ
+        o_voxel.io.write_vxz(
+            str(output_path),
+            coord=voxel.coord,
+            attr=voxel.attr,
+            chunk_size=256,
+            filter="none",
+            compression="lzma",
+            compression_level=9,
+            attr_interleave="as_is",
+        )
+        logger.info("VXZ export complete")

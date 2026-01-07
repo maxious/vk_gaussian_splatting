@@ -72,6 +72,24 @@ offline = [
     "kaolin>=0.17; sys_platform != 'win32'",
 ]
 
+# TRELLIS.2 GPU extensions (require CUDA compilation)
+# These must be installed separately from source
+trellis2 = [
+    # TRELLIS.2 core dependencies are vendored in offline/vkgs_trellis2/
+    # The following require CUDA compilation:
+    # - nvdiffrast (rendering): pip install nvdiffrast
+    # - nvdiffrec (PBR materials): pip install nvdiffrec
+    # - cumesh (mesh operations): pip install cumesh
+    # - flexgemm (sparse conv): pip install flexgemm
+    # - o-voxel (VXZ format): pip install o-voxel
+    #
+    # Install from source using the setup.sh script from TRELLIS.2:
+    # git clone --recursive https://github.com/microsoft/TRELLIS.2.git
+    # cd TRELLIS.2 && . ./setup.sh --basic --nvdiffrast --nvdiffrec --cumesh --o-voxel --flexgemm
+    #
+    # Or manually install each component.
+]
+
 # GPU acceleration backends (mutually exclusive - choose one)
 # CUDA (NVIDIA)
 cuda = [
