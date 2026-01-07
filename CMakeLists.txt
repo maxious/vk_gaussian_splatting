@@ -200,7 +200,7 @@ set_property(TARGET spz PROPERTY FOLDER "ThirdParty")
 
 #####
 # Include O-Voxel (TRELLIS.2)
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/third_party/ovoxel)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/o-voxel)
 
 #####################################################################################
 # FFmpeg support for video decoding
