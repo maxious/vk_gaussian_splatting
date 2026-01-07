@@ -156,14 +156,7 @@ option(ENABLE_COMFYUI "Enable ComfyUI integration" ON)
 option(ENABLE_DEPTH_STREAMING "Enable VideoDepthViewer3D depth streaming" ON)
 
 if(ENABLE_COMFYUI OR ENABLE_DEPTH_STREAMING)
-  include(FetchContent)
-
-# IXWebSocket for HTTP and WebSocket (No OpenSSL dependency on Windows - uses Schannel)
-  FetchContent_Declare(
-    ixwebsocket
-    GIT_REPOSITORY https://github.com/machinezone/IXWebSocket.git
-    GIT_TAG        v11.3.3
-  )
+  
   # Configure IXWebSocket options
   set(USE_TLS OFF CACHE BOOL "" FORCE) # Disable TLS to avoid OpenSSL/MbedTLS issues for now
   set(USE_OPENSSL OFF CACHE BOOL "" FORCE)
@@ -173,7 +166,7 @@ if(ENABLE_COMFYUI OR ENABLE_DEPTH_STREAMING)
   set(USE_TEST OFF CACHE BOOL "" FORCE)
   set(IXWEBSOCKET_INSTALL OFF CACHE BOOL "" FORCE)
   
-  FetchContent_MakeAvailable(ixwebsocket)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/ixwebsocket)
 
   if(ENABLE_COMFYUI)
     message(STATUS "ComfyUI integration enabled (IXWebSocket)")
