@@ -32,6 +32,7 @@ This fork adds the following features to the original NVIDIA sample.
 
 ### Additional Format Support
 - **SOG Format** - Import support for the [PlayCanvas SOG format](https://developer.playcanvas.com/user-manual/gaussian-splatting/formats/sog/), a highly compressed format (~15–20× smaller than PLY). Convert PLY files to SOG using the [SplatTransform](https://github.com/playcanvas/splat-transform) tool.
+- **GLB/GLTF Format** - Import support for standard GLB/GLTF mesh files, enabling visualization of outputs from mesh-generating models like TRELLIS.2 alongside Gaussian Splats.
 - **4DV Format** - Import support for `.4dv` files from **FreeTimeGS** [Wang2025], enabling 4D Gaussian Splatting with smooth temporal fading.
 - **FreeTimeGS PLY** - Import support for uncompressed FreeTimeGS PLY files containing temporal data (`t`, `t_scale`, `motion_0/1/2` properties), enabling the same 4D animation as `.4dv` files.
 
@@ -118,9 +119,9 @@ cmake --build build --config Release
 
 ```
 
-## Opening 3DGS PLY, SPZ, and SOG Files
+## Opening 3DGS PLY, SPZ, SOG, and GLB Files
 
-By default the application opens a 3DGS model representing a bouquet of flowers unless you disabled it at CMake stage. The sample application supports PLY files in the format introduced by INRIA [[Kerbl2023](https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/)]. The sample also supports import of SPZ files as defined by [nianticlabs](https://github.com/nianticlabs/spz) and SOG files as defined by [PlayCanvas](https://developer.playcanvas.com/user-manual/gaussian-splatting/formats/sog/). PLY, SPZ, and SOG files can be opened using any of the following methods:
+By default the application opens a 3DGS model representing a bouquet of flowers unless you disabled it at CMake stage. The sample application supports PLY files in the format introduced by INRIA [[Kerbl2023](https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/)]. The sample also supports import of SPZ files as defined by [nianticlabs](https://github.com/nianticlabs/spz) and SOG files as defined by [PlayCanvas](https://developer.playcanvas.com/user-manual/gaussian-splatting/formats/sog/). GLB and GLTF mesh files are also supported. PLY, SPZ, SOG, and GLB files can be opened using any of the following methods:
 * **Command Line** – Provide the file path as last argument when launching the application.
 * **File Menu** – Use "File > Open" to browse and load a file.
 * **Drag and Drop** – Simply drag and drop a file into the viewport.

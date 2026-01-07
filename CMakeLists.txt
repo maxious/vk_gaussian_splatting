@@ -285,6 +285,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
   nvpro2::nvutils
   nvpro2::nvvk
   nvpro2::nvgpu_monitor
+  nvpro2::nvvkgltf
   vk_radix_sort
   spz::spz
   meshoptimizer
@@ -293,6 +294,8 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE ${libwebp_SOURCE_DIR}/src)
+target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/nvpro_core2/third_party/stb)
+
 
 # Network libraries linkage for ComfyUI and Depth Streaming
 if(ENABLE_COMFYUI OR ENABLE_DEPTH_STREAMING)

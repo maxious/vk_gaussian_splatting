@@ -469,6 +469,32 @@ def export_images_to_gaussian_plys(
             model_path = None
 
         processor = SharpGaussianProcessor(model_path=model_path, device=device)
+    elif "trellis.2" in model_id.lower():
+        from .processors.trellis2 import Trellis2Processor
+
+        processor = Trellis2Processor(model_id=model_id, device=device)
+
+        # TRELLIS.2 Special handling for GLB export
+        if mode == "frames":
+            output_path.mkdir(parents=True, exist_ok=True)
+            for i, p in enumerate(image_paths):
+                out_file = output_path / f"{p.stem}.glb"
+                processor.export_glb(p, out_file)
+            return
+        else:
+            if output_path.suffix == "":
+                output_path.mkdir(parents=True, exist_ok=True)
+                out_file = output_path / f"{image_paths[0].stem}.glb"
+            else:
+                out_file = output_path
+
+            processor.export_glb(image_paths[0], out_file)
+            return
+
+    elif "trellis" in model_id.lower():
+        from .processors.trellis import TrellisProcessor
+
+        processor = TrellisProcessor(model_id=model_id, device=device)
     else:
         processor = DA3GaussianProcessor(
             model_id=model_id,
@@ -495,6 +521,7 @@ def export_images_to_gaussian_plys(
             mask_first_frame=mask_first_frame,
         )
     else:
+        # Generic processor (Trellis)
         frames = processor.process_frames(image_paths, timestamps_ms, per_frame=True)
 
     if not frames:

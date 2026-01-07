@@ -159,7 +159,7 @@ def main():
         "--model",
         type=str,
         default="depth-anything/DA3-GIANT",
-        help="Model ID. For SHARP: 'sharp' (DINOv2) or 'sharp:dinov3l16_384' (DINOv3)",
+        help="Model ID. Options: 'depth-anything/DA3-GIANT', 'sharp', 'microsoft/TRELLIS-image-large', 'microsoft/TRELLIS.2-4B'",
     )
     images_parser.add_argument(
         "--pattern", type=str, default="*.jpg", help="Glob pattern for image files"
