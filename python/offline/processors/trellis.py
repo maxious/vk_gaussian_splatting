@@ -6,34 +6,21 @@ import numpy as np
 import torch
 from PIL import Image
 
+# Add vendored vkgs_trellis to path before any imports
+_VKGS_TRELLIS_PARENT = Path(__file__).parent.parent
+if str(_VKGS_TRELLIS_PARENT) not in sys.path:
+    sys.path.insert(0, str(_VKGS_TRELLIS_PARENT))
+
 from ..types import GaussianFrame
 from .base import GaussianProcessor
 
 logger = logging.getLogger(__name__)
 
-# Add TRELLIS to path
-# Try relative path first (submodule), then fallback to hardcoded dev path
-CURRENT_DIR = Path(__file__).parent.absolute()
-PROJECT_ROOT = (
-    CURRENT_DIR.parent.parent.parent
-)  # python/offline/processors -> python/offline -> python -> root
-TRELLIS_SUBMODULE = PROJECT_ROOT / "python" / "external" / "TRELLIS"
-TRELLIS_DEV_PATH = Path("C:/Users/maxious/trel/TRELLIS")
-
-if TRELLIS_SUBMODULE.exists():
-    if str(TRELLIS_SUBMODULE) not in sys.path:
-        sys.path.append(str(TRELLIS_SUBMODULE))
-        logger.info(f"Using TRELLIS from submodule: {TRELLIS_SUBMODULE}")
-elif TRELLIS_DEV_PATH.exists() and str(TRELLIS_DEV_PATH) not in sys.path:
-    sys.path.append(str(TRELLIS_DEV_PATH))
-    logger.info(f"Using TRELLIS from dev path: {TRELLIS_DEV_PATH}")
-else:
-    logger.warning("TRELLIS not found in submodule or dev path")
-
 try:
-    from trellis.pipelines import TrellisImageTo3DPipeline
+    from vkgs_trellis.pipelines import TrellisImageTo3DPipeline
 
     TRELLIS_AVAILABLE = True
+    logger.info("Using vendored vkgs_trellis package")
 except ImportError as e:
     import traceback
 
