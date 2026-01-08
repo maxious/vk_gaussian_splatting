@@ -109,30 +109,48 @@ class Trellis2XPUProcessor(GaussianProcessor):
         # Load and preprocess image
         image = Image.open(image_path)
 
-        # Run pipeline on XPU
-        mesh_with_voxel = self.pipeline.run(
+        # Run pipeline on XPU - use return_latent=True to skip CUDA decode
+        _, (shape_slat, tex_slat, res) = self.pipeline.run(
             image,
             num_samples=num_samples,
             seed=seed,
             pipeline_type=pipeline_type,
             max_num_tokens=max_num_tokens,
             preprocess_image=True,
-            return_latent=False,
-        )[0]
+            return_latent=True,
+        )
 
-        # Move all tensors to CPU before saving
-        logger.info("Transferring mesh to CPU for saving")
-        mesh_cpu = self._mesh_to_cpu(mesh_with_voxel)
+        # Move latent tensors to CPU before saving
+        logger.info("Transferring latents to CPU for saving")
+        latent_data = {
+            'shape_slat': self._sparse_tensor_to_cpu(shape_slat),
+            'tex_slat': self._sparse_tensor_to_cpu(tex_slat),
+            'res': res,
+        }
 
         # Save to disk
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        logger.info(f"Saving mesh data to {output_path}")
-        torch.save(mesh_cpu, output_path)
+        logger.info(f"Saving latent data to {output_path}")
+        torch.save(latent_data, output_path)
 
         logger.info(
             f"Mesh data saved successfully ({output_path.stat().st_size / 1024 / 1024:.2f} MB)"
         )
         return output_path
+
+    def _sparse_tensor_to_cpu(self, slat):
+        """Transfer SparseTensor latent from XPU to CPU."""
+        from vkgs_trellis2.modules.sparse import SparseTensor
+        
+        # Extract tensor data and move to CPU
+        return {
+            "feats": slat.feats.cpu() if slat.feats is not None else None,
+            "coords": slat.coords.cpu() if slat.coords is not None else None,
+            "shape": slat.shape,
+            "layout": slat.layout,
+            "spatial_shape": slat.spatial_shape if hasattr(slat, 'spatial_shape') else None,
+            "format_version": 2,  # Version 2 for latent format
+        }
 
     def _mesh_to_cpu(self, mesh_xpu):
         """Transfer MeshWithVoxel from XPU to CPU."""

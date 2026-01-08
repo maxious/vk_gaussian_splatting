@@ -211,6 +211,34 @@ def sparse_scaled_dot_product_attention(*args, **kwargs):
             max_q_seqlen = max(q_seqlen)
             max_kv_seqlen = max(kv_seqlen)
         out = flash_attn_3.flash_attn_varlen_func(q, k, v, cu_seqlens_q, cu_seqlens_kv, max_q_seqlen, max_kv_seqlen)
+    elif config.ATTN == 'sdpa':
+        # Use PyTorch's scaled_dot_product_attention (works on XPU/CUDA/CPU)
+        # Process each sequence individually to avoid memory explosion from padding
+        from torch.nn.functional import scaled_dot_product_attention
+        if num_all_args == 1:
+            q, k, v = qkv.unbind(dim=1)  # qkv is [T, 3, H, C]
+        elif num_all_args == 2:
+            k, v = kv.unbind(dim=1)
+        # q, k, v are now [T, H, C]
+        N = len(q_seqlen)
+        out_list = []
+        q_offset = 0
+        kv_offset = 0
+        for i in range(N):
+            q_sl = q_seqlen[i]
+            kv_sl = kv_seqlen[i]
+            # Extract single sequence: [L, H, C] -> [1, H, L, C]
+            q_i = q[q_offset:q_offset+q_sl].permute(1, 0, 2).unsqueeze(0)
+            k_i = k[kv_offset:kv_offset+kv_sl].permute(1, 0, 2).unsqueeze(0)
+            v_i = v[kv_offset:kv_offset+kv_sl].permute(1, 0, 2).unsqueeze(0)
+            # Apply SDPA (no mask needed for single sequences)
+            out_i = scaled_dot_product_attention(q_i, k_i, v_i)  # [1, H, L_q, C]
+            # Back to [L, H, C]
+            out_i = out_i.squeeze(0).permute(1, 0, 2)
+            out_list.append(out_i)
+            q_offset += q_sl
+            kv_offset += kv_sl
+        out = torch.cat(out_list, dim=0)
     else:
         raise ValueError(f"Unknown attention module: {config.ATTN}")
     

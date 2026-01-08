@@ -587,9 +587,14 @@ class Trellis2ImageTo3DPipeline(Pipeline):
                 cond_1024, self.models['tex_slat_flow_model_1024'],
                 shape_slat, tex_slat_sampler_params
             )
-        torch.cuda.empty_cache()
-        out_mesh = self.decode_latent(shape_slat, tex_slat, res)
+        if hasattr(torch, 'xpu') and torch.xpu.is_available():
+            torch.xpu.empty_cache()
+        elif torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        
+        # Skip decode on XPU - requires CUDA for o_voxel mesh conversion
         if return_latent:
-            return out_mesh, (shape_slat, tex_slat, res)
-        else:
-            return out_mesh
+            return None, (shape_slat, tex_slat, res)
+        
+        out_mesh = self.decode_latent(shape_slat, tex_slat, res)
+        return out_mesh
