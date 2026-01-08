@@ -90,6 +90,10 @@ bool MeshSetVk::loadModel(const std::filesystem::path& filename)
   if(!loaded)
     return false;
 
+  LOGI("Mesh loaded: %zu vertices, %zu indices, %zu materials, %zu textures\n",
+       loadedData.m_vertices.size(), loadedData.m_indices.size(),
+       loadedData.m_materials.size(), loadedData.m_textures.size());
+
   for(auto& m : loadedData.m_materials)
   {
     m.ambient  = glm::pow(m.ambient, glm::vec3(2.2f));
@@ -120,6 +124,20 @@ bool MeshSetVk::loadModel(const std::filesystem::path& filename)
     
     LOGI("  Mesh optimized: %zu vertices (%zu unique), %zu indices\n", vertexCount, uniqueVertices, indexCount);
   }
+
+  // Compute bounding box
+  glm::vec3 bboxMin(FLT_MAX), bboxMax(-FLT_MAX);
+  for(const auto& v : loadedData.m_vertices)
+  {
+    bboxMin = glm::min(bboxMin, v.pos);
+    bboxMax = glm::max(bboxMax, v.pos);
+  }
+  glm::vec3 center = (bboxMin + bboxMax) * 0.5f;
+  glm::vec3 extent = bboxMax - bboxMin;
+  LOGI("  Mesh bounds: min(%.3f, %.3f, %.3f) max(%.3f, %.3f, %.3f)\n",
+       bboxMin.x, bboxMin.y, bboxMin.z, bboxMax.x, bboxMax.y, bboxMax.z);
+  LOGI("  Mesh center: (%.3f, %.3f, %.3f), extent: (%.3f, %.3f, %.3f)\n",
+       center.x, center.y, center.z, extent.x, extent.y, extent.z);
 
   Mesh model;
   model.path       = loadedData.filename.string();

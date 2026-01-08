@@ -195,6 +195,13 @@ set_property(TARGET spz PROPERTY FOLDER "ThirdParty")
 # Include O-Voxel (TRELLIS.2)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/o-voxel)
 
+#####
+# Include fastgltf for efficient GLTF/GLB loading
+set(FASTGLTF_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
+set(FASTGLTF_ENABLE_EXAMPLES OFF CACHE BOOL "" FORCE)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/fastgltf)
+set_property(TARGET fastgltf PROPERTY FOLDER "ThirdParty")
+
 #####################################################################################
 # FFmpeg support for video decoding
 
@@ -290,6 +297,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
   meshoptimizer
   webp
   zlib
+  fastgltf
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE ${libwebp_SOURCE_DIR}/src)

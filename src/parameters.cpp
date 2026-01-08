@@ -84,6 +84,7 @@ void registerCommandLineParameters(nvutils::ParameterRegistry* parameterRegistry
 {
   // Scene
   parameterRegistry->add({"inputFile", "load a ply or an spz file"}, {".ply", ".spz"}, &prmScene.sceneToLoadFilename);
+  parameterRegistry->add({"inputMesh", "load a mesh file (obj, glb, gltf)"}, {".obj", ".glb", ".gltf"}, &prmScene.meshToImportFilename);
 #ifdef WITH_DEFAULT_SCENE_FEATURE
   parameterRegistry->add({"loadDefaultScene", "0=disable the load of a default scene when no ply file is provided"},
                          &prmScene.enableDefaultScene);

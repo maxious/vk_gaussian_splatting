@@ -677,12 +677,7 @@ void GaussianSplatting::updateDepthRendering(VkCommandBuffer cmd)
                 LOGI("Synced depth frame #%zu: %ux%u @ %u ms (video: %u ms)\n",
                      depthFrameIdx, depthFrame.width, depthFrame.height,
                      depthFrame.timestampMs, videoTimestampMs);
-  if(m_xr && m_xr->isSpaceWarpSupported())
-  {
-    m_shaderMacros.push_back({"WITH_SPACE_WARP", "1"});
-  }
-}
-
+              }
             }
           }
         }

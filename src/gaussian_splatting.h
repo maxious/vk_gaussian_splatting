@@ -216,8 +216,6 @@ protected:
 
 
 private:
-  bool m_attached = false;
-
   // Copy rendered image to XR swapchain
   void copyToXrSwapchain(VkCommandBuffer cmd);
 
@@ -226,6 +224,7 @@ private:
 #endif
 
 private:
+  bool m_attached = false;
   // init the raster pipelines
   void initPipelines();
 

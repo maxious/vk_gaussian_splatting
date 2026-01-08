@@ -3,9 +3,11 @@
 #include <nvutils/file_operations.hpp>
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
+#define STB_IMAGE_WRITE_STATIC
 #include <stb/stb_image_write.h>
 
 #include <algorithm>
+#include <cstring>
 #include <fstream>
 
 namespace vk_gaussian_splatting {

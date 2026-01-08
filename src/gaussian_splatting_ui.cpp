@@ -169,7 +169,9 @@ void GaussianSplattingUI::onAttach(nvapp::Application* app)
 
 void GaussianSplattingUI::onDetach()
 {
+#ifdef WITH_OPENXR
     destroyHandMeshes();
+#endif
     GaussianSplatting::onDetach();
 }
 
@@ -191,8 +193,10 @@ void GaussianSplattingUI::onPreRender()
 
 void GaussianSplattingUI::onRender(VkCommandBuffer cmd)
 {
+#ifdef WITH_OPENXR
   // Update hand meshes before rendering
   updateHandMeshes();
+#endif
 
   GaussianSplatting::onRender(cmd);
 
@@ -1303,7 +1307,7 @@ void GaussianSplattingUI::guiDrawObjectTree()
   ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - 30);
   if(ImGui::SmallButton(ICON_MS_FILE_OPEN))
   {
-    prmScene.meshToImportFilename = nvgui::windowOpenFileDialog(m_app->getWindowHandle(), "Load obj file", "OBJ|*.obj");
+    prmScene.meshToImportFilename = nvgui::windowOpenFileDialog(m_app->getWindowHandle(), "Load mesh file", "Mesh files|*.obj;*.glb;*.gltf|OBJ|*.obj|GLTF|*.glb;*.gltf");
   }
   // Handle the request form file open or from drag and drop
   if(!prmScene.meshToImportFilename.empty())
@@ -4363,6 +4367,7 @@ void GaussianSplattingUI::guiDrawPerformancePanel()
     ImGui::End();
 }
 
+#ifdef WITH_OPENXR
 void GaussianSplattingUI::onWristButtonPressed()
 {
     m_showVrMenu = !m_showVrMenu;
@@ -4624,7 +4629,6 @@ void GaussianSplattingUI::renderHandMesh(VkCommandBuffer cmd, const GaussianSpla
     vkCmdDrawIndexed(cmd, static_cast<uint32_t>(mesh.indices.size()), 1, 0, 0, 0);
 }
 
-#ifdef WITH_OPENXR
 void GaussianSplattingUI::onRenderMultiviewExtra(VkCommandBuffer cmd)
 {
     if (!m_xr || !m_xr->handsSupported() || !m_xrInitialized || m_descriptorSet == VK_NULL_HANDLE)

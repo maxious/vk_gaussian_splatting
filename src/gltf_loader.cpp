@@ -1,61 +1,65 @@
 #include "gltf_loader.h"
 #include <nvutils/logger.hpp>
-#include <nvvkgltf/tinygltf_utils.hpp>
+#include <fastgltf/core.hpp>
+#include <fastgltf/tools.hpp>
+#include <fastgltf/glm_element_traits.hpp>
+#include <webp/decode.h>
+#include <cstring>
 
-bool GltfLoader::load(const std::filesystem::path& filename)
+bool GltfLoader::load(const std::filesystem::path& filepath)
 {
-  this->filename = filename;
-  tinygltf::Model    model;
-  tinygltf::TinyGLTF loader;
-  std::string        err;
-  std::string        warn;
+  this->filename = filepath;
 
-  bool ret = false;
-  if(filename.extension() == ".glb")
-    ret = loader.LoadBinaryFromFile(&model, &err, &warn, filename.string());
-  else
-    ret = loader.LoadASCIIFromFile(&model, &err, &warn, filename.string());
+  LOGI("Loading GLTF: %s\n", filepath.string().c_str());
 
-  if(!warn.empty())
-    LOGW("GLTF Warn: %s\n", warn.c_str());
+  fastgltf::Parser parser(fastgltf::Extensions::KHR_mesh_quantization |
+                          fastgltf::Extensions::KHR_texture_transform |
+                          fastgltf::Extensions::KHR_materials_unlit |
+                          fastgltf::Extensions::KHR_materials_emissive_strength |
+                          fastgltf::Extensions::KHR_lights_punctual |
+                          fastgltf::Extensions::EXT_texture_webp);
 
-  if(!err.empty())
-    LOGE("GLTF Error: %s\n", err.c_str());
-
-  if(!ret)
+  auto data = fastgltf::MappedGltfFile::FromPath(filepath);
+  if(data.error() != fastgltf::Error::None)
+  {
+    LOGE("Failed to open GLTF file: %s\n", filepath.string().c_str());
     return false;
+  }
 
-  m_materials.reserve(model.materials.size());
-  m_matNames.reserve(model.materials.size());
-  for(const auto& mat : model.materials)
+  auto asset = parser.loadGltf(data.get(), filepath.parent_path(),
+                               fastgltf::Options::LoadExternalBuffers | fastgltf::Options::LoadExternalImages);
+
+  if(asset.error() != fastgltf::Error::None)
+  {
+    LOGE("Failed to parse GLTF: %s\n", fastgltf::getErrorMessage(asset.error()).data());
+    return false;
+  }
+
+  LOGI("  Meshes: %zu, Materials: %zu, Images: %zu\n",
+       asset->meshes.size(), asset->materials.size(), asset->images.size());
+
+  // Load materials
+  m_materials.reserve(asset->materials.size());
+  m_matNames.reserve(asset->materials.size());
+
+  for(const auto& mat : asset->materials)
   {
     ObjMaterial m;
-    m.ambient       = glm::vec3(0.1f);
-    m.diffuse       = glm::vec3(mat.pbrMetallicRoughness.baseColorFactor[0],
-                          mat.pbrMetallicRoughness.baseColorFactor[1],
-                          mat.pbrMetallicRoughness.baseColorFactor[2]);
-    m.specular      = glm::vec3(0.5f);
-    m.emission      = glm::vec3(mat.emissiveFactor[0], mat.emissiveFactor[1], mat.emissiveFactor[2]);
+    m.ambient  = glm::vec3(0.1f);
+    m.specular = glm::vec3(0.5f);
     m.transmittance = glm::vec3(0.0f);
-    m.dissolve      = 1.0f;
-    m.ior           = 1.5f;
-    m.shininess     = 10.0f;
-    m.illum         = 1; 
+    m.dissolve  = 1.0f;
+    m.ior       = 1.5f;
+    m.shininess = 10.0f;
+    m.illum     = 1;
 
-    int baseColorIndex = mat.pbrMetallicRoughness.baseColorTexture.index;
-    if(baseColorIndex >= 0)
-    {
-      const auto& tex = model.textures[baseColorIndex];
-      const auto& img = model.images[tex.source];
-      if(!img.uri.empty())
-      {
-          m_textures.push_back(img.uri);
-          m.textureID = static_cast<int>(m_textures.size()) - 1;
-      }
-    }
+    const auto& pbr = mat.pbrData;
+    m.diffuse = glm::vec3(pbr.baseColorFactor[0], pbr.baseColorFactor[1], pbr.baseColorFactor[2]);
+
+    m.emission = glm::vec3(mat.emissiveFactor.x(), mat.emissiveFactor.y(), mat.emissiveFactor.z());
 
     m_materials.push_back(m);
-    m_matNames.push_back(mat.name);
+    m_matNames.push_back(std::string(mat.name));
   }
 
   if(m_materials.empty())
@@ -64,77 +68,71 @@ bool GltfLoader::load(const std::filesystem::path& filename)
     m_matNames.push_back("Default");
   }
 
-  for(const auto& mesh : model.meshes)
+  // Load meshes
+  for(const auto& mesh : asset->meshes)
   {
-    for(const auto& primitive : mesh.primitives)
+    for(auto it = mesh.primitives.begin(); it != mesh.primitives.end(); ++it)
     {
-        int matId = primitive.material;
-        if (matId < 0) matId = 0;
+      int matId = it->materialIndex.has_value() ? static_cast<int>(*it->materialIndex) : 0;
 
-        const float* positionBuffer = nullptr;
-        const float* normalBuffer = nullptr;
-        size_t vertexCount = 0;
+      // Get position accessor
+      auto* positionIt = it->findAttribute("POSITION");
+      if(positionIt == it->attributes.end())
+        continue;
 
-        if (primitive.attributes.find("POSITION") != primitive.attributes.end())
+      const auto& posAcc = asset->accessors[positionIt->accessorIndex];
+      size_t vertexCount = posAcc.count;
+
+      // Get normal accessor (optional)
+      auto* normIt = it->findAttribute("NORMAL");
+
+      size_t indexOffset = m_vertices.size();
+      m_vertices.reserve(m_vertices.size() + vertexCount);
+
+      // Pre-allocate vertices
+      for(size_t i = 0; i < vertexCount; ++i)
+      {
+        m_vertices.push_back(ObjVertex{});
+      }
+
+      // Extract positions
+      fastgltf::iterateAccessorWithIndex<glm::vec3>(asset.get(), posAcc,
+        [&](glm::vec3 pos, size_t idx) {
+          m_vertices[indexOffset + idx].pos = pos;
+        });
+
+      // Extract normals if available
+      if(normIt != it->attributes.end())
+      {
+        const auto& normAcc = asset->accessors[normIt->accessorIndex];
+        fastgltf::iterateAccessorWithIndex<glm::vec3>(asset.get(), normAcc,
+          [&](glm::vec3 norm, size_t idx) {
+            m_vertices[indexOffset + idx].nrm = norm;
+          });
+      }
+
+      // Extract indices
+      if(it->indicesAccessor.has_value())
+      {
+        const auto& indAcc = asset->accessors[*it->indicesAccessor];
+        size_t indexCount = indAcc.count;
+        m_indices.reserve(m_indices.size() + indexCount);
+
+        fastgltf::iterateAccessor<uint32_t>(asset.get(), indAcc,
+          [&](uint32_t index) {
+            m_indices.push_back(static_cast<uint32_t>(indexOffset + index));
+          });
+
+        // Material indices per triangle
+        for(size_t i = 0; i < indexCount / 3; i++)
         {
-            const tinygltf::Accessor& accessor = model.accessors[primitive.attributes.find("POSITION")->second];
-            const tinygltf::BufferView& bufferView = model.bufferViews[accessor.bufferView];
-            const tinygltf::Buffer& buffer = model.buffers[bufferView.buffer];
-            positionBuffer = reinterpret_cast<const float*>(&buffer.data[bufferView.byteOffset + accessor.byteOffset]);
-            vertexCount = accessor.count;
+          m_matIndices.push_back(matId);
         }
-
-        if (primitive.attributes.find("NORMAL") != primitive.attributes.end())
-        {
-            const tinygltf::Accessor& accessor = model.accessors[primitive.attributes.find("NORMAL")->second];
-            const tinygltf::BufferView& bufferView = model.bufferViews[accessor.bufferView];
-            const tinygltf::Buffer& buffer = model.buffers[bufferView.buffer];
-            normalBuffer = reinterpret_cast<const float*>(&buffer.data[bufferView.byteOffset + accessor.byteOffset]);
-        }
-
-        size_t indexOffset = m_vertices.size();
-
-        for (size_t v = 0; v < vertexCount; v++)
-        {
-            ObjVertex vertex = {};
-            vertex.pos = {positionBuffer[v * 3 + 0], positionBuffer[v * 3 + 1], positionBuffer[v * 3 + 2]};
-            
-            if (normalBuffer)
-                vertex.nrm = {normalBuffer[v * 3 + 0], normalBuffer[v * 3 + 1], normalBuffer[v * 3 + 2]};
-            
-            m_vertices.push_back(vertex);
-        }
-
-        if (primitive.indices >= 0)
-        {
-            const tinygltf::Accessor& accessor = model.accessors[primitive.indices];
-            const tinygltf::BufferView& bufferView = model.bufferViews[accessor.bufferView];
-            const tinygltf::Buffer& buffer = model.buffers[bufferView.buffer];
-            
-            if (accessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT)
-            {
-                const uint16_t* buf = reinterpret_cast<const uint16_t*>(&buffer.data[bufferView.byteOffset + accessor.byteOffset]);
-                for (size_t i = 0; i < accessor.count; i++)
-                {
-                    m_indices.push_back(static_cast<uint32_t>(indexOffset + buf[i]));
-                }
-            }
-            else if (accessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT)
-            {
-                const uint32_t* buf = reinterpret_cast<const uint32_t*>(&buffer.data[bufferView.byteOffset + accessor.byteOffset]);
-                for (size_t i = 0; i < accessor.count; i++)
-                {
-                    m_indices.push_back(static_cast<uint32_t>(indexOffset + buf[i]));
-                }
-            }
-            
-            for(size_t i=0; i < accessor.count / 3; i++)
-            {
-                m_matIndices.push_back(matId);
-            }
-        }
+      }
     }
   }
 
-  return true;
+  LOGI("  Loaded: %zu vertices, %zu indices\n", m_vertices.size(), m_indices.size());
+
+  return !m_vertices.empty();
 }

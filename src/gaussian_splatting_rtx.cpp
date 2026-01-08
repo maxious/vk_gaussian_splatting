@@ -380,7 +380,11 @@ void GaussianSplatting::raytrace(const VkCommandBuffer& cmdBuf, bool meshDepthOn
   m_pcRay.modelMatrixRotScaleInverse = glm::inverse(glm::mat3(m_splatSetVk.transform));
   m_pcRay.meshDepthOnly              = meshDepthOnly;
   m_pcRay.viewportOffset             = viewportOffset;
+  #ifdef WITH_OPENXR
   m_pcRay.useNdcMotion               = (m_xr && m_xr->isSpaceWarpSupported()) ? 1 : 0;
+#else
+  m_pcRay.useNdcMotion               = 0;
+#endif
 
   // Dynamic offsets for descriptor sets:
   // Set 0 (Raster): [FrameInfo, Indirect] - But wait, initRtPipeline set up descSets{m_descriptorSet, m_rtDescriptorSet}
@@ -489,7 +493,11 @@ void GaussianSplatting::raytraceMultiview(const VkCommandBuffer& cmdBuf, bool me
   m_pcRay.modelMatrixRotScaleInverse = glm::inverse(glm::mat3(m_splatSetVk.transform));
   m_pcRay.meshDepthOnly = meshDepthOnly;
   m_pcRay.viewportOffset = glm::ivec2(0, 0);
+#ifdef WITH_OPENXR
   m_pcRay.useNdcMotion = (m_xr && m_xr->isSpaceWarpSupported()) ? 1 : 0;
+#else
+  m_pcRay.useNdcMotion = 0;
+#endif
 
   // Dynamic offsets
   uint32_t indirectOffset = static_cast<uint32_t>(m_frameIndex * m_indirectStride);

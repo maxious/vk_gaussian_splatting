@@ -289,6 +289,7 @@ private:
   std::string                    m_comfyStatusMessage;
 #endif
 
+#ifdef WITH_OPENXR
   // Hand mesh rendering
   struct HandMeshVk {
     // CPU mesh data from OpenXR
@@ -326,10 +327,8 @@ private:
   void destroyHandMeshes();
   void updateHandMeshes();
   void renderHandMesh(VkCommandBuffer cmd, const GaussianSplattingUI::HandMeshVk& mesh, const glm::mat4& wristTransform);
-#ifdef WITH_OPENXR
   void onRenderMultiviewExtra(VkCommandBuffer cmd) override;
   void renderHandMeshMultiview(VkCommandBuffer cmd, const GaussianSplattingUI::HandMeshVk& mesh, const glm::mat4& wristTransform);
-#endif
 
   // Wrist button for file picker
   struct WristButton {
@@ -345,6 +344,7 @@ private:
   // Wrist button handler
   void onWristButtonPressed() override;
   void onXrInitialized() override;
+#endif
 
   void guiDrawFileDialog();
   void guiDrawSupersplatDialog();
