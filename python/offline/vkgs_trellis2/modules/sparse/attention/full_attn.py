@@ -239,6 +239,36 @@ def sparse_scaled_dot_product_attention(*args, **kwargs):
             q_offset += q_sl
             kv_offset += kv_sl
         out = torch.cat(out_list, dim=0)
+    elif config.ATTN == 'aule':
+        # Use Aule-Attention (Vulkan-based, works on Intel XPU/AMD/NVIDIA)
+        # https://github.com/AuleTechnologies/Aule-Attention
+        import aule
+        if num_all_args == 1:
+            q, k, v = qkv.unbind(dim=1)  # qkv is [T, 3, H, C]
+        elif num_all_args == 2:
+            k, v = kv.unbind(dim=1)
+        # q, k, v are now [T, H, C]
+        # Process each sequence individually (Aule expects [B, H, L, C] format)
+        N = len(q_seqlen)
+        out_list = []
+        q_offset = 0
+        kv_offset = 0
+        for i in range(N):
+            q_sl = q_seqlen[i]
+            kv_sl = kv_seqlen[i]
+            # Extract single sequence: [L, H, C] -> [1, H, L, C]
+            q_i = q[q_offset:q_offset+q_sl].permute(1, 0, 2).unsqueeze(0)
+            k_i = k[kv_offset:kv_offset+kv_sl].permute(1, 0, 2).unsqueeze(0)
+            v_i = v[kv_offset:kv_offset+kv_sl].permute(1, 0, 2).unsqueeze(0)
+            # Aule expects [B, H, L, C] and returns same shape
+            # causal=False for sparse attention (not autoregressive)
+            out_i = aule.flash_attention(q_i, k_i, v_i, causal=False)  # [1, H, L_q, C]
+            # Back to [L, H, C]
+            out_i = out_i.squeeze(0).permute(1, 0, 2)
+            out_list.append(out_i)
+            q_offset += q_sl
+            kv_offset += kv_sl
+        out = torch.cat(out_list, dim=0)
     else:
         raise ValueError(f"Unknown attention module: {config.ATTN}")
     

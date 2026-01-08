@@ -65,32 +65,13 @@ def sparse_conv3d_forward(self, x: SparseTensor) -> SparseTensor:
     neighbor_cache = x.get_spatial_cache(neighbor_cache_key)
 
     # Check if we should use Multi-XPU
-    use_multi_xpu = (
+    want_multi_xpu = (
         getattr(config, "FLEX_GEMM_USE_MULTI_XPU", False)
         and MULTI_XPU_AVAILABLE
-        and neighbor_cache is not None  # Must have neighbor map for MultiXPUSpconv
     )
 
-    if use_multi_xpu:
-        # Initialize MultiXPUSpconv if not already done
-        if not hasattr(self, "multi_xpu_conv"):
-            algo = config.FLEX_GEMM_ALGO
-            if algo == "auto":
-                algo = "igemm_mma"  # Default for MultiXPUSpconv
-
-            # Determine device count - assuming all visible XPUs
-            num_devices = (
-                torch.xpu.device_count()
-                if hasattr(torch, "xpu") and torch.xpu.is_available()
-                else 1
-            )
-            self.multi_xpu_conv = MultiXPUSpconv(num_devices=num_devices, algorithm=algo)
-
-        # Run Multi-XPU forward
-        out = self.multi_xpu_conv(x.feats, neighbor_cache, self.weight, self.bias)
-        neighbor_cache_ = neighbor_cache
-    else:
-        # Run standard single-XPU (or implicit) forward
+    # First pass: always use single-XPU to build neighbor cache
+    if neighbor_cache is None:
         out, neighbor_cache_ = sparse_submanifold_conv3d(
             x.feats,
             x.coords,
@@ -100,9 +81,46 @@ def sparse_conv3d_forward(self, x: SparseTensor) -> SparseTensor:
             neighbor_cache,
             self.dilation,
         )
-
-    if neighbor_cache is None:
         x.register_spatial_cache(neighbor_cache_key, neighbor_cache_)
+        
+        # Pre-build MultiXPU cache for subsequent passes
+        if want_multi_xpu:
+            if not hasattr(self, "multi_xpu_conv"):
+                algo = config.FLEX_GEMM_ALGO
+                if algo == "auto":
+                    algo = "igemm_mma"  # Default for MultiXPUSpconv
+                num_devices = (
+                    torch.xpu.device_count()
+                    if hasattr(torch, "xpu") and torch.xpu.is_available()
+                    else 1
+                )
+                self.multi_xpu_conv = MultiXPUSpconv(num_devices=num_devices, algorithm=algo)
+            # Pre-build the split cache for future calls
+            self.multi_xpu_conv.build_cache(neighbor_cache_)
+    elif want_multi_xpu:
+        # Subsequent passes: use Multi-XPU
+        if not hasattr(self, "multi_xpu_conv"):
+            algo = config.FLEX_GEMM_ALGO
+            if algo == "auto":
+                algo = "igemm_mma"
+            num_devices = (
+                torch.xpu.device_count()
+                if hasattr(torch, "xpu") and torch.xpu.is_available()
+                else 1
+            )
+            self.multi_xpu_conv = MultiXPUSpconv(num_devices=num_devices, algorithm=algo)
+        out = self.multi_xpu_conv(x.feats, neighbor_cache, self.weight, self.bias)
+    else:
+        # Single-XPU path with existing cache
+        out, _ = sparse_submanifold_conv3d(
+            x.feats,
+            x.coords,
+            torch.Size([*x.shape, *x.spatial_shape]),
+            self.weight,
+            self.bias,
+            neighbor_cache,
+            self.dilation,
+        )
 
     out = x.replace(out)
     return out
