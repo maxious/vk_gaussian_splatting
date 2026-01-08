@@ -44,8 +44,7 @@ struct ObjVertex
 {
   glm::vec3 pos;
   glm::vec3 nrm;
-  //glm::vec3 color;
-  //glm::vec2 texCoord;
+  glm::vec2 texCoord{0.0f, 0.0f};
 };
 
 

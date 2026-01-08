@@ -27,8 +27,7 @@ struct VertexInput
 {
   [[vk::location(0)]] float3 position : POSITION;
   [[vk::location(1)]] float3 normal : NORMAL;
-  //[[vk::location(2)]] float3 color : COLOR;
-  //[[vk::location(3)]] float2 texCoord : TEXCOORD0;
+  [[vk::location(2)]] float2 texCoord : TEXCOORD0;
 };
 
 struct VertexOutput
@@ -36,7 +35,7 @@ struct VertexOutput
   [[vk::location(1)]] float3 worldPos : TEXCOORD1;
   [[vk::location(2)]] float3 worldNrm : TEXCOORD2;
   [[vk::location(3)]] float3 viewDir : TEXCOORD3;
-  //[[vk::location(4)]] float2 texCoord : TEXCOORD4;
+  [[vk::location(4)]] float2 texCoord : TEXCOORD4;
   float4 position : SV_Position;
 };
 // clang-format on
@@ -50,7 +49,7 @@ VertexOutput main(VertexInput input)
 
   output.worldPos = mul(float4(input.position, 1.0), pcRaster.modelMatrix).xyz;
   output.viewDir  = output.worldPos - origin;
-  // output.texCoord = input.texCoord;
+  output.texCoord = input.texCoord;
   output.worldNrm = normalize(mul(input.normal, float3x3(transpose(pcRaster.modelMatrixInverse))));
 
   output.position = mul(mul(float4(output.worldPos, 1.0), frameInfo.viewMatrix), frameInfo.projectionMatrix);

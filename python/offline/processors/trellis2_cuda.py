@@ -1,10 +1,15 @@
 """
 TRELLIS.2 processor for CUDA o-voxel export.
-Loads intermediate MeshWithVoxel from disk and exports to GLB/VXZ.
+Loads intermediate latent or mesh data from disk and exports to GLB/VXZ.
+
+Supports two data formats:
+- format_version=2: Latent data (shape_slat, tex_slat) - requires decode
+- format_version=1: Mesh data (vertices, faces, etc.) - direct export
 """
 
 import logging
 from pathlib import Path
+from typing import Optional
 
 import torch
 from PIL import Image
@@ -14,8 +19,6 @@ from .base import GaussianProcessor
 logger = logging.getLogger(__name__)
 
 try:
-    # o-voxel is a separate package with C++ extensions that needs to be installed
-    # See: https://github.com/microsoft/TRELLIS.2/tree/main/o-voxel
     import o_voxel
 
     O_VOXEL_AVAILABLE = True
@@ -28,15 +31,18 @@ except ImportError as e:
 
 
 class Trellis2CUDAProcessor(GaussianProcessor):
-    """TRELLIS.2 processor that loads mesh data and exports via o-voxel on CUDA."""
+    """TRELLIS.2 processor that decodes latents and exports via o-voxel on CUDA."""
 
-    def __init__(self, cuda_device: str = "cuda:0"):
+    def __init__(
+        self,
+        cuda_device: str = "cuda:0",
+        model_id: str = "microsoft/TRELLIS.2-4B",
+    ):
         if not O_VOXEL_AVAILABLE:
             raise ImportError(
                 "o-voxel package not found. Install from https://github.com/microsoft/TRELLIS.2/tree/main/o-voxel"
             )
 
-        # Check CUDA availability
         if not torch.cuda.is_available():
             raise RuntimeError(
                 "CUDA not available. Install CUDA-enabled PyTorch: "
@@ -44,7 +50,20 @@ class Trellis2CUDAProcessor(GaussianProcessor):
             )
 
         self.cuda_device = cuda_device
+        self.model_id = model_id
+        self._pipeline = None
         logger.info(f"CUDA processor initialized with device: {cuda_device}")
+
+    def _get_pipeline(self):
+        """Lazy-load the TRELLIS.2 pipeline for decoding latents."""
+        if self._pipeline is None:
+            logger.info(f"Loading TRELLIS.2 pipeline for decoding: {self.model_id}")
+            from ..vkgs_trellis2.pipelines import Trellis2ImageTo3DPipeline
+
+            self._pipeline = Trellis2ImageTo3DPipeline.from_pretrained(self.model_id)
+            self._pipeline.to(self.cuda_device)
+            logger.info(f"Pipeline loaded on {self.cuda_device}")
+        return self._pipeline
 
     def process_frames(
         self,
@@ -59,6 +78,62 @@ class Trellis2CUDAProcessor(GaussianProcessor):
         logger.warning("TRELLIS2CUDAProcessor only handles export from saved mesh data.")
         return []
 
+    def _load_and_decode(self, data_path: Path):
+        """Load data from disk and decode if latent format."""
+        logger.info(f"Loading data from {data_path}")
+        data = torch.load(data_path, weights_only=False)
+
+        if "shape_slat" in data and "tex_slat" in data:
+            logger.info("Detected latent format, decoding to mesh...")
+            return self._decode_latents(data)
+        elif "vertices" in data and "faces" in data:
+            logger.info("Detected mesh format, reconstructing mesh...")
+            cuda_data = self._dict_to_cuda(data)
+            return self._reconstruct_mesh(cuda_data)
+        else:
+            raise ValueError(f"Unknown data format. Keys: {list(data.keys())}")
+
+    def _decode_latents(self, data: dict):
+        """Decode latent data to MeshWithVoxel using the pipeline."""
+        from ..vkgs_trellis2.modules.sparse import SparseTensor
+
+        pipeline = self._get_pipeline()
+
+        shape_slat_data = data["shape_slat"]
+        tex_slat_data = data["tex_slat"]
+        res = data["res"]
+
+        logger.info(f"Reconstructing SparseTensors for resolution {res}")
+
+        shape_slat = SparseTensor(
+            feats=shape_slat_data["feats"].to(self.cuda_device),
+            coords=shape_slat_data["coords"].to(self.cuda_device),
+            shape=shape_slat_data["shape"],
+        )
+        if shape_slat_data.get("layout"):
+            shape_slat._layout = shape_slat_data["layout"]
+        if shape_slat_data.get("spatial_shape"):
+            shape_slat._spatial_shape = shape_slat_data["spatial_shape"]
+
+        tex_slat = SparseTensor(
+            feats=tex_slat_data["feats"].to(self.cuda_device),
+            coords=tex_slat_data["coords"].to(self.cuda_device),
+            shape=tex_slat_data["shape"],
+        )
+        if tex_slat_data.get("layout"):
+            tex_slat._layout = tex_slat_data["layout"]
+        if tex_slat_data.get("spatial_shape"):
+            tex_slat._spatial_shape = tex_slat_data["spatial_shape"]
+
+        logger.info("Decoding latents to mesh (this may take a moment)...")
+        meshes = pipeline.decode_latent(shape_slat, tex_slat, res)
+
+        if not meshes:
+            raise RuntimeError("Decode returned no meshes")
+
+        logger.info(f"Decoded {len(meshes)} mesh(es)")
+        return meshes[0]
+
     def load_and_export_glb(
         self,
         mesh_path: Path,
@@ -67,7 +142,7 @@ class Trellis2CUDAProcessor(GaussianProcessor):
         texture_size: int = 4096,
     ) -> Path:
         """
-        Load MeshWithVoxel from disk and export to GLB using o-voxel.
+        Load latent/mesh data from disk and export to GLB using o-voxel.
 
         Args:
             mesh_path: Path to saved .pt file (from Trellis2XPUProcessor)
@@ -78,25 +153,8 @@ class Trellis2CUDAProcessor(GaussianProcessor):
         Returns:
             Path to exported GLB file
         """
-        logger.info(f"Loading mesh data from {mesh_path}")
+        mesh = self._load_and_decode(mesh_path)
 
-        # Load mesh data from disk
-        from .trellis2_xpu import Trellis2XPUProcessor
-
-        data = Trellis2XPUProcessor.load_from_disk(mesh_path)
-
-        # Transfer to CUDA
-        logger.info(f"Transferring mesh to {self.cuda_device}")
-        mesh_cuda = self._dict_to_cuda(data)
-
-        # Reconstruct MeshWithVoxel object
-        mesh = self._reconstruct_mesh(mesh_cuda)
-
-        # Simplify (optional, to fit in viewer limits if needed)
-        logger.info(f"Simplifying mesh to {decimation_target} faces")
-        mesh.simplify(decimation_target)
-
-        # Export to GLB using o-voxel
         logger.info(f"Exporting GLB to {output_path}")
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -131,7 +189,7 @@ class Trellis2CUDAProcessor(GaussianProcessor):
         compression_level: int = 9,
     ) -> Path:
         """
-        Load MeshWithVoxel from disk and export to VXZ using o-voxel.
+        Load latent/mesh data from disk and export to VXZ using o-voxel.
 
         Args:
             mesh_path: Path to saved .pt file (from Trellis2XPUProcessor)
@@ -143,34 +201,15 @@ class Trellis2CUDAProcessor(GaussianProcessor):
         Returns:
             Path to exported VXZ file
         """
-        logger.info(f"Loading mesh data from {mesh_path}")
+        mesh = self._load_and_decode(mesh_path)
 
-        # Load mesh data from disk
-        from .trellis2_xpu import Trellis2XPUProcessor
-
-        data = Trellis2XPUProcessor.load_from_disk(mesh_path)
-
-        # Transfer to CUDA
-        logger.info(f"Transferring mesh to {self.cuda_device}")
-        mesh_cuda = self._dict_to_cuda(data)
-
-        # Reconstruct MeshWithVoxel object
-        mesh = self._reconstruct_mesh(mesh_cuda)
-
-        # Export to VXZ using o-voxel
         logger.info(f"Exporting VXZ to {output_path}")
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Convert mesh to o-voxel format and export
-        from o_voxel.convert import mesh_to_voxel
-
-        voxel = mesh_to_voxel(mesh)
-
-        # Export to VXZ
         o_voxel.io.write_vxz(
             str(output_path),
-            coord=voxel.coord,
-            attr=voxel.attr,
+            coord=mesh.coords,
+            attr=mesh.attrs,
             chunk_size=chunk_size,
             filter="none",
             compression=compression,
@@ -195,7 +234,7 @@ class Trellis2CUDAProcessor(GaussianProcessor):
 
     def _reconstruct_mesh(self, data: dict):
         """Reconstruct MeshWithVoxel object from dictionary data."""
-        from vkgs_trellis2.representations import MeshWithVoxel
+        from ..vkgs_trellis2.representations import MeshWithVoxel
 
         return MeshWithVoxel(
             vertices=data["vertices"],

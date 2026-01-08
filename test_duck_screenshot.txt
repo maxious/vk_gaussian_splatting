@@ -1,0 +1,4 @@
+wait=5
+screenshot=/tmp/duck_test.png
+wait=1
+exit=1

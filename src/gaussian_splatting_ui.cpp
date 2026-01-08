@@ -67,6 +67,15 @@ GaussianSplattingUI::GaussianSplattingUI(nvutils::ProfilerManager*   profilerMan
                               }},
                           {".png"}, &m_screenshotFilename);
 
+  parameterRegistry->add({.name = "screenshotDelay",
+                          .help = "Take screenshot after N seconds and exit. Usage: --screenshotDelay 2.0 --screenshot output.png",
+                          .callbackSuccess =
+                              [&](const nvutils::ParameterBase* const) {
+                                m_autoScreenshotPending = (m_autoScreenshotDelay > 0.0f);
+                                m_autoScreenshotTimer = 0.0f;
+                              }},
+                          &m_autoScreenshotDelay);
+
   m_supersplatClient = std::make_unique<SupersplatClient>();
 };
 
@@ -188,6 +197,35 @@ void GaussianSplattingUI::onPreRender()
     m_comfyClient->update();
   }
 #endif
+
+  // Handle auto-screenshot with delay
+  if(m_autoScreenshotPending && m_app)
+  {
+    m_autoScreenshotTimer += ImGui::GetIO().DeltaTime;
+    if(m_autoScreenshotTimer >= m_autoScreenshotDelay)
+    {
+      m_autoScreenshotPending = false;
+      if(!m_screenshotFilename.empty())
+      {
+        m_app->screenShot(m_screenshotFilename);
+        LOGI("Auto-screenshot requested: %s\n", m_screenshotFilename.string().c_str());
+      }
+      // Wait a few frames for screenshot to complete before exiting
+      m_autoScreenshotExitCountdown = 10;
+    }
+  }
+  
+  // Handle delayed exit after screenshot
+  if(m_autoScreenshotExitCountdown > 0)
+  {
+    m_autoScreenshotExitCountdown--;
+    if(m_autoScreenshotExitCountdown == 0 && m_app)
+    {
+      LOGI("Exiting after screenshot\n");
+      m_app->close();
+    }
+  }
+
   GaussianSplatting::onPreRender();
 }
 
@@ -1336,6 +1374,13 @@ void GaussianSplattingUI::guiDrawObjectTree()
       m_selectedItemIndex = m_meshSetVk.instances.size() - 1;
       //
       m_objListUpdated = true;  // so that next loop will force the Object open if selected
+      
+      // Auto-fit camera to newly loaded mesh
+      if(!m_meshSetVk.meshes.empty() && cameraManip)
+      {
+        const auto& lastMesh = m_meshSetVk.meshes.back();
+        cameraManip->fit(lastMesh.bboxMin, lastMesh.bboxMax, true, false, 1.0f);
+      }
     }
 
     // definition of the obj error popup

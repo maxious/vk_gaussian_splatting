@@ -50,6 +50,7 @@ bool MeshSetVk::loadModel(const std::filesystem::path& filename)
       std::vector<std::string> m_matNames;
       std::vector<std::string> m_textures;
       std::vector<int32_t>     m_matIndices;
+      std::vector<TextureData> m_textureData;
   };
 
   ModelData loadedData;
@@ -70,6 +71,7 @@ bool MeshSetVk::loadModel(const std::filesystem::path& filename)
           loadedData.m_matNames = std::move(loader.m_matNames);
           loadedData.m_textures = std::move(loader.m_textures);
           loadedData.m_matIndices = std::move(loader.m_matIndices);
+          loadedData.m_textureData = std::move(loader.m_textureData);
       }
   }
   else
@@ -146,6 +148,8 @@ bool MeshSetVk::loadModel(const std::filesystem::path& filename)
   model.nbVertices = static_cast<uint32_t>(loadedData.m_vertices.size());
   model.materials  = loadedData.m_materials;
   model.matNames   = loadedData.m_matNames;
+  model.bboxMin    = bboxMin;
+  model.bboxMax    = bboxMax;
 
   VkBufferUsageFlags flag            = VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
   VkBufferUsageFlags rayTracingFlags = 
@@ -178,6 +182,110 @@ bool MeshSetVk::loadModel(const std::filesystem::path& filename)
   m_uploader->cmdUploadAppended(cmdBuf);
   m_app->submitAndWaitTempCmdBuffer(cmdBuf);
   m_uploader->releaseStaging();
+
+  // Load textures from GLTF
+  for(const auto& texData : loadedData.m_textureData)
+  {
+    if(texData.pixels.empty())
+    {
+      model.textures.push_back(MeshTexture{});
+      continue;
+    }
+
+    MeshTexture meshTex;
+    meshTex.width = texData.width;
+    meshTex.height = texData.height;
+
+    // Create Vulkan image
+    VkImageCreateInfo imageInfo = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    imageInfo.imageType = VK_IMAGE_TYPE_2D;
+    imageInfo.format = VK_FORMAT_R8G8B8A8_SRGB;
+    imageInfo.extent.width = texData.width;
+    imageInfo.extent.height = texData.height;
+    imageInfo.extent.depth = 1;
+    imageInfo.mipLevels = 1;
+    imageInfo.arrayLayers = 1;
+    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+    imageInfo.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    NVVK_CHECK(m_alloc->createImage(meshTex.image, imageInfo));
+    NVVK_DBG_NAME(meshTex.image.image);
+
+    // Create image view
+    VkImageViewCreateInfo viewInfo = {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    viewInfo.image = meshTex.image.image;
+    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    viewInfo.format = VK_FORMAT_R8G8B8A8_SRGB;
+    viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    viewInfo.subresourceRange.levelCount = 1;
+    viewInfo.subresourceRange.layerCount = 1;
+    NVVK_CHECK(vkCreateImageView(m_app->getDevice(), &viewInfo, nullptr, &meshTex.view));
+    NVVK_DBG_NAME(meshTex.view);
+
+    // Create sampler
+    VkSamplerCreateInfo samplerInfo = {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+    samplerInfo.magFilter = VK_FILTER_LINEAR;
+    samplerInfo.minFilter = VK_FILTER_LINEAR;
+    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.anisotropyEnable = VK_TRUE;
+    samplerInfo.maxAnisotropy = 16.0f;
+    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    NVVK_CHECK(vkCreateSampler(m_app->getDevice(), &samplerInfo, nullptr, &meshTex.sampler));
+    NVVK_DBG_NAME(meshTex.sampler);
+
+    // Upload texture data
+    VkCommandBuffer texCmdBuf = m_app->createTempCmdBuffer();
+
+    // Transition to transfer dst
+    VkImageMemoryBarrier barrier = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = meshTex.image.image;
+    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.layerCount = 1;
+    barrier.srcAccessMask = 0;
+    barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(texCmdBuf, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+    // Create staging buffer and copy
+    nvvk::Buffer staging;
+    NVVK_CHECK(m_alloc->createBuffer(staging, texData.pixels.size(),
+                                     VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                     VMA_MEMORY_USAGE_CPU_TO_GPU,
+                                     VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT));
+    memcpy(staging.mapping, texData.pixels.data(), texData.pixels.size());
+
+    VkBufferImageCopy region = {};
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.layerCount = 1;
+    region.imageExtent.width = texData.width;
+    region.imageExtent.height = texData.height;
+    region.imageExtent.depth = 1;
+    vkCmdCopyBufferToImage(texCmdBuf, staging.buffer, meshTex.image.image,
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+    // Transition to shader read
+    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(texCmdBuf, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                         0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+    m_app->submitAndWaitTempCmdBuffer(texCmdBuf);
+    m_alloc->destroyBuffer(staging);
+
+    model.textures.push_back(meshTex);
+    LOGI("  Created GPU texture %zu: %dx%d\n", model.textures.size() - 1, texData.width, texData.height);
+  }
 
   Instance instance;
   instance.transform = glm::mat4(1);

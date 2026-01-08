@@ -943,7 +943,11 @@ void GaussianSplatting::processUpdateRequests(void)
   bool needUpdate = m_requestUpdateSplatData || m_requestUpdateSplatAs || m_requestUpdateMeshData
                     || m_requestUpdateShaders || m_requestUpdateLightsBuffer || m_requestDeleteSelectedMesh;
 
-  if(!m_splatSet.size() || !needUpdate)
+  // Allow mesh-only updates even without splats loaded
+  bool hasMeshUpdate = m_requestUpdateMeshData || m_requestDeleteSelectedMesh;
+  if(!needUpdate)
+    return;
+  if(!m_splatSet.size() && !hasMeshUpdate)
     return;
 
   resetFrameCounter();
@@ -987,6 +991,12 @@ void GaussianSplatting::processUpdateRequests(void)
 
     if(initShaders())
     {
+      // Initialize renderer buffers if not already done (mesh-only mode)
+      if(m_frameInfoBuffer.buffer == VK_NULL_HANDLE)
+      {
+        m_lightSet.init(m_app, &m_alloc, &m_uploader);
+        initRendererBuffers();
+      }
       initPipelines();
       initRtDescriptorSet();
       initRtPipeline();

@@ -141,6 +141,9 @@
 
 
 
+// Mesh texture binding (for textured mesh rendering)
+#define BINDING_MESH_TEXTURES 32
+
 // location for vertex attributes
 // (only for vertex shader mode)
 #define ATTRIBUTE_LOC_POSITION 0
@@ -148,6 +151,7 @@
 // used for mesh rasterization
 #define ATTRIBUTE_LOC_MESH_POSITION 0
 #define ATTRIBUTE_LOC_MESH_NORMAL 1
+#define ATTRIBUTE_LOC_MESH_TEXCOORD 2
 
 #ifdef __cplusplus
 #include "nvshaders/slang_types.h"

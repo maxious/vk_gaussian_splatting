@@ -199,6 +199,11 @@ private:
   bool* m_pBenchmarkEnabled = {};
   // screenshot file name (used by benchmark)
   std::filesystem::path m_screenshotFilename;
+  // Auto-screenshot: delay in seconds before taking screenshot and exiting
+  float m_autoScreenshotDelay = 0.0f;
+  float m_autoScreenshotTimer = 0.0f;
+  bool  m_autoScreenshotPending = false;
+  int   m_autoScreenshotExitCountdown = -1;  // Frames to wait after screenshot before exit
 
   // Recent files list
   std::vector<std::filesystem::path> m_recentFiles;

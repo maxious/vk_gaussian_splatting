@@ -270,6 +270,12 @@ def main():
         "--cuda-device", type=str, default="cuda:0", help="CUDA device (e.g., 'cuda:0')"
     )
     trellis2_cuda_parser.add_argument(
+        "--model",
+        type=str,
+        default="microsoft/TRELLIS.2-4B",
+        help="TRELLIS.2 model ID (for decoding latent data)",
+    )
+    trellis2_cuda_parser.add_argument(
         "--pattern", type=str, default="*.pt", help="Glob pattern for .pt mesh files"
     )
     trellis2_cuda_parser.add_argument(
@@ -399,7 +405,10 @@ def main():
     elif args.command == "trellis2-cuda":
         from .processors.trellis2_cuda import Trellis2CUDAProcessor
 
-        processor = Trellis2CUDAProcessor(cuda_device=args.cuda_device)
+        processor = Trellis2CUDAProcessor(
+            cuda_device=args.cuda_device,
+            model_id=args.model,
+        )
 
         if args.input.is_file():
             output_path = (

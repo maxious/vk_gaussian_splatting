@@ -33,8 +33,19 @@
 #include "shaderio.h"
 
 #include "obj_loader.h"
+#include "gltf_loader.h"
 
 namespace vk_gaussian_splatting {
+
+// GPU texture storage
+struct MeshTexture
+{
+  nvvk::Image image;
+  VkImageView view = VK_NULL_HANDLE;
+  VkSampler   sampler = VK_NULL_HANDLE;
+  uint32_t    width = 0;
+  uint32_t    height = 0;
+};
 
 // The OBJ model
 struct Mesh
@@ -49,6 +60,9 @@ struct Mesh
   nvvk::Buffer             matIndexBuffer;   // Device buffer of per face material IDs
   std::vector<ObjMaterial> materials;        // RAM storage of materials for updates
   std::vector<std::string> matNames;         // name of each material stored in materials
+  std::vector<MeshTexture> textures;         // GPU textures for this mesh
+  glm::vec3                bboxMin{0.0f};    // Bounding box minimum
+  glm::vec3                bboxMax{0.0f};    // Bounding box maximum
 };
 
 struct Instance
@@ -138,6 +152,18 @@ private:
     m_alloc->destroyBuffer(mesh.indexBuffer);
     m_alloc->destroyBuffer(mesh.materialsBuffer);
     m_alloc->destroyBuffer(mesh.matIndexBuffer);
+    
+    // Cleanup textures
+    for(auto& tex : mesh.textures)
+    {
+      if(tex.sampler)
+        vkDestroySampler(m_app->getDevice(), tex.sampler, nullptr);
+      if(tex.view)
+        vkDestroyImageView(m_app->getDevice(), tex.view, nullptr);
+      if(tex.image.image)
+        m_alloc->destroyImage(tex.image);
+    }
+    mesh.textures.clear();
   }
 
   // RTX specifics

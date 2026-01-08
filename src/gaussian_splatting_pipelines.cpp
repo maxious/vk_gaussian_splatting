@@ -62,6 +62,8 @@ void GaussianSplatting::initPipelines()
   // Obj Mesh objectDescriptions
   bindings.addBinding(BINDING_MESH_DESCRIPTORS, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
   bindings.addBinding(BINDING_LIGHT_SET, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
+  // Mesh textures (array of 16 textures)
+  bindings.addBinding(BINDING_MESH_TEXTURES, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 16, VK_SHADER_STAGE_FRAGMENT_BIT);
 
   // VDZ depth mesh textures
   bindings.addBinding(BINDING_VDZ_VIDEO_TEXTURE, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT);
@@ -133,34 +135,37 @@ void GaussianSplatting::initPipelines()
   // Directly update descriptor set to avoid WriteSetContainer append issue with custom write
   vkUpdateDescriptorSets(m_device, 1, &indirectWrite, 0, nullptr);
   
-  if(prmData.dataStorage == STORAGE_TEXTURES)
-
+  // Only add splat data descriptors if splats are loaded
+  if(m_splatSet.size() > 0)
   {
-    // add data texture maps
-    writeContainer.append(bindings.getWriteSet(BINDING_CENTERS_TEXTURE, m_descriptorSet), m_splatSetVk.centersMap);
-    writeContainer.append(bindings.getWriteSet(BINDING_SCALES_TEXTURE, m_descriptorSet), m_splatSetVk.scalesMap);
-    writeContainer.append(bindings.getWriteSet(BINDING_ROTATIONS_TEXTURE, m_descriptorSet), m_splatSetVk.rotationsMap);
-    writeContainer.append(bindings.getWriteSet(BINDING_COVARIANCES_TEXTURE, m_descriptorSet), m_splatSetVk.covariancesMap);
+    if(prmData.dataStorage == STORAGE_TEXTURES)
+    {
+      // add data texture maps
+      writeContainer.append(bindings.getWriteSet(BINDING_CENTERS_TEXTURE, m_descriptorSet), m_splatSetVk.centersMap);
+      writeContainer.append(bindings.getWriteSet(BINDING_SCALES_TEXTURE, m_descriptorSet), m_splatSetVk.scalesMap);
+      writeContainer.append(bindings.getWriteSet(BINDING_ROTATIONS_TEXTURE, m_descriptorSet), m_splatSetVk.rotationsMap);
+      writeContainer.append(bindings.getWriteSet(BINDING_COVARIANCES_TEXTURE, m_descriptorSet), m_splatSetVk.covariancesMap);
 
-    writeContainer.append(bindings.getWriteSet(BINDING_COLORS_TEXTURE, m_descriptorSet), m_splatSetVk.colorsMap);
-    writeContainer.append(bindings.getWriteSet(BINDING_SH_TEXTURE, m_descriptorSet), m_splatSetVk.sphericalHarmonicsMap);
-    writeContainer.append(bindings.getWriteSet(BINDING_MOTION_TEXTURE, m_descriptorSet), m_splatSetVk.motionMap);
-    writeContainer.append(bindings.getWriteSet(BINDING_TIME_TEXTURE, m_descriptorSet), m_splatSetVk.timeMap);
-  }
-  else
-  {
-    // add data buffers
-    writeContainer.append(bindings.getWriteSet(BINDING_CENTERS_BUFFER, m_descriptorSet), m_splatSetVk.centersBuffer);
-    writeContainer.append(bindings.getWriteSet(BINDING_SCALES_BUFFER, m_descriptorSet), m_splatSetVk.scalesBuffer);
-    writeContainer.append(bindings.getWriteSet(BINDING_ROTATIONS_BUFFER, m_descriptorSet), m_splatSetVk.rotationsBuffer);
-    writeContainer.append(bindings.getWriteSet(BINDING_COVARIANCES_BUFFER, m_descriptorSet), m_splatSetVk.covariancesBuffer);
+      writeContainer.append(bindings.getWriteSet(BINDING_COLORS_TEXTURE, m_descriptorSet), m_splatSetVk.colorsMap);
+      writeContainer.append(bindings.getWriteSet(BINDING_SH_TEXTURE, m_descriptorSet), m_splatSetVk.sphericalHarmonicsMap);
+      writeContainer.append(bindings.getWriteSet(BINDING_MOTION_TEXTURE, m_descriptorSet), m_splatSetVk.motionMap);
+      writeContainer.append(bindings.getWriteSet(BINDING_TIME_TEXTURE, m_descriptorSet), m_splatSetVk.timeMap);
+    }
+    else
+    {
+      // add data buffers
+      writeContainer.append(bindings.getWriteSet(BINDING_CENTERS_BUFFER, m_descriptorSet), m_splatSetVk.centersBuffer);
+      writeContainer.append(bindings.getWriteSet(BINDING_SCALES_BUFFER, m_descriptorSet), m_splatSetVk.scalesBuffer);
+      writeContainer.append(bindings.getWriteSet(BINDING_ROTATIONS_BUFFER, m_descriptorSet), m_splatSetVk.rotationsBuffer);
+      writeContainer.append(bindings.getWriteSet(BINDING_COVARIANCES_BUFFER, m_descriptorSet), m_splatSetVk.covariancesBuffer);
 
-    writeContainer.append(bindings.getWriteSet(BINDING_COLORS_BUFFER, m_descriptorSet), m_splatSetVk.colorsBuffer);
-    if(m_splatSetVk.sphericalHarmonicsBuffer.buffer != NULL)
-      writeContainer.append(bindings.getWriteSet(BINDING_SH_BUFFER, m_descriptorSet), m_splatSetVk.sphericalHarmonicsBuffer);
-      
-    writeContainer.append(bindings.getWriteSet(BINDING_MOTION_BUFFER, m_descriptorSet), m_splatSetVk.motionBuffer);
-    writeContainer.append(bindings.getWriteSet(BINDING_TIME_BUFFER, m_descriptorSet), m_splatSetVk.timeBuffer);
+      writeContainer.append(bindings.getWriteSet(BINDING_COLORS_BUFFER, m_descriptorSet), m_splatSetVk.colorsBuffer);
+      if(m_splatSetVk.sphericalHarmonicsBuffer.buffer != NULL)
+        writeContainer.append(bindings.getWriteSet(BINDING_SH_BUFFER, m_descriptorSet), m_splatSetVk.sphericalHarmonicsBuffer);
+        
+      writeContainer.append(bindings.getWriteSet(BINDING_MOTION_BUFFER, m_descriptorSet), m_splatSetVk.motionBuffer);
+      writeContainer.append(bindings.getWriteSet(BINDING_TIME_BUFFER, m_descriptorSet), m_splatSetVk.timeBuffer);
+    }
   }
 
   if(m_meshSetVk.instances.size())
@@ -200,6 +205,34 @@ void GaussianSplatting::initPipelines()
                             depthTexture.image.descriptor.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, m_sampler);
     }
   }
+
+  // Mesh textures - initialize all 16 slots with dummy textures first
+  std::vector<VkDescriptorImageInfo> meshTexInfos(16, dummyInfo);
+  
+  // Fill in actual mesh textures if available
+  if(!m_meshSetVk.meshes.empty())
+  {
+    for(const auto& mesh : m_meshSetVk.meshes)
+    {
+      for(size_t i = 0; i < mesh.textures.size() && i < 16; ++i)
+      {
+        const auto& tex = mesh.textures[i];
+        if(tex.view && tex.sampler)
+        {
+          meshTexInfos[i] = {
+              .sampler     = tex.sampler,
+              .imageView   = tex.view,
+              .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+          };
+        }
+      }
+    }
+  }
+  
+  VkWriteDescriptorSet meshTexWrite = bindings.getWriteSet(BINDING_MESH_TEXTURES, m_descriptorSet);
+  meshTexWrite.descriptorCount = 16;
+  meshTexWrite.pImageInfo = meshTexInfos.data();
+  vkUpdateDescriptorSets(m_device, 1, &meshTexWrite, 0, nullptr);
 
   // write
   vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writeContainer.size()), writeContainer.data(), 0, nullptr);
@@ -393,9 +426,9 @@ void GaussianSplatting::initPipelines()
     // create the pipeline
     const auto BINDING_ATTR_VERTEX = 0;
 
-    pipelineState.vertexBindings   = {{// 3 pos and 3 nrm per vertex
+    pipelineState.vertexBindings   = {{// 3 pos + 3 nrm + 2 texCoord per vertex
                                        .binding = BINDING_ATTR_VERTEX,
-                                       .stride  = 6 * sizeof(float),
+                                       .stride  = sizeof(ObjVertex),
                                        .divisor = 1}};
     pipelineState.vertexAttributes = {{.location = ATTRIBUTE_LOC_MESH_POSITION,
                                        .binding  = BINDING_ATTR_VERTEX,
@@ -404,7 +437,11 @@ void GaussianSplatting::initPipelines()
                                       {.location = ATTRIBUTE_LOC_MESH_NORMAL,
                                        .binding  = BINDING_ATTR_VERTEX,
                                        .format   = VK_FORMAT_R32G32B32_SFLOAT,
-                                       .offset   = static_cast<uint32_t>(offsetof(ObjVertex, nrm))}};
+                                       .offset   = static_cast<uint32_t>(offsetof(ObjVertex, nrm))},
+                                      {.location = ATTRIBUTE_LOC_MESH_TEXCOORD,
+                                       .binding  = BINDING_ATTR_VERTEX,
+                                       .format   = VK_FORMAT_R32G32_SFLOAT,
+                                       .offset   = static_cast<uint32_t>(offsetof(ObjVertex, texCoord))}};
 
     nvvk::GraphicsPipelineCreator creator;
     creator.pipelineInfo.layout                  = m_pipelineLayout;
@@ -585,7 +622,8 @@ void GaussianSplatting::initRendererBuffers()
 
     {  // Create some buffer for GPU and/or CPU sorting
       // shall use minStorageBufferOffsetAlignment
-      const VkDeviceSize bufferSize = ((splatCount * sizeof(uint32_t) + 15) / 16) * 16;
+      // Use minimum size of 16 bytes when no splats (for valid descriptor bindings)
+      const VkDeviceSize bufferSize = std::max((VkDeviceSize)16, ((splatCount * sizeof(uint32_t) + 15) / 16) * 16);
 
       m_alloc.createBuffer(m_splatIndicesHost, bufferSize, VK_BUFFER_USAGE_2_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_AUTO_PREFER_HOST,
                            VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);

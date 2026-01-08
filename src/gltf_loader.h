@@ -19,6 +19,14 @@
 #include "obj_loader.h"
 #include <filesystem>
 
+struct TextureData
+{
+  std::vector<uint8_t> pixels;
+  uint32_t width = 0;
+  uint32_t height = 0;
+  uint32_t channels = 4;
+};
+
 class GltfLoader
 {
 public:
@@ -31,4 +39,5 @@ public:
   std::vector<std::string> m_matNames;
   std::vector<std::string> m_textures;
   std::vector<int32_t>     m_matIndices;
+  std::vector<TextureData> m_textureData;
 };

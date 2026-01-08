@@ -40,8 +40,7 @@ struct ObjVertex  // See ObjLoader, copy of VertexObj
 {
   float3 pos;
   float3 nrm;
-  //vec3 color;
-  //vec2 texCoord;
+  float2 texCoord;
 };
 
 // Structure holding the material for mesh objects

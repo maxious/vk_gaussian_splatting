@@ -5,6 +5,8 @@
 #include <fastgltf/glm_element_traits.hpp>
 #include <webp/decode.h>
 #include <cstring>
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb/stb_image.h>
 
 bool GltfLoader::load(const std::filesystem::path& filepath)
 {
@@ -35,8 +37,102 @@ bool GltfLoader::load(const std::filesystem::path& filepath)
     return false;
   }
 
-  LOGI("  Meshes: %zu, Materials: %zu, Images: %zu\n",
-       asset->meshes.size(), asset->materials.size(), asset->images.size());
+  LOGI("  Meshes: %zu, Materials: %zu, Images: %zu, Textures: %zu\n",
+       asset->meshes.size(), asset->materials.size(), asset->images.size(), asset->textures.size());
+
+  // Load images into texture data
+  m_textureData.reserve(asset->images.size());
+  for(size_t i = 0; i < asset->images.size(); ++i)
+  {
+    const auto& image = asset->images[i];
+    TextureData texData;
+
+    std::visit(fastgltf::visitor{
+      [](auto& arg) {},
+      [&](const fastgltf::sources::URI& uri) {
+        std::filesystem::path imagePath = filepath.parent_path() / uri.uri.path();
+        int w, h, c;
+        stbi_set_flip_vertically_on_load(false);
+        uint8_t* data = stbi_load(imagePath.string().c_str(), &w, &h, &c, 4);
+        if(data)
+        {
+          texData.width = static_cast<uint32_t>(w);
+          texData.height = static_cast<uint32_t>(h);
+          texData.channels = 4;
+          texData.pixels.assign(data, data + w * h * 4);
+          stbi_image_free(data);
+          LOGI("  Loaded texture %zu from URI: %s (%dx%d)\n", i, imagePath.string().c_str(), w, h);
+        }
+        else
+        {
+          LOGW("  Failed to load texture from URI: %s\n", imagePath.string().c_str());
+        }
+      },
+      [&](const fastgltf::sources::Vector& vec) {
+        int w, h, c;
+        uint8_t* data = stbi_load_from_memory(reinterpret_cast<const uint8_t*>(vec.bytes.data()), static_cast<int>(vec.bytes.size()), &w, &h, &c, 4);
+        if(data)
+        {
+          texData.width = static_cast<uint32_t>(w);
+          texData.height = static_cast<uint32_t>(h);
+          texData.channels = 4;
+          texData.pixels.assign(data, data + w * h * 4);
+          stbi_image_free(data);
+          LOGI("  Loaded embedded texture %zu (%dx%d)\n", i, w, h);
+        }
+      },
+      [&](const fastgltf::sources::BufferView& view) {
+        const auto& bufferView = asset->bufferViews[view.bufferViewIndex];
+        const auto& buffer = asset->buffers[bufferView.bufferIndex];
+        std::visit(fastgltf::visitor{
+          [](auto& arg) {},
+          [&](const fastgltf::sources::Vector& vec) {
+            const uint8_t* ptr = reinterpret_cast<const uint8_t*>(vec.bytes.data()) + bufferView.byteOffset;
+            int w, h, c;
+            uint8_t* data = stbi_load_from_memory(ptr, static_cast<int>(bufferView.byteLength), &w, &h, &c, 4);
+            if(data)
+            {
+              texData.width = static_cast<uint32_t>(w);
+              texData.height = static_cast<uint32_t>(h);
+              texData.channels = 4;
+              texData.pixels.assign(data, data + w * h * 4);
+              stbi_image_free(data);
+              LOGI("  Loaded buffer texture %zu (%dx%d)\n", i, w, h);
+            }
+          },
+          [&](const fastgltf::sources::Array& arr) {
+            const uint8_t* ptr = reinterpret_cast<const uint8_t*>(arr.bytes.data()) + bufferView.byteOffset;
+            int w, h, c;
+            uint8_t* data = stbi_load_from_memory(ptr, static_cast<int>(bufferView.byteLength), &w, &h, &c, 4);
+            if(data)
+            {
+              texData.width = static_cast<uint32_t>(w);
+              texData.height = static_cast<uint32_t>(h);
+              texData.channels = 4;
+              texData.pixels.assign(data, data + w * h * 4);
+              stbi_image_free(data);
+              LOGI("  Loaded buffer texture %zu (%dx%d)\n", i, w, h);
+            }
+          }
+        }, buffer.data);
+      },
+      [&](const fastgltf::sources::Array& arr) {
+        int w, h, c;
+        uint8_t* data = stbi_load_from_memory(reinterpret_cast<const uint8_t*>(arr.bytes.data()), static_cast<int>(arr.bytes.size()), &w, &h, &c, 4);
+        if(data)
+        {
+          texData.width = static_cast<uint32_t>(w);
+          texData.height = static_cast<uint32_t>(h);
+          texData.channels = 4;
+          texData.pixels.assign(data, data + w * h * 4);
+          stbi_image_free(data);
+          LOGI("  Loaded array texture %zu (%dx%d)\n", i, w, h);
+        }
+      }
+    }, image.data);
+
+    m_textureData.push_back(std::move(texData));
+  }
 
   // Load materials
   m_materials.reserve(asset->materials.size());
@@ -52,9 +148,25 @@ bool GltfLoader::load(const std::filesystem::path& filepath)
     m.ior       = 1.5f;
     m.shininess = 10.0f;
     m.illum     = 1;
+    m.textureID = -1;
 
     const auto& pbr = mat.pbrData;
     m.diffuse = glm::vec3(pbr.baseColorFactor[0], pbr.baseColorFactor[1], pbr.baseColorFactor[2]);
+
+    // Check for base color texture
+    if(pbr.baseColorTexture.has_value())
+    {
+      size_t texIndex = pbr.baseColorTexture->textureIndex;
+      if(texIndex < asset->textures.size())
+      {
+        const auto& tex = asset->textures[texIndex];
+        if(tex.imageIndex.has_value())
+        {
+          m.textureID = static_cast<int>(*tex.imageIndex);
+          LOGI("  Material '%s' uses texture %d\n", mat.name.c_str(), m.textureID);
+        }
+      }
+    }
 
     m.emission = glm::vec3(mat.emissiveFactor.x(), mat.emissiveFactor.y(), mat.emissiveFactor.z());
 
@@ -108,6 +220,17 @@ bool GltfLoader::load(const std::filesystem::path& filepath)
         fastgltf::iterateAccessorWithIndex<glm::vec3>(asset.get(), normAcc,
           [&](glm::vec3 norm, size_t idx) {
             m_vertices[indexOffset + idx].nrm = norm;
+          });
+      }
+
+      // Extract texture coordinates if available
+      auto* texcoordIt = it->findAttribute("TEXCOORD_0");
+      if(texcoordIt != it->attributes.end())
+      {
+        const auto& uvAcc = asset->accessors[texcoordIt->accessorIndex];
+        fastgltf::iterateAccessorWithIndex<glm::vec2>(asset.get(), uvAcc,
+          [&](glm::vec2 uv, size_t idx) {
+            m_vertices[indexOffset + idx].texCoord = uv;
           });
       }
 
