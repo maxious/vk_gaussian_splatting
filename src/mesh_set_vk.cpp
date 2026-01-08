@@ -98,9 +98,9 @@ bool MeshSetVk::loadModel(const std::filesystem::path& filename)
 
   for(auto& m : loadedData.m_materials)
   {
-    m.ambient  = glm::pow(m.ambient, glm::vec3(2.2f));
-    m.diffuse  = glm::pow(m.diffuse, glm::vec3(2.2f));
-    m.specular = glm::pow(m.specular, glm::vec3(2.2f));
+    m.ambient  = glm::vec4(glm::pow(glm::vec3(m.ambient), glm::vec3(2.2f)), 0.0f);
+    m.diffuse  = glm::vec4(glm::pow(glm::vec3(m.diffuse), glm::vec3(2.2f)), 0.0f);
+    m.specular = glm::vec4(glm::pow(glm::vec3(m.specular), glm::vec3(2.2f)), 0.0f);
   }
 
   {

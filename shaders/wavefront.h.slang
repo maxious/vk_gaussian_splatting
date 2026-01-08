@@ -57,11 +57,11 @@ void wavefrontComputeShadingDirectOnly(StructuredBuffer<LightSource> lights,//in
                                        in float3        viewDir,
                                        inout float3     radiance)
 {
-  // Material of the object
-  float3  matDiffuse    = mat.diffuse;
-  float3  matAmbient    = mat.ambient;
-  float3  matSpecular   = mat.specular;
-  float3  matRefractive = mat.transmittance;
+  // Material of the object (using .xyz since struct uses float4 for alignment)
+  float3  matDiffuse    = mat.diffuse.xyz;
+  float3  matAmbient    = mat.ambient.xyz;
+  float3  matSpecular   = mat.specular.xyz;
+  float3  matRefractive = mat.transmittance.xyz;
   float ior           = mat.ior;  // 1.0 = pure transparency, 1.5111 window glass
   float matShininess  = mat.shininess;
   int   model         = mat.illum;
@@ -117,10 +117,10 @@ void wavefrontComputeShading(StructuredBuffer<LightSource> lights, //in LightSou
                              inout float3     rayDir)
 {
 
-  float3  matDiffuse    = mat.diffuse;
-  float3  matAmbient    = mat.ambient;
-  float3  matSpecular   = mat.specular;
-  float3  matRefractive = mat.transmittance;
+  float3  matDiffuse    = mat.diffuse.xyz;
+  float3  matAmbient    = mat.ambient.xyz;
+  float3  matSpecular   = mat.specular.xyz;
+  float3  matRefractive = mat.transmittance.xyz;
   float ior           = mat.ior;  // 1 = pure transparency, 1.5111 window glass
   float matShininess  = mat.shininess;
   int   model         = mat.illum;

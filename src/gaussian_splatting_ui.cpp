@@ -3074,6 +3074,10 @@ std::filesystem::path makeAbsolutePath(const std::filesystem::path& base, const 
   if((item).contains(name))                                                                                            \
   (val) = {(item)[name][0], (item)[name][1], (item)[name][2]}
 
+#define LOAD4_FROM3(val, item, name)                                                                                   \
+  if((item).contains(name))                                                                                            \
+  (val) = glm::vec4((item)[name][0], (item)[name][1], (item)[name][2], 0.0f)
+
 // This method is multi pass
 bool GaussianSplattingUI::loadProjectIfNeeded()
 {
@@ -3273,13 +3277,13 @@ bool GaussianSplattingUI::loadProjectIfNeeded()
           for(const auto& matItem : item["materials"])
           {
             auto& mat = mesh.materials[matId];
-            LOAD3(mat.ambient, matItem, "ambient");
-            LOAD3(mat.diffuse, matItem, "diffuse");
+            LOAD4_FROM3(mat.ambient, matItem, "ambient");
+            LOAD4_FROM3(mat.diffuse, matItem, "diffuse");
             LOAD1(mat.illum, matItem, "illum");
             LOAD1(mat.ior, matItem, "ior");
             LOAD1(mat.shininess, matItem, "shininess");
-            LOAD3(mat.specular, matItem, "specular");
-            LOAD3(mat.transmittance, matItem, "transmittance");
+            LOAD4_FROM3(mat.specular, matItem, "specular");
+            LOAD4_FROM3(mat.transmittance, matItem, "transmittance");
 
             matId++;
           }

@@ -25,13 +25,15 @@
 #include <tinyobjloader/tiny_obj_loader.h>
 
 // Structure holding the material
+// NOTE: Layout must match shaders/wavefront.h for GPU access
+// Using float4/vec4 for proper GPU alignment (16-byte aligned)
 struct ObjMaterial
 {
-  glm::vec3 ambient       = glm::vec3(0.1f, 0.1f, 0.1f);
-  glm::vec3 diffuse       = glm::vec3(0.7f, 0.7f, 0.7f);
-  glm::vec3 specular      = glm::vec3(1.0f, 1.0f, 1.0f);
-  glm::vec3 transmittance = glm::vec3(0.0f, 0.0f, 0.0f);
-  glm::vec3 emission      = glm::vec3(0.0f, 0.0f, 0.10);
+  glm::vec4 ambient       = glm::vec4(0.1f, 0.1f, 0.1f, 0.0f);    // .w unused
+  glm::vec4 diffuse       = glm::vec4(0.7f, 0.7f, 0.7f, 0.0f);    // .w unused
+  glm::vec4 specular      = glm::vec4(1.0f, 1.0f, 1.0f, 0.0f);    // .w unused
+  glm::vec4 transmittance = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);    // .w unused
+  glm::vec4 emission      = glm::vec4(0.0f, 0.0f, 0.10f, 0.0f);   // .w unused
   float     shininess     = 0.f;
   float     ior           = 1.0f;  // index of refraction
   float     dissolve      = 1.f;   // not used

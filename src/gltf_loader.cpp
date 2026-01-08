@@ -8,6 +8,41 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb/stb_image.h>
 
+// Helper to decode image data - tries stbi first, falls back to WebP
+static bool decodeImageData(const uint8_t* data, size_t size, TextureData& texData)
+{
+  // Try stbi first (handles PNG, JPEG, BMP, etc.)
+  int w, h, c;
+  uint8_t* pixels = stbi_load_from_memory(data, static_cast<int>(size), &w, &h, &c, 4);
+  if(pixels)
+  {
+    texData.width = static_cast<uint32_t>(w);
+    texData.height = static_cast<uint32_t>(h);
+    texData.channels = 4;
+    texData.pixels.assign(pixels, pixels + w * h * 4);
+    stbi_image_free(pixels);
+    return true;
+  }
+
+  // Try WebP decoder
+  int webpWidth, webpHeight;
+  if(WebPGetInfo(data, size, &webpWidth, &webpHeight))
+  {
+    pixels = WebPDecodeRGBA(data, size, &webpWidth, &webpHeight);
+    if(pixels)
+    {
+      texData.width = static_cast<uint32_t>(webpWidth);
+      texData.height = static_cast<uint32_t>(webpHeight);
+      texData.channels = 4;
+      texData.pixels.assign(pixels, pixels + webpWidth * webpHeight * 4);
+      WebPFree(pixels);
+      return true;
+    }
+  }
+
+  return false;
+}
+
 bool GltfLoader::load(const std::filesystem::path& filepath)
 {
   this->filename = filepath;
@@ -51,6 +86,7 @@ bool GltfLoader::load(const std::filesystem::path& filepath)
       [](auto& arg) {},
       [&](const fastgltf::sources::URI& uri) {
         std::filesystem::path imagePath = filepath.parent_path() / uri.uri.path();
+        // First try to load as file with stbi
         int w, h, c;
         stbi_set_flip_vertically_on_load(false);
         uint8_t* data = stbi_load(imagePath.string().c_str(), &w, &h, &c, 4);
@@ -65,20 +101,35 @@ bool GltfLoader::load(const std::filesystem::path& filepath)
         }
         else
         {
-          LOGW("  Failed to load texture from URI: %s\n", imagePath.string().c_str());
+          // Try loading file and decoding as WebP
+          FILE* f = fopen(imagePath.string().c_str(), "rb");
+          if(f)
+          {
+            fseek(f, 0, SEEK_END);
+            size_t size = ftell(f);
+            fseek(f, 0, SEEK_SET);
+            std::vector<uint8_t> fileData(size);
+            fread(fileData.data(), 1, size, f);
+            fclose(f);
+            if(decodeImageData(fileData.data(), size, texData))
+            {
+              LOGI("  Loaded WebP texture %zu from URI: %s (%dx%d)\n", i, imagePath.string().c_str(), texData.width, texData.height);
+            }
+            else
+            {
+              LOGW("  Failed to decode texture from URI: %s\n", imagePath.string().c_str());
+            }
+          }
+          else
+          {
+            LOGW("  Failed to load texture from URI: %s\n", imagePath.string().c_str());
+          }
         }
       },
       [&](const fastgltf::sources::Vector& vec) {
-        int w, h, c;
-        uint8_t* data = stbi_load_from_memory(reinterpret_cast<const uint8_t*>(vec.bytes.data()), static_cast<int>(vec.bytes.size()), &w, &h, &c, 4);
-        if(data)
+        if(decodeImageData(reinterpret_cast<const uint8_t*>(vec.bytes.data()), vec.bytes.size(), texData))
         {
-          texData.width = static_cast<uint32_t>(w);
-          texData.height = static_cast<uint32_t>(h);
-          texData.channels = 4;
-          texData.pixels.assign(data, data + w * h * 4);
-          stbi_image_free(data);
-          LOGI("  Loaded embedded texture %zu (%dx%d)\n", i, w, h);
+          LOGI("  Loaded embedded texture %zu (%dx%d)\n", i, texData.width, texData.height);
         }
       },
       [&](const fastgltf::sources::BufferView& view) {
@@ -88,45 +139,24 @@ bool GltfLoader::load(const std::filesystem::path& filepath)
           [](auto& arg) {},
           [&](const fastgltf::sources::Vector& vec) {
             const uint8_t* ptr = reinterpret_cast<const uint8_t*>(vec.bytes.data()) + bufferView.byteOffset;
-            int w, h, c;
-            uint8_t* data = stbi_load_from_memory(ptr, static_cast<int>(bufferView.byteLength), &w, &h, &c, 4);
-            if(data)
+            if(decodeImageData(ptr, bufferView.byteLength, texData))
             {
-              texData.width = static_cast<uint32_t>(w);
-              texData.height = static_cast<uint32_t>(h);
-              texData.channels = 4;
-              texData.pixels.assign(data, data + w * h * 4);
-              stbi_image_free(data);
-              LOGI("  Loaded buffer texture %zu (%dx%d)\n", i, w, h);
+              LOGI("  Loaded buffer texture %zu (%dx%d)\n", i, texData.width, texData.height);
             }
           },
           [&](const fastgltf::sources::Array& arr) {
             const uint8_t* ptr = reinterpret_cast<const uint8_t*>(arr.bytes.data()) + bufferView.byteOffset;
-            int w, h, c;
-            uint8_t* data = stbi_load_from_memory(ptr, static_cast<int>(bufferView.byteLength), &w, &h, &c, 4);
-            if(data)
+            if(decodeImageData(ptr, bufferView.byteLength, texData))
             {
-              texData.width = static_cast<uint32_t>(w);
-              texData.height = static_cast<uint32_t>(h);
-              texData.channels = 4;
-              texData.pixels.assign(data, data + w * h * 4);
-              stbi_image_free(data);
-              LOGI("  Loaded buffer texture %zu (%dx%d)\n", i, w, h);
+              LOGI("  Loaded buffer texture %zu (%dx%d)\n", i, texData.width, texData.height);
             }
           }
         }, buffer.data);
       },
       [&](const fastgltf::sources::Array& arr) {
-        int w, h, c;
-        uint8_t* data = stbi_load_from_memory(reinterpret_cast<const uint8_t*>(arr.bytes.data()), static_cast<int>(arr.bytes.size()), &w, &h, &c, 4);
-        if(data)
+        if(decodeImageData(reinterpret_cast<const uint8_t*>(arr.bytes.data()), arr.bytes.size(), texData))
         {
-          texData.width = static_cast<uint32_t>(w);
-          texData.height = static_cast<uint32_t>(h);
-          texData.channels = 4;
-          texData.pixels.assign(data, data + w * h * 4);
-          stbi_image_free(data);
-          LOGI("  Loaded array texture %zu (%dx%d)\n", i, w, h);
+          LOGI("  Loaded array texture %zu (%dx%d)\n", i, texData.width, texData.height);
         }
       }
     }, image.data);
@@ -141,9 +171,9 @@ bool GltfLoader::load(const std::filesystem::path& filepath)
   for(const auto& mat : asset->materials)
   {
     ObjMaterial m;
-    m.ambient  = glm::vec3(0.1f);
-    m.specular = glm::vec3(0.5f);
-    m.transmittance = glm::vec3(0.0f);
+    m.ambient  = glm::vec4(0.1f, 0.1f, 0.1f, 0.0f);
+    m.specular = glm::vec4(0.5f, 0.5f, 0.5f, 0.0f);
+    m.transmittance = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
     m.dissolve  = 1.0f;
     m.ior       = 1.5f;
     m.shininess = 10.0f;
@@ -151,7 +181,7 @@ bool GltfLoader::load(const std::filesystem::path& filepath)
     m.textureID = -1;
 
     const auto& pbr = mat.pbrData;
-    m.diffuse = glm::vec3(pbr.baseColorFactor[0], pbr.baseColorFactor[1], pbr.baseColorFactor[2]);
+    m.diffuse = glm::vec4(pbr.baseColorFactor[0], pbr.baseColorFactor[1], pbr.baseColorFactor[2], 0.0f);
 
     // Check for base color texture
     if(pbr.baseColorTexture.has_value())
@@ -160,15 +190,21 @@ bool GltfLoader::load(const std::filesystem::path& filepath)
       if(texIndex < asset->textures.size())
       {
         const auto& tex = asset->textures[texIndex];
+        // Check standard imageIndex first, then WebP extension
         if(tex.imageIndex.has_value())
         {
           m.textureID = static_cast<int>(*tex.imageIndex);
           LOGI("  Material '%s' uses texture %d\n", mat.name.c_str(), m.textureID);
         }
+        else if(tex.webpImageIndex.has_value())
+        {
+          m.textureID = static_cast<int>(*tex.webpImageIndex);
+          LOGI("  Material '%s' uses WebP texture %d\n", mat.name.c_str(), m.textureID);
+        }
       }
     }
 
-    m.emission = glm::vec3(mat.emissiveFactor.x(), mat.emissiveFactor.y(), mat.emissiveFactor.z());
+    m.emission = glm::vec4(mat.emissiveFactor.x(), mat.emissiveFactor.y(), mat.emissiveFactor.z(), 0.0f);
 
     m_materials.push_back(m);
     m_matNames.push_back(std::string(mat.name));
@@ -185,6 +221,13 @@ bool GltfLoader::load(const std::filesystem::path& filepath)
   {
     for(auto it = mesh.primitives.begin(); it != mesh.primitives.end(); ++it)
     {
+      // Only handle triangle primitives
+      if(it->type != fastgltf::PrimitiveType::Triangles)
+      {
+        LOGW("  Skipping non-triangle primitive (type %d)\n", static_cast<int>(it->type));
+        continue;
+      }
+
       int matId = it->materialIndex.has_value() ? static_cast<int>(*it->materialIndex) : 0;
 
       // Get position accessor
@@ -256,6 +299,22 @@ bool GltfLoader::load(const std::filesystem::path& filepath)
   }
 
   LOGI("  Loaded: %zu vertices, %zu indices\n", m_vertices.size(), m_indices.size());
+
+  // Debug: print first few vertices
+  if(!m_vertices.empty())
+  {
+    LOGI("  First vertex: pos=(%.3f,%.3f,%.3f) nrm=(%.3f,%.3f,%.3f) uv=(%.3f,%.3f)\n",
+         m_vertices[0].pos.x, m_vertices[0].pos.y, m_vertices[0].pos.z,
+         m_vertices[0].nrm.x, m_vertices[0].nrm.y, m_vertices[0].nrm.z,
+         m_vertices[0].texCoord.x, m_vertices[0].texCoord.y);
+    if(m_vertices.size() > 1000)
+    {
+      LOGI("  Vertex 1000: pos=(%.3f,%.3f,%.3f) nrm=(%.3f,%.3f,%.3f) uv=(%.3f,%.3f)\n",
+           m_vertices[1000].pos.x, m_vertices[1000].pos.y, m_vertices[1000].pos.z,
+           m_vertices[1000].nrm.x, m_vertices[1000].nrm.y, m_vertices[1000].nrm.z,
+           m_vertices[1000].texCoord.x, m_vertices[1000].texCoord.y);
+    }
+  }
 
   return !m_vertices.empty();
 }

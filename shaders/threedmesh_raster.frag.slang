@@ -54,7 +54,7 @@ FragmentOutput main(FragmentInput input)
   ObjDesc objResource = objDesc[pcRaster.objIndex];
   ObjMaterial material = objResource.materialAddress[objResource.materialIndexAddress[input.primitiveID]];
 
-  float3 baseColor = material.diffuse;
+  float3 baseColor = material.diffuse.xyz;
   
   // Sample texture if available
   if(material.textureID >= 0 && material.textureID < 16)
@@ -67,7 +67,7 @@ FragmentOutput main(FragmentInput input)
 
   // Create a modified material with texture color
   ObjMaterial texMaterial = material;
-  texMaterial.diffuse = baseColor;
+  texMaterial.diffuse = float4(baseColor, 0.0);
 
   wavefrontComputeShadingDirectOnly(lights, frameInfo.lightCount, input.worldPos, input.worldNrm, texMaterial, input.viewDir, color);
 

@@ -44,13 +44,14 @@ struct ObjVertex  // See ObjLoader, copy of VertexObj
 };
 
 // Structure holding the material for mesh objects
+// NOTE: Using float4 for proper GPU alignment (matches C++ struct)
 struct ObjMaterial
 {
-  float3 ambient;
-  float3 diffuse;
-  float3 specular;
-  float3 transmittance;
-  float3 emission;
+  float4 ambient;       // .w unused
+  float4 diffuse;       // .w unused
+  float4 specular;      // .w unused
+  float4 transmittance; // .w unused
+  float4 emission;      // .w unused
   float  shininess;
   float  ior;
   float  dissolve;

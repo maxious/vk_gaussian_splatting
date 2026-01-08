@@ -43,15 +43,15 @@ bool ObjLoader::load(const std::filesystem::path& filename)
   for(const auto& material : reader.GetMaterials())
   {
     ObjMaterial m;
-    m.ambient       = glm::vec3(material.ambient[0], material.ambient[1], material.ambient[2]);
-    m.diffuse       = glm::vec3(material.diffuse[0], material.diffuse[1], material.diffuse[2]);
-    m.specular      = glm::vec3(material.specular[0], material.specular[1], material.specular[2]);
-    m.emission      = glm::vec3(material.emission[0], material.emission[1], material.emission[2]);
-    m.transmittance = glm::vec3(material.transmittance[0], material.transmittance[1], material.transmittance[2]);
+    m.ambient       = glm::vec4(material.ambient[0], material.ambient[1], material.ambient[2], 0.0f);
+    m.diffuse       = glm::vec4(material.diffuse[0], material.diffuse[1], material.diffuse[2], 0.0f);
+    m.specular      = glm::vec4(material.specular[0], material.specular[1], material.specular[2], 0.0f);
+    m.emission      = glm::vec4(material.emission[0], material.emission[1], material.emission[2], 0.0f);
+    m.transmittance = glm::vec4(material.transmittance[0], material.transmittance[1], material.transmittance[2], 0.0f);
     m.dissolve      = material.dissolve;
     m.ior           = material.ior;
     m.shininess     = material.shininess;
-    if(m.transmittance.x != 0.0 || m.transmittance.y != 0.0 || m.transmittance.x != 0.0)
+    if(m.transmittance.x != 0.0 || m.transmittance.y != 0.0 || m.transmittance.z != 0.0)
       m.illum = 2;  // refractive
     else if(material.illum > 1)
       m.illum = 1;  // reflective

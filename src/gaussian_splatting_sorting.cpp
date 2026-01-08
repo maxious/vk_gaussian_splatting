@@ -258,6 +258,16 @@ void GaussianSplatting::drawSplatPrimitives(VkCommandBuffer cmd, const uint32_t 
 
 void GaussianSplatting::drawMeshPrimitives(VkCommandBuffer cmd)
 {
+  static int logCounter = 0;
+  if(logCounter++ < 5)
+  {
+    LOGI("drawMeshPrimitives: instances=%zu\n", m_meshSetVk.instances.size());
+    for(size_t i = 0; i < m_meshSetVk.instances.size(); ++i)
+    {
+      const auto& model = m_meshSetVk.meshes[m_meshSetVk.instances[i].objIndex];
+      LOGI("  Instance %zu: nbIndices=%u, nbVertices=%u\n", i, model.nbIndices, model.nbVertices);
+    }
+  }
 
   NVVK_DBG_SCOPE(cmd);
 
