@@ -242,15 +242,20 @@ TRELLIS.2 uses sparse attention which requires a compatible backend:
 
 | Backend | XPU Support | Performance | Notes |
 |---------|-------------|-------------|-------|
-| `aule` | ✅ Yes | Good | Vulkan-based, recommended for XPU |
-| `sdpa` | ✅ Yes | Moderate | PyTorch built-in, per-sequence processing |
-| `flash_attn` | ❌ No | Best | CUDA-only, not available on XPU |
+| `sdpa` | ✅ Yes | **Best for XPU** | PyTorch built-in, runs natively on XPU |
+| `aule` | ⚠️ Limited | Slow | Vulkan backend, head_dim ≤ 64 only, requires CPU transfer |
+| `flash_attn` | ❌ No | Best on CUDA | CUDA-only, not available on XPU |
 | `xformers` | ❌ No | Good | CUDA-only, not available on XPU |
 
-Set via environment variable:
+**Recommended for XPU**: Use `sdpa` - it runs natively on Intel XPU without data transfers.
+
 ```bash
-export ATTN_BACKEND=aule
+export ATTN_BACKEND=sdpa
 ```
+
+**Note**: Aule-Attention's Vulkan backend has limitations:
+- Only supports head_dim ≤ 64 (TRELLIS.2 uses 128, so it falls back to SDPA)
+- Requires XPU→CPU→Vulkan→CPU→XPU transfers (slower than native SDPA)
 
 ## Troubleshooting
 

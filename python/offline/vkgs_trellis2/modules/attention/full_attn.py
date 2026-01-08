@@ -139,6 +139,32 @@ def scaled_dot_product_attention(*args, **kwargs):
         elif num_all_args == 2:
             k, v = kv.unbind(dim=2)
         out = _naive_sdpa(q, k, v)
+    elif config.BACKEND == 'aule':
+        # Use Aule-Attention (Vulkan-based, works on Intel XPU/AMD/NVIDIA)
+        # Note: Vulkan backend has head_dim <= 64 limitation, falls back to SDPA for larger dims
+        if num_all_args == 1:
+            q, k, v = qkv.unbind(dim=2)
+        elif num_all_args == 2:
+            k, v = kv.unbind(dim=2)
+        head_dim = q.shape[-1]
+        if head_dim > 64:
+            # Aule Vulkan backend doesn't support head_dim > 64, use SDPA fallback
+            from torch.nn.functional import scaled_dot_product_attention as sdpa
+            q = q.permute(0, 2, 1, 3)   # [N, H, L, C]
+            k = k.permute(0, 2, 1, 3)   # [N, H, L, C]
+            v = v.permute(0, 2, 1, 3)   # [N, H, L, C]
+            out = sdpa(q, k, v)         # [N, H, L, C]
+            out = out.permute(0, 2, 1, 3)   # [N, L, H, C]
+        else:
+            import aule
+            # Aule expects [N, H, L, C] format and float32 (Vulkan backend doesn't support bf16)
+            orig_dtype = q.dtype
+            q = q.permute(0, 2, 1, 3).float().cpu()   # [N, H, L, C]
+            k = k.permute(0, 2, 1, 3).float().cpu()   # [N, H, L, C]
+            v = v.permute(0, 2, 1, 3).float().cpu()   # [N, H, L, C]
+            out = aule.flash_attention(q, k, v, causal=False)  # [N, H, L, C]
+            out = torch.from_numpy(out).to(device=device, dtype=orig_dtype)
+            out = out.permute(0, 2, 1, 3)   # [N, L, H, C]
     else:
         raise ValueError(f"Unknown attention module: {config.BACKEND}")
     

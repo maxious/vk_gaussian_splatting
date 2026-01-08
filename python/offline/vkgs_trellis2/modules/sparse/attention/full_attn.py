@@ -241,13 +241,19 @@ def sparse_scaled_dot_product_attention(*args, **kwargs):
         out = torch.cat(out_list, dim=0)
     elif config.ATTN == 'aule':
         # Use Aule-Attention (Vulkan-based, works on Intel XPU/AMD/NVIDIA)
+        # Note: Vulkan backend has head_dim <= 64 limitation, falls back to SDPA for larger dims
         # https://github.com/AuleTechnologies/Aule-Attention
-        import aule
         if num_all_args == 1:
             q, k, v = qkv.unbind(dim=1)  # qkv is [T, 3, H, C]
         elif num_all_args == 2:
             k, v = kv.unbind(dim=1)
         # q, k, v are now [T, H, C]
+        head_dim = q.shape[-1]
+        use_aule = head_dim <= 64
+        if use_aule:
+            import aule
+        else:
+            from torch.nn.functional import scaled_dot_product_attention
         # Process each sequence individually (Aule expects [B, H, L, C] format)
         N = len(q_seqlen)
         out_list = []
@@ -260,9 +266,17 @@ def sparse_scaled_dot_product_attention(*args, **kwargs):
             q_i = q[q_offset:q_offset+q_sl].permute(1, 0, 2).unsqueeze(0)
             k_i = k[kv_offset:kv_offset+kv_sl].permute(1, 0, 2).unsqueeze(0)
             v_i = v[kv_offset:kv_offset+kv_sl].permute(1, 0, 2).unsqueeze(0)
-            # Aule expects [B, H, L, C] and returns same shape
-            # causal=False for sparse attention (not autoregressive)
-            out_i = aule.flash_attention(q_i, k_i, v_i, causal=False)  # [1, H, L_q, C]
+            if use_aule:
+                # Aule expects float32, convert and transfer to CPU for Vulkan
+                orig_dtype = q_i.dtype
+                q_i = q_i.float().cpu()
+                k_i = k_i.float().cpu()
+                v_i = v_i.float().cpu()
+                out_i = aule.flash_attention(q_i, k_i, v_i, causal=False)  # [1, H, L_q, C]
+                out_i = torch.from_numpy(out_i).to(device=device, dtype=orig_dtype)
+            else:
+                # Fallback to SDPA for head_dim > 64
+                out_i = scaled_dot_product_attention(q_i, k_i, v_i)  # [1, H, L_q, C]
             # Back to [L, H, C]
             out_i = out_i.squeeze(0).permute(1, 0, 2)
             out_list.append(out_i)
