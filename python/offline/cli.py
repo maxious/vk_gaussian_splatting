@@ -239,6 +239,11 @@ def main():
     trellis2_xpu_parser.add_argument(
         "--num-samples", type=int, default=1, help="Number of samples per image"
     )
+    trellis2_xpu_parser.add_argument(
+        "--multi-xpu",
+        action="store_true",
+        help="Enable Multi-XPU inference using MultiXPUSpconv (requires >1 XPU)",
+    )
     trellis2_xpu_parser.add_argument("--seed", type=int, default=42, help="Random seed")
     trellis2_xpu_parser.add_argument("-v", "--verbose", action="store_true")
 
@@ -355,6 +360,11 @@ def main():
         )
     elif args.command == "trellis2-xpu":
         from .processors.trellis2_xpu import Trellis2XPUProcessor
+        from .vkgs_trellis2.modules.sparse.conv import config as conv_config
+
+        if args.multi_xpu:
+            logger.info("Enabling Multi-XPU inference")
+            conv_config.FLEX_GEMM_USE_MULTI_XPU = True
 
         processor = Trellis2XPUProcessor(
             model_id=args.model,
