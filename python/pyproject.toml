@@ -16,7 +16,7 @@ dependencies = [
     "torch>=2.7",
     "torchvision>=0.19",
     "numba>=0.59",
-    "depth-anything-3 @ git+https://github.com/ByteDance-Seed/Depth-Anything-3@main",
+    # "depth-anything-3 @ git+https://github.com/ByteDance-Seed/Depth-Anything-3@main",
 ]
 
 [project.optional-dependencies]
@@ -68,8 +68,10 @@ offline = [
     "pymeshfix>=0.17",
     "igraph>=0.11",
     "utils3d @ git+https://github.com/EasternJournalist/utils3d.git@9a4eb15e4021b67b12c460c7057d642626897ec8",
-    # TRELLIS training dependencies (kaolin for flexicubes)
-    "kaolin>=0.17; sys_platform != 'win32'",
+    # TRELLIS training dependencies (kaolin for flexicubes) - disabled for compatibility
+    # "kaolin>=0.17; sys_platform != 'win32'",
+    # Matrix3D dependencies (vendored in python/matrix3d/)
+    "pytorch3d",
 ]
 
 # TRELLIS.2 GPU extensions (require CUDA compilation)

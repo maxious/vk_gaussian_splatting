@@ -10,6 +10,7 @@ import numpy as np
 
 from .ply_io import load_static_gaussian_ply, write_freetimegs_ply, write_static_gaussian_ply
 from .processors.da3 import DA3GaussianProcessor
+from .processors.matrix3d import Matrix3DGaussianProcessor
 from .processors.sharp import SharpGaussianProcessor
 from .types import GaussianFrame
 from .video_utils import extract_video_frames, prune_gaussian_frame
@@ -168,7 +169,9 @@ def export_video_to_gaussian_plys(
     fps = cap.get(cv2.CAP_PROP_FPS)
     cap.release()
 
-    if "sharp" in model_id.lower():
+    if "matrix3d" in model_id.lower():
+        processor = Matrix3DGaussianProcessor(device=device)
+    elif "sharp" in model_id.lower():
         # Parse SHARP model configuration
         model_path = None
         vit_preset = "dinov2l16_384"  # Default
@@ -460,7 +463,9 @@ def export_images_to_gaussian_plys(
 
     timestamps_ms = [i * (1000.0 / fps) for i in range(len(image_paths))]
 
-    if "sharp" in model_id.lower():
+    if "matrix3d" in model_id.lower():
+        processor = Matrix3DGaussianProcessor(device=device)
+    elif "sharp" in model_id.lower():
         # Heuristic: if model_id contains "sharp", use Sharp processor
         model_path = (
             model_id if Path(model_id).exists() or "\\" in model_id or "/" in model_id else None
