@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import shutil
+import subprocess
 from pathlib import Path
 
 import numpy as np
@@ -16,6 +17,51 @@ from .types import GaussianFrame
 from .video_utils import extract_video_frames, prune_gaussian_frame
 
 logger = logging.getLogger(__name__)
+
+
+def extract_audio_ffmpeg(video_path: Path, output_path: Path) -> bool:
+    if not shutil.which("ffmpeg"):
+        logger.warning("ffmpeg not found, skipping audio extraction")
+        return False
+
+    try:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        cmd = [
+            "ffmpeg",
+            "-i",
+            str(video_path.expanduser()),
+            "-vn",
+            "-acodec",
+            "libmp3lame",
+            "-ab",
+            "192k",
+            "-y",
+            str(output_path.expanduser()),
+        ]
+
+        logger.info(f"Extracting audio to {output_path}")
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        logger.info(f"Audio extracted successfully: {output_path}")
+        return True
+
+    except subprocess.CalledProcessError as e:
+        logger.error(f"ffmpeg failed: {e}")
+        logger.error(f"stderr: {e.stderr}")
+        return False
+    except FileNotFoundError:
+        logger.error("ffmpeg not found in PATH")
+        return False
+
+
+def check_existing_plys(output_path: Path) -> set[int]:
+    existing_frames = set()
+    for ply_file in output_path.glob("frame_*.ply"):
+        try:
+            frame_num = int(ply_file.stem.split("_")[1])
+            existing_frames.add(frame_num)
+        except (ValueError, IndexError):
+            continue
+    return existing_frames
 
 
 def _export_sog(
@@ -131,6 +177,8 @@ def export_video_to_gaussian_plys(
     masks_dir: Path | None = None,
     mask_first_frame: bool = False,
     remove_black_splats: bool = True,
+    extract_audio: bool = False,
+    resume_processing: bool = True,
 ) -> None:
     """Convert video to Gaussian PLY files.
 
@@ -150,7 +198,22 @@ def export_video_to_gaussian_plys(
         masks_dir: Directory containing masks for background removal
         mask_first_frame: Whether to apply mask to the first frame
         remove_black_splats: Whether to remove black/background splats
+        extract_audio: Whether to also extract audio to MP3
+        resume_processing: Whether to skip already processed frames
     """
+    if extract_audio:
+        audio_path = output_path / "audio.mp3"
+        if not audio_path.exists():
+            extract_audio_ffmpeg(video_path, audio_path)
+
+    existing_frames = set()
+    if resume_processing:
+        existing_frames = check_existing_plys(output_path)
+        if existing_frames:
+            logger.info(
+                f"Found {len(existing_frames)} existing PLY files, will skip processed frames"
+            )
+
     temp_dir = (
         output_path.parent / "temp_frames" if mode == "freetimegs" else output_path / "temp_frames"
     )
@@ -162,6 +225,20 @@ def export_video_to_gaussian_plys(
 
     if not frame_paths:
         raise ValueError("No frames extracted from video")
+
+    frames_to_process = []
+    timestamps_to_process = []
+
+    for i, (frame_path, timestamp) in enumerate(zip(frame_paths, timestamps_ms)):
+        if i not in existing_frames:
+            frames_to_process.append(frame_path)
+            timestamps_to_process.append(timestamp)
+
+    if not frames_to_process:
+        logger.info("All frames already processed!")
+        return
+
+    logger.info(f"Processing {len(frames_to_process)} frames ({len(existing_frames)} already done)")
 
     import cv2
 
@@ -198,7 +275,7 @@ def export_video_to_gaussian_plys(
 
     all_frames: list[GaussianFrame] = []
 
-    for chunk_start in range(0, len(frame_paths), chunk_size):
+    for chunk_start in range(0, len(frames_to_process), chunk_size):
         chunk_end = min(chunk_start + chunk_size, len(frame_paths))
         chunk_paths = frame_paths[chunk_start:chunk_end]
         chunk_timestamps = timestamps_ms[chunk_start:chunk_end]

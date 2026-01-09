@@ -87,6 +87,15 @@ def main():
         help="Keep black splats instead of removing them (default: remove)",
     )
     export_parser.add_argument("--device", type=str, default="cuda")
+    export_parser.add_argument(
+        "--extract-audio", action="store_true", help="Also extract audio to MP3"
+    )
+    export_parser.add_argument(
+        "--resume-processing",
+        action="store_true",
+        default=True,
+        help="Skip already processed frames",
+    )
     export_parser.add_argument("-v", "--verbose", action="store_true")
 
     postprocess_parser = subparsers.add_parser(
@@ -325,6 +334,7 @@ def main():
             args.input,
             args.output,
             mode=args.mode,
+            format=args.format,
             model_id=args.model,
             frame_skip=args.frame_skip,
             chunk_size=args.chunk_size,
@@ -336,6 +346,8 @@ def main():
             masks_dir=getattr(args, "masks_dir", None),
             mask_first_frame=not getattr(args, "no_mask_first_frame", False),
             remove_black_splats=not getattr(args, "no_remove_black_splats", False),
+            extract_audio=getattr(args, "extract_audio", False),
+            resume_processing=getattr(args, "resume_processing", True),
         )
     elif args.command == "postprocess":
         postprocess_plys_to_freetimegs(
