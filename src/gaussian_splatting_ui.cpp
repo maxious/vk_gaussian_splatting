@@ -198,6 +198,12 @@ void GaussianSplattingUI::onPreRender()
   }
 #endif
 
+  // Update animation state
+  if (isAnimationActive())
+  {
+    updateAnimation(ImGui::GetIO().DeltaTime * 1000.0f);
+  }
+
   // Handle auto-screenshot with delay
   if(m_autoScreenshotPending && m_app)
   {
@@ -424,6 +430,15 @@ void GaussianSplattingUI::onUIMenu()
           prmFrame.vdzUseVideoTexture = 1;
           m_requestUpdateShaders = true;
         }
+      }
+    }
+    ImGui::Separator();
+    if(ImGui::MenuItem(ICON_MS_MOVIE " Open PLY Sequence...", ""))
+    {
+      auto dirPath = nvgui::windowOpenFolderDialog(m_app->getWindowHandle(), "Select PLY Sequence Folder");
+      if(!dirPath.empty())
+      {
+        enablePlySequencePlayback(dirPath);
       }
     }
     ImGui::Separator();
@@ -981,25 +996,14 @@ void GaussianSplattingUI::onUIRender()
   /////////////////
   // Draw the UI parts
 
-guiDrawAssetsWindow();
+  guiDrawAssetsWindow();
     guiDrawPropertiesWindow();
     guiDrawRendererStatisticsWindow();
     guiDrawMemoryStatisticsWindow();
-    
-    // Animation controls
-    if (m_animationController) {
-        renderAnimationControls(true);
-        renderTimelineControls();
-        renderAudioControls();
-        renderProgressDisplay();
-    }
-    
-    // Animation controls
-    if (m_animationController) {
-        renderAnimationControls(true);
-        renderTimelineControls();
-        renderAudioControls();
-        renderProgressDisplay();
+
+    // Animation UI
+    if (m_animationUI) {
+        m_animationUI->renderAnimationControls(true);
     }
 
   guiDrawFooterBar();

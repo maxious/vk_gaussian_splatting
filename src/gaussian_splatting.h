@@ -115,6 +115,10 @@
 
 namespace vk_gaussian_splatting {
 
+// Forward declarations for animation
+class AnimationController;
+class AnimationUI;
+
 
 
 
@@ -661,6 +665,15 @@ protected:
   VkDescriptorSetLayout    m_descriptorSetLayoutPostProcess = VK_NULL_HANDLE;
   VkDescriptorSet          m_descriptorSetPostProcess       = VK_NULL_HANDLE;
   VkDescriptorPool         m_descriptorPoolPostProcess      = VK_NULL_HANDLE;
+
+  // PLY Sequence Animation
+  std::shared_ptr<AnimationController> m_animationController;
+  std::unique_ptr<AnimationUI>         m_animationUI;
+  bool                                  m_isAnimationPlaying = false;
+
+  void enablePlySequencePlayback(const std::filesystem::path& dirPath);
+  void updateAnimation(float deltaTime);
+  bool isAnimationActive() const { return m_isAnimationPlaying && m_animationController != nullptr; }
 
 };
 

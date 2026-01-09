@@ -28,6 +28,8 @@
 #include "gaussian_splatting.h"
 #include "hdr_support.h"
 #include "utilities.h"
+#include "animation_controller.h"
+#include "animation_ui.h"
 
 #include <nvutils/logger.hpp>
 #include <nvvk/barriers.hpp>
@@ -1207,6 +1209,56 @@ void GaussianSplatting::copyToXrSwapchain(VkCommandBuffer cmd)
 }
 
 #endif  // WITH_OPENXR
+
+void GaussianSplatting::enablePlySequencePlayback(const std::filesystem::path& dirPath)
+{
+    // Close any existing animation
+    if (m_animationController) {
+        m_animationController->closeSequence();
+        m_animationController.reset();
+    }
+
+    // Initialize animation UI if not already done
+    if (!m_animationUI) {
+        m_animationUI = std::make_unique<AnimationUI>();
+    }
+
+    // Create animation controller and load sequence
+    m_animationController = std::make_shared<AnimationController>();
+    if (!m_animationController->loadSequence(dirPath)) {
+        LOGE("Failed to load PLY sequence from: %s\n", dirPath.string().c_str());
+        m_animationController.reset();
+        return;
+    }
+
+    // Initialize animation UI
+    m_animationUI->initialize(m_animationController);
+
+    m_isAnimationPlaying = true;
+
+    LOGI("PLY sequence loaded: %zu frames from %s\n",
+         m_animationController->getTotalFrames(), dirPath.string().c_str());
+}
+
+void GaussianSplatting::updateAnimation(float deltaTime)
+{
+    if (!m_animationController || !m_isAnimationPlaying) {
+        return;
+    }
+
+    // Update animation state
+    m_animationController->update(deltaTime);
+
+    // Get current frame and update splat set for rendering
+    SplatSet currentFrame;
+    if (m_animationController->getCurrentFrameData(currentFrame)) {
+        // Replace the current splat set with the animation frame
+        m_splatSet = std::move(currentFrame);
+
+        // Trigger VRAM update on next frame
+        m_requestUpdateSplatData = true;
+    }
+}
 
 }  // namespace vk_gaussian_splatting
 
