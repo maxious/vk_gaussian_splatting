@@ -981,13 +981,26 @@ void GaussianSplattingUI::onUIRender()
   /////////////////
   // Draw the UI parts
 
-  guiDrawAssetsWindow();
-
-  guiDrawPropertiesWindow();
-
-  guiDrawRendererStatisticsWindow();
-
-  guiDrawMemoryStatisticsWindow();
+guiDrawAssetsWindow();
+    guiDrawPropertiesWindow();
+    guiDrawRendererStatisticsWindow();
+    guiDrawMemoryStatisticsWindow();
+    
+    // Animation controls
+    if (m_animationController) {
+        renderAnimationControls(true);
+        renderTimelineControls();
+        renderAudioControls();
+        renderProgressDisplay();
+    }
+    
+    // Animation controls
+    if (m_animationController) {
+        renderAnimationControls(true);
+        renderTimelineControls();
+        renderAudioControls();
+        renderProgressDisplay();
+    }
 
   guiDrawFooterBar();
 
