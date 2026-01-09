@@ -24,10 +24,10 @@ The logger writes to both console and log file, making debugging easier.
 ### Vulkan SDK Setup
 
 Ensure the Vulkan SDK is installed and the environment variables are set.
-If you installed the SDK to `~/vulkan` (e.g., `~/vulkan/1.4.335.0/`), source the setup script before building:
+If you installed the SDK to `/opt/vulkan` (e.g., `/opt/vulkan/1.4.335.0/`), source the setup script before building:
 
 ```bash
-source ~/vulkan/1.4.335.0/setup-env.sh
+source /opt/vulkan/1.4.335.0/setup-env.sh
 ```
 
 ### Building
@@ -41,6 +41,10 @@ cmake -S . -B build
 cmake --build build --config Release
 cmake --build build --config Debug
 ```
+
+**Important Build Notes:**
+- **DO NOT run `rm -rf build`** - CMake caches configuration and re-running is faster. Only delete build if you need a completely clean slate.
+- **Slang comes from Vulkan SDK** at `/opt/vulkan/1.4.335.0/x86_64/` - no need to specify `Slang_ROOT`
 
 ### Running Tests
 

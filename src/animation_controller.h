@@ -53,7 +53,7 @@ enum class PlaybackState {
 class AnimationController {
 public:
     AnimationController() = default;
-    ~AnimationController() = default;
+    ~AnimationController();
 
     /**
      * @brief Load a PLY sequence directory
@@ -139,13 +139,37 @@ public:
     AudioPlayer* getAudioPlayer() { return m_audioPlayer.get(); }
 
     /**
+     * @brief Check if audio is available
+     */
+    bool hasAudio() const { return m_hasAudio; }
+
+    /**
+     * @brief Get volume level (0.0 to 1.0)
+     */
+    float getVolume() const { return m_volume; }
+
+    /**
+     * @brief Set volume level
+     */
+    void setVolume(float volume);
+
+    /**
+     * @brief Seek to specific frame
+     */
+    void seekToFrame(size_t frameIndex);
+
+    /**
+     * @brief Get current frame data for rendering
+     */
+    bool getCurrentFrameData(SplatSet& outFrame);
+
+    /**
      * @brief Update playback state (call during main loop)
      * @param deltaTime Time since last update in milliseconds
      */
     void update(float deltaTime);
 
 private:
-    void seekToFrame(size_t frameIndex);
     void synchronizeAudio();
     void updatePosition();
     
@@ -160,6 +184,7 @@ private:
     size_t                                 m_totalFrames = 0;
     
     float                                   m_playbackSpeed = 1.0f;
+    float                                   m_volume = 1.0f;
     bool                                    m_isLooping = false;
     bool                                    m_hasAudio = false;
     

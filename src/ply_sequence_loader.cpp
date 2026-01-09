@@ -131,6 +131,9 @@ bool PlySequenceLoader::getFrame(size_t index, SplatSet& outFrame) {
     // Check cache first
     auto it = m_frameCache.find(index);
     if (it != m_frameCache.end()) {
+        // Move to front (most recently used)
+        m_lruList.remove(index);
+        m_lruList.push_front(index);
         outFrame = it->second;
         return true;
     }
@@ -143,18 +146,51 @@ bool PlySequenceLoader::getFrame(size_t index, SplatSet& outFrame) {
         return false;
     }
     
-    // Add to cache (with LRU eviction if needed)
+    // Estimate frame size from first load and adjust cache if needed
+    updateAdaptiveCacheSize(outFrame);
+    
+    // Add to cache with LRU eviction
     if (m_frameCache.size() >= m_maxCacheSize) {
-        // Simple LRU: remove oldest entry
-        size_t oldestIndex = index;
-        if (!m_frameCache.empty()) {
-            oldestIndex = m_frameCache.begin()->first;
-        }
-        m_frameCache.erase(oldestIndex);
+        // Remove least recently used (back of list)
+        size_t evictIndex = m_lruList.back();
+        m_lruList.pop_back();
+        m_frameCache.erase(evictIndex);
     }
     
+    m_lruList.push_front(index);
     m_frameCache[index] = outFrame;
     return true;
+}
+
+void PlySequenceLoader::updateAdaptiveCacheSize(const SplatSet& frame) {
+    // Estimate frame memory: splats * (3D position + 4D rotation + 3D scale + 4D SH + 4D opacity)
+    // Each splat is approximately: 3*4 + 4*4 + 3*4 + 48*4 + 4*4 = ~248 bytes
+    // We use a conservative estimate of 256 bytes per splat for GPU memory
+    static constexpr size_t BYTES_PER_SPLAT = 256;
+    
+    m_estimatedFrameSize = frame.splats.size() * BYTES_PER_SPLAT;
+    
+    // Adaptive cache size based on target memory
+    if (m_targetMemoryMB > 0 && m_estimatedFrameSize > 0) {
+        size_t targetBytes = m_targetMemoryMB * 1024 * 1024;
+        size_t newCacheSize = targetBytes / m_estimatedFrameSize;
+        newCacheSize = std::max(newCacheSize, static_cast<size_t>(2));  // Minimum 2 frames
+        newCacheSize = std::min(newCacheSize, static_cast<size_t>(50)); // Maximum 50 frames
+        
+        // Only update if significantly different to avoid thrashing
+        if (newCacheSize > m_maxCacheSize * 2 || newCacheSize < m_maxCacheSize / 2) {
+            m_maxCacheSize = newCacheSize;
+            LOGD("PLY sequence: Adaptive cache size set to %zu frames (~%.1f MB per frame)", 
+                 m_maxCacheSize, m_estimatedFrameSize / (1024.0 * 1024.0));
+            
+            // Evict if cache is now too large
+            while (m_frameCache.size() > m_maxCacheSize && !m_lruList.empty()) {
+                size_t evictIndex = m_lruList.back();
+                m_lruList.pop_back();
+                m_frameCache.erase(evictIndex);
+            }
+        }
+    }
 }
 
 bool PlySequenceLoader::getFrameByTimestamp(uint32_t timestampMs, SplatSet& outFrame) {
@@ -209,6 +245,82 @@ bool PlySequenceLoader::loadFrame(const PlyFrameInfo& frameInfo, SplatSet& outFr
 void PlySequenceLoader::clearCache() {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_frameCache.clear();
+}
+
+void PlySequenceLoader::evictOldFrames(size_t currentFrameIndex) {
+    // For forward-only playback, evict frames that are now behind our sliding window
+    // Keep frames: [current - cacheSize + 1, current]
+    if (m_maxCacheSize == 0) {
+        m_frameCache.clear();
+        return;
+    }
+    
+    size_t minCachedIndex = (currentFrameIndex >= m_maxCacheSize) ? (currentFrameIndex - m_maxCacheSize + 1) : 0;
+    
+    // Erase all frames before minCachedIndex
+    for (auto it = m_frameCache.begin(); it != m_frameCache.end(); ) {
+        if (it->first < minCachedIndex) {
+            it = m_frameCache.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+bool PlySequenceLoader::getFrame(size_t index, SplatSet& outFrame) {
+    if (!m_isOpen || index >= m_frames.size()) {
+        return false;
+    }
+    
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    // Check cache first
+    auto it = m_frameCache.find(index);
+    if (it != m_frameCache.end()) {
+        outFrame = it->second;
+        return true;
+    }
+    
+    // Load from disk
+    const PlyFrameInfo& frameInfo = m_frames[index];
+    if (!loadFrame(frameInfo, outFrame)) {
+        LOGE("PLY sequence: Failed to load frame %zu: %s", 
+               index, frameInfo.filepath.string().c_str());
+        return false;
+    }
+    
+    // Estimate frame size and adjust cache if needed
+    updateAdaptiveCacheSize(outFrame);
+    
+    // Evict old frames that are now outside our sliding window
+    evictOldFrames(index);
+    
+    // Add new frame to cache
+    m_frameCache[index] = outFrame;
+    return true;
+}
+
+void PlySequenceLoader::updateAdaptiveCacheSize(const SplatSet& frame) {
+    // Estimate frame memory: splats * (3D position + 4D rotation + 3D scale + 4D SH + 4D opacity)
+    // Each splat is approximately: 3*4 + 4*4 + 3*4 + 48*4 + 4*4 = ~248 bytes
+    // We use a conservative estimate of 256 bytes per splat for GPU memory
+    constexpr size_t BYTES_PER_SPLAT = 256;
+    
+    m_estimatedFrameSize = frame.splats.size() * BYTES_PER_SPLAT;
+    
+    // Adaptive cache size based on target memory
+    if (m_targetMemoryMB > 0 && m_estimatedFrameSize > 0) {
+        size_t targetBytes = m_targetMemoryMB * 1024 * 1024;
+        size_t newCacheSize = targetBytes / m_estimatedFrameSize;
+        newCacheSize = std::max(static_cast<size_t>(2), newCacheSize);
+        newCacheSize = std::min(static_cast<size_t>(50), newCacheSize);
+        
+        if (newCacheSize > m_maxCacheSize * 2 || newCacheSize < m_maxCacheSize / 2) {
+            m_maxCacheSize = newCacheSize;
+            LOGD("PLY sequence: Adaptive cache size set to %zu frames (~%.1f MB per frame)", 
+                 m_maxCacheSize, m_estimatedFrameSize / (1024.0 * 1024.0));
+        }
+    }
 }
 
 } // namespace vk_gaussian_splatting

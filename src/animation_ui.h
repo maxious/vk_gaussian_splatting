@@ -51,9 +51,8 @@ public:
     /**
      * @brief Render animation controls UI
      * @param showControls Whether to show the controls
-     * @return True if animation is currently playing
      */
-    bool renderAnimationControls(bool showControls = true);
+    void renderAnimationControls(bool showControls = true);
 
     /**
      * @brief Get the current frame splat data for rendering

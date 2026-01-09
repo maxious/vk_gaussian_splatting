@@ -136,6 +136,20 @@ void AnimationController::setLooping(bool enabled) {
     m_isLooping = enabled;
 }
 
+void AnimationController::setVolume(float volume) {
+    m_volume = std::max(0.0f, std::min(1.0f, volume));
+    if (m_hasAudio && m_audioPlayer) {
+        m_audioPlayer->setVolume(m_volume);
+    }
+}
+
+bool AnimationController::getCurrentFrameData(SplatSet& outFrame) {
+    if (!m_plyLoader || m_currentFrame >= m_totalFrames) {
+        return false;
+    }
+    return m_plyLoader->getFrame(m_currentFrame, outFrame);
+}
+
 void AnimationController::update(float deltaTime) {
     if (m_playbackState != PlaybackState::PLAYING || m_totalFrames == 0) {
         return;

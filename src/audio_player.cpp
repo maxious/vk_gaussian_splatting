@@ -149,23 +149,26 @@ bool AudioPlayer::initFFmpeg() {
 
 void AudioPlayer::cleanup() {
     if (m_resampler) {
-        swr_free(&m_resampler);
+        SwrContext** resamplerPtr = reinterpret_cast<SwrContext**>(&m_resampler);
+        swr_free(resamplerPtr);
         m_resampler = nullptr;
     }
-    
+
     if (m_audioBuffer) {
         av_free(m_audioBuffer);
         m_audioBuffer = nullptr;
         m_audioBufferSize = 0;
     }
-    
+
     if (m_codecContext) {
-        avcodec_free_context(&m_codecContext);
+        AVCodecContext** codecCtxPtr = reinterpret_cast<AVCodecContext**>(&m_codecContext);
+        avcodec_free_context(codecCtxPtr);
         m_codecContext = nullptr;
     }
-    
+
     if (m_formatContext) {
-        avformat_close_input(&m_formatContext);
+        AVFormatContext** fmtCtxPtr = reinterpret_cast<AVFormatContext**>(&m_formatContext);
+        avformat_close_input(fmtCtxPtr);
         m_formatContext = nullptr;
     }
 }
@@ -212,20 +215,6 @@ void AudioPlayer::stop() {
 void AudioPlayer::setVolume(float volume) {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_volume = std::max(0.0f, std::min(1.0f, volume));
-}
-
-float AudioPlayer::getVolume() const {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    return m_volume;
-}
-
-uint64_t AudioPlayer::getDurationMs() const {
-    return m_durationMs;
-}
-
-uint64_t AudioPlayer::getPositionMs() const {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    return m_positionMs;
 }
 
 bool AudioPlayer::seek(uint64_t positionMs) {

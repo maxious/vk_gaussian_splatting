@@ -19,9 +19,18 @@
 
 #pragma once
 
-#include <string>
 #include <memory>
+#include <string>
 #include <mutex>
+#include <atomic>
+
+// FFmpeg includes
+extern "C" {
+#include <libavformat/avformat.h>
+#include <libavcodec/avcodec.h>
+#include <libavutil/avutil.h>
+#include <libswresample/swresample.h>
+}
 
 namespace vk_gaussian_splatting {
 
@@ -102,12 +111,12 @@ public:
 private:
     bool initFFmpeg();
     void cleanup();
-    
-    void* m_formatContext = nullptr;
-    void* m_codecContext = nullptr;
-    void* m_codecParameters = nullptr;
-    void* m_resampler = nullptr;
-    void* m_swsContext = nullptr;
+
+    AVFormatContext*                         m_formatContext = nullptr;
+    AVCodecContext*                          m_codecContext = nullptr;
+    AVCodecParameters*                       m_codecParameters = nullptr;
+    SwrContext*                              m_resampler = nullptr;
+    void*                                    m_swsContext = nullptr;
     
     uint8_t* m_audioBuffer = nullptr;
     int m_audioBufferSize = 0;

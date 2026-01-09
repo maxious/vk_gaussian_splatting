@@ -27,12 +27,9 @@
 #include <unordered_map>
 #include <string>
 #include <algorithm>
-#include <regex>
+#include "splat_set.h"
 
-// Forward declaration
 namespace vk_gaussian_splatting {
-struct SplatSet;
-}
 
 /**
  * @brief Metadata for a frame in a PLY sequence
@@ -153,21 +150,43 @@ public:
      */
     void setCacheSize(size_t size) { m_maxCacheSize = size; }
 
+    /**
+     * @brief Get current cache size
+     */
+    size_t getCacheSize() const { return m_maxCacheSize; }
+
+    /**
+     * @brief Get current cache usage (number of cached frames)
+     */
+    size_t getCacheUsage() const { return m_frameCache.size(); }
+
+    /**
+     * @brief Set target memory usage for adaptive cache sizing
+     * @param targetMemoryMB Target memory usage in megabytes
+     */
+    void setTargetMemoryMB(size_t targetMemoryMB) { m_targetMemoryMB = targetMemoryMB; }
+
 private:
     bool scanDirectory(const std::filesystem::path& dirPath);
     bool loadFrame(const PlyFrameInfo& frameInfo, SplatSet& outFrame);
+    void updateAdaptiveCacheSize(const SplatSet& frame);
+    void evictOldFrames(size_t currentFrameIndex);
     
     std::filesystem::path                    m_dirPath;
     std::vector<PlyFrameInfo>                m_frames;
     std::filesystem::path                    m_audioPath;
     std::mutex                             m_mutex;
     
-    // Frame caching for smooth playback
+    // Sliding window cache for forward-only playback
     std::unordered_map<size_t, SplatSet>     m_frameCache;
     size_t                                 m_maxCacheSize = 10;
+    size_t                                 m_targetMemoryMB = 512;
+    size_t                                 m_estimatedFrameSize = 0;
     
     float                                  m_frameRate = 30.0f;
-    uint32_t                               m_frameDurationMs = 33; // ~30fps
+    uint32_t                               m_frameDurationMs = 33;
     bool                                   m_isOpen = false;
     bool                                   m_hasAudio = false;
 };
+
+}  // namespace vk_gaussian_splatting
