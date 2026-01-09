@@ -722,21 +722,26 @@ class SharpGaussianProcessor(GaussianProcessor):
 
         n_devices = len(devices)
         n_frames = len(frame_paths)
+        batch_size = 4  # Frames per batch per device
 
         logger.info(
             f"Distributing {n_frames} frames across {n_devices} device(s) "
-            f"(~{n_frames // n_devices} frames per device)"
+            f"(~{n_frames // n_devices} frames per device, batch size {batch_size})"
         )
 
         # PyTorch requires 'spawn' context for multiprocessing with CUDA/XPU
         ctx = multiprocessing.get_context("spawn")
+
+        # Increased prefetch count to keep CPU buffer full
+        # 10 batches per device is a reasonable buffer
+        prefetch_count = max(50, n_devices * batch_size * 4)
 
         loader = AsyncImageLoader(
             frame_paths=frame_paths,
             timestamps_ms=timestamps_ms,
             masks_dir=masks_dir,
             mask_first_frame=mask_first_frame,
-            prefetch_count=max(4, n_devices * 2),
+            prefetch_count=prefetch_count,
             num_workers=self.num_io_workers,
         )
         loader.start()
@@ -749,35 +754,56 @@ class SharpGaussianProcessor(GaussianProcessor):
         results: list[tuple[int, GaussianFrame] | None] = [None] * n_frames
         pbar = tqdm(total=n_frames, desc="Multi-device SHARP processing", unit="frame")
 
-        # Use ProcessPoolExecutor with spawn context
-        with ProcessPoolExecutor(max_workers=n_devices, mp_context=ctx) as executor:
+        # Create one executor per device to ensure affinity and persistent model loading
+        executors = {}
+        for device in devices:
+            executor = ProcessPoolExecutor(
+                max_workers=1,
+                mp_context=ctx,
+                initializer=_init_worker,
+                initargs=(device, self.vit_preset),
+            )
+            executors[device] = executor
+
+        try:
             futures = {}
+            current_frame_idx = 0
 
-            # Distribute frames to workers round-robin style
-            for i, (frame_idx, preloaded) in enumerate(frame_queue):
-                device = devices[i % n_devices]
-                future = executor.submit(
-                    _worker_process_task,
-                    device,
-                    self.vit_preset,
-                    preloaded,
-                    frame_idx,
-                )
-                futures[future] = (device, frame_idx)
+            # Distribute batches to devices
+            while current_frame_idx < len(frame_queue):
+                for device in devices:
+                    if current_frame_idx >= len(frame_queue):
+                        break
 
+                    # Create batch
+                    batch_end = min(current_frame_idx + batch_size, len(frame_queue))
+                    batch = frame_queue[current_frame_idx:batch_end]
+                    current_frame_idx = batch_end
+
+                    if not batch:
+                        continue
+
+                    # Submit batch to specific device executor
+                    future = executors[device].submit(_worker_process_batch, batch)
+                    futures[future] = device
+
+            # Collect results
             for future in as_completed(futures):
-                device, frame_idx = futures[future]
+                device = futures[future]
                 try:
-                    res_idx, result = future.result()
-                    results[res_idx] = (res_idx, result)
-                    pbar.update(1)
-                    pbar.set_postfix(device=f"{device}", file=f"frame_{frame_idx:06d}.png")
+                    batch_results = future.result()
+                    for idx, result in batch_results:
+                        results[idx] = (idx, result)
+                        pbar.update(1)
+                        pbar.set_postfix(device=f"{device}", file=f"frame_{idx:06d}.png")
                 except Exception as e:
-                    logger.error(f"Error processing frame {frame_idx} on {device}: {e}")
-                    results[frame_idx] = None
+                    logger.error(f"Error processing batch on {device}: {e}")
 
-        pbar.close()
-        loader.stop()
+        finally:
+            pbar.close()
+            loader.stop()
+            for executor in executors.values():
+                executor.shutdown()
 
         sorted_results = sorted(
             [r for r in results if r is not None and r[1] is not None], key=lambda x: x[0]
@@ -786,20 +812,36 @@ class SharpGaussianProcessor(GaussianProcessor):
         return [r[1] for r in sorted_results]
 
 
-def _worker_process_task(
-    device: str,
-    vit_preset: str,
-    preloaded: PreloadedFrame,
-    frame_idx: int,
-) -> tuple[int, GaussianFrame]:
-    """Standalone worker function for multiprocessing."""
-    worker = DeviceWorker(device, vit_preset)
-    result = worker.process_frame(
-        preloaded.image,
-        preloaded.height,
-        preloaded.width,
-        preloaded.mask if preloaded.mask_applied else None,
-    )
-    result.frame_idx = frame_idx
-    result.timestamp_ms = preloaded.timestamp_ms
-    return frame_idx, result
+_GLOBAL_WORKER = None
+
+
+def _init_worker(device: str, vit_preset: str):
+    """Initialize global worker instance."""
+    global _GLOBAL_WORKER
+    _GLOBAL_WORKER = DeviceWorker(device, vit_preset)
+
+
+def _worker_process_batch(
+    batch: list[tuple[int, PreloadedFrame]],
+) -> list[tuple[int, GaussianFrame]]:
+    """Process a batch of frames using the global worker."""
+    results = []
+    if _GLOBAL_WORKER is None:
+        raise RuntimeError("Worker not initialized!")
+
+    for frame_idx, preloaded in batch:
+        try:
+            result = _GLOBAL_WORKER.process_frame(
+                preloaded.image,
+                preloaded.height,
+                preloaded.width,
+                preloaded.mask if preloaded.mask_applied else None,
+            )
+            result.frame_idx = frame_idx
+            result.timestamp_ms = preloaded.timestamp_ms
+            results.append((frame_idx, result))
+        except Exception as e:
+            logger.error(f"Error processing frame {frame_idx}: {e}")
+            # Continue processing batch, missing frames will be handled by main process
+
+    return results
