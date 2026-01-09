@@ -68,6 +68,290 @@ class PreloadedFrame:
     mask: np.ndarray | None = None
 
 
+class DeviceWorker:
+    """Worker that processes frames on a specific device."""
+
+    INTERNAL_SIZE = (1536, 1536)
+    SH_C0 = 0.28209479177387814
+
+    def __init__(self, device: str, vit_preset: str = "dinov2l16_384"):
+        self.device = device
+        self.vit_preset = vit_preset
+        self.predictor = None
+        self._load_model()
+
+    def _load_model(self):
+        import ssl
+        import torch
+        from sharp.models import create_predictor, PredictorParams
+
+        torch.set_float32_matmul_precision("high")
+        ssl._create_default_https_context = ssl._create_unverified_context  # type: ignore[assignment]
+
+        params = PredictorParams()
+        params.monodepth.patch_encoder_preset = self.vit_preset  # type: ignore[assignment]
+        params.monodepth.image_encoder_preset = self.vit_preset  # type: ignore[assignment]
+        params.gaussian_decoder.patch_encoder_preset = self.vit_preset  # type: ignore[assignment]
+        params.gaussian_decoder.image_encoder_preset = self.vit_preset  # type: ignore[assignment]
+
+        self.predictor = create_predictor(params)
+
+        local_resource_paths = [
+            Path("_downloaded_resources/sharp/sharp_2572gikvuh.pt"),
+            Path("../_downloaded_resources/sharp/sharp_2572gikvuh.pt"),
+        ]
+        state_dict = None
+        for resource_path in local_resource_paths:
+            if resource_path.exists():
+                state_dict = torch.load(resource_path, map_location="cpu")
+                break
+
+        if state_dict is None:
+            url = "https://ml-site.cdn-apple.com/models/sharp/sharp_2572gikvuh.pt"
+            state_dict = torch.hub.load_state_dict_from_url(url, progress=True)
+
+        self.predictor.load_state_dict(state_dict)
+        self.predictor.eval().to(self.device)
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        elif hasattr(torch, "xpu") and torch.xpu.is_available():
+            torch.xpu.empty_cache()
+
+    def process_frame(
+        self,
+        img: np.ndarray,
+        H: int,
+        W: int,
+        mask: np.ndarray | None = None,
+    ) -> GaussianFrame:
+        import torch
+        import torch.nn.functional as F
+        from sharp.utils.gaussians import unproject_gaussians
+
+        img_pt = torch.from_numpy(img).to(self.device, non_blocking=True).float()
+        img_pt = img_pt.permute(2, 0, 1).unsqueeze(0) / 255.0
+
+        img_gpu = F.interpolate(
+            img_pt,
+            size=self.INTERNAL_SIZE,
+            mode="bilinear",
+            align_corners=True,
+        )
+
+        f_px = max(H, W) * 0.8
+        disparity_factor = torch.tensor([f_px / W]).float().to(self.device)
+
+        with torch.no_grad():
+            gaussians_ndc = self.predictor(img_gpu, disparity_factor)
+
+        intrinsics = (
+            torch.tensor(
+                [
+                    [f_px, 0, W / 2, 0],
+                    [0, f_px, H / 2, 0],
+                    [0, 0, 1, 0],
+                    [0, 0, 0, 1],
+                ]
+            )
+            .float()
+            .to(self.device)
+        )
+
+        intrinsics_resized = intrinsics.clone()
+        intrinsics_resized[0] *= self.INTERNAL_SIZE[0] / W
+        intrinsics_resized[1] *= self.INTERNAL_SIZE[1] / H
+
+        gaussians = unproject_gaussians(
+            gaussians_ndc,
+            torch.eye(4).to(self.device),
+            intrinsics_resized,
+            self.INTERNAL_SIZE,
+        )
+
+        means_tensor = gaussians.mean_vectors.squeeze(0)
+        scales_linear = gaussians.singular_values.squeeze(0)
+        rotations_tensor = gaussians.quaternions.squeeze(0)
+        opacities_prob = gaussians.opacities.squeeze(0)
+        colors_linear = gaussians.colors.squeeze(0)
+
+        scales_tensor = torch.log(torch.clamp(scales_linear, min=1e-8))
+        opacities_prob = torch.clamp(opacities_prob, 1e-6, 1.0 - 1e-6)
+        opacities_tensor = torch.log(opacities_prob / (1.0 - opacities_prob))
+        colors_sh = (colors_linear - 0.5) / self.SH_C0
+
+        valid_mask = torch.ones(means_tensor.shape[0], dtype=torch.bool, device=self.device)
+
+        if mask is not None:
+            mask_tensor = (
+                torch.from_numpy(mask.astype(np.float32)).to(self.device).unsqueeze(0).unsqueeze(0)
+            )
+
+            x = means_tensor[:, 0]
+            y = means_tensor[:, 1]
+            z = means_tensor[:, 2]
+
+            valid_z = z > 1e-3
+            valid_mask = valid_mask & valid_z
+
+            z_safe = torch.where(valid_z, z, torch.ones_like(z))
+            u_px = (x * f_px / z_safe) + W / 2.0
+            v_px = (y * f_px / z_safe) + H / 2.0
+
+            u_norm = 2.0 * (u_px / W) - 1.0
+            v_norm = 2.0 * (v_px / H) - 1.0
+
+            grid_coords = torch.stack([u_norm, v_norm], dim=-1).unsqueeze(0).unsqueeze(0)
+
+            mask_sampled = torch.nn.functional.grid_sample(
+                mask_tensor,
+                grid_coords,
+                mode="nearest",
+                align_corners=False,
+                padding_mode="zeros",
+            )
+
+            geometric_mask = mask_sampled.reshape(-1) > 0.5
+            valid_mask = valid_mask & geometric_mask
+
+        means_tensor = means_tensor[valid_mask]
+        scales_tensor = scales_tensor[valid_mask]
+        rotations_tensor = rotations_tensor[valid_mask]
+        opacities_tensor = opacities_tensor[valid_mask]
+        colors_sh = colors_sh[valid_mask]
+
+        means = means_tensor.cpu().numpy()
+        scales = scales_tensor.cpu().numpy()
+        rotations = rotations_tensor.cpu().numpy()
+        opacities = opacities_tensor.cpu().numpy()
+        colors = colors_sh.cpu().numpy()
+
+        return GaussianFrame(
+            frame_idx=0,
+            timestamp_ms=0.0,
+            means=means.astype(np.float32),
+            scales=scales.astype(np.float32),
+            rotations=rotations.astype(np.float32),
+            colors=colors.astype(np.float32),
+            opacities=opacities.astype(np.float32),
+        )
+
+        f_px = max(H, W) * 0.8
+        disparity_factor = torch.tensor([f_px / W]).float().to(self.device)
+
+        return img_resized, f_px
+
+    def process_frame(
+        self,
+        img: np.ndarray,
+        H: int,
+        W: int,
+        mask: np.ndarray | None = None,
+    ) -> GaussianFrame:
+        from sharp.utils import color_space as cs_utils
+        from sharp.utils.gaussians import unproject_gaussians
+
+        torch = self._torch
+        F = self._F
+
+        img_gpu, f_px = self.preprocess_image(img, H, W)
+        disparity_factor = torch.tensor([f_px / W]).float().to(self.device)
+
+        with torch.no_grad():
+            gaussians_ndc = self.predictor(img_gpu, disparity_factor)
+
+        intrinsics = (
+            torch.tensor(
+                [
+                    [f_px, 0, W / 2, 0],
+                    [0, f_px, H / 2, 0],
+                    [0, 0, 1, 0],
+                    [0, 0, 0, 1],
+                ]
+            )
+            .float()
+            .to(self.device)
+        )
+
+        intrinsics_resized = intrinsics.clone()
+        intrinsics_resized[0] *= self.INTERNAL_SIZE[0] / W
+        intrinsics_resized[1] *= self.INTERNAL_SIZE[1] / H
+
+        gaussians = unproject_gaussians(
+            gaussians_ndc,
+            torch.eye(4).to(self.device),
+            intrinsics_resized,
+            self.INTERNAL_SIZE,
+        )
+
+        means_tensor = gaussians.mean_vectors.squeeze(0)
+        scales_linear = gaussians.singular_values.squeeze(0)
+        rotations_tensor = gaussians.quaternions.squeeze(0)
+        opacities_prob = gaussians.opacities.squeeze(0)
+        colors_linear = gaussians.colors.squeeze(0)
+
+        scales_tensor = torch.log(torch.clamp(scales_linear, min=1e-8))
+        opacities_prob = torch.clamp(opacities_prob, 1e-6, 1.0 - 1e-6)
+        opacities_tensor = torch.log(opacities_prob / (1.0 - opacities_prob))
+        colors_sh = (colors_linear - 0.5) / self.SH_C0
+
+        valid_mask = torch.ones(means_tensor.shape[0], dtype=torch.bool, device=self.device)
+
+        if mask is not None:
+            mask_tensor = (
+                torch.from_numpy(mask.astype(np.float32)).to(self.device).unsqueeze(0).unsqueeze(0)
+            )
+
+            x = means_tensor[:, 0]
+            y = means_tensor[:, 1]
+            z = means_tensor[:, 2]
+
+            valid_z = z > 1e-3
+            valid_mask = valid_mask & valid_z
+
+            z_safe = torch.where(valid_z, z, torch.ones_like(z))
+            u_px = (x * f_px / z_safe) + W / 2.0
+            v_px = (y * f_px / z_safe) + H / 2.0
+
+            u_norm = 2.0 * (u_px / W) - 1.0
+            v_norm = 2.0 * (v_px / H) - 1.0
+
+            grid_coords = torch.stack([u_norm, v_norm], dim=-1).unsqueeze(0).unsqueeze(0)
+
+            mask_sampled = torch.nn.functional.grid_sample(
+                mask_tensor,
+                grid_coords,
+                mode="nearest",
+                align_corners=False,
+                padding_mode="zeros",
+            )
+
+            geometric_mask = mask_sampled.reshape(-1) > 0.5
+            valid_mask = valid_mask & geometric_mask
+
+        means_tensor = means_tensor[valid_mask]
+        scales_tensor = scales_tensor[valid_mask]
+        rotations_tensor = rotations_tensor[valid_mask]
+        opacities_tensor = opacities_tensor[valid_mask]
+        colors_sh = colors_sh[valid_mask]
+
+        means = means_tensor.cpu().numpy()
+        scales = scales_tensor.cpu().numpy()
+        rotations = rotations_tensor.cpu().numpy()
+        opacities = opacities_tensor.cpu().numpy()
+        colors = colors_sh.cpu().numpy()
+
+        return GaussianFrame(
+            frame_idx=0,
+            timestamp_ms=0.0,
+            means=means.astype(np.float32),
+            scales=scales.astype(np.float32),
+            rotations=rotations.astype(np.float32),
+            colors=colors.astype(np.float32),
+            opacities=opacities.astype(np.float32),
+        )
+
+
 class AsyncImageLoader:
     def __init__(
         self,
@@ -195,6 +479,75 @@ class SharpGaussianProcessor(GaussianProcessor):
         self._torch = None
         self._F = None
 
+    @staticmethod
+    def _discover_devices(device_spec: str = "auto") -> list[str]:
+        """Discover all available GPU devices based on device_spec.
+
+        Args:
+            device_spec: Device specification like 'auto', 'cuda', 'xpu', 'cpu', 'cuda:0,1', 'xpu:0,1'
+
+        Returns:
+            List of device strings (e.g., ['cuda:0', 'cuda:1'] or ['xpu:0'])
+        """
+        import torch
+
+        if ":" in device_spec:
+            device_type, device_indices = device_spec.split(":", 1)
+            indices = [int(i.strip()) for i in device_indices.split(",")]
+            return [f"{device_type}:{i}" for i in indices]
+
+        if device_spec == "auto":
+            if torch.cuda.is_available():
+                num_devices = torch.cuda.device_count()
+                devices = [f"cuda:{i}" for i in range(num_devices)]
+                logger.info(f"Auto-detected {num_devices} CUDA device(s): {devices}")
+                return devices
+
+            if hasattr(torch, "xpu") and torch.xpu.is_available():
+                num_devices = torch.xpu.device_count()
+                devices = [f"xpu:{i}" for i in range(num_devices)]
+                logger.info(f"Auto-detected {num_devices} XPU device(s): {devices}")
+                return devices
+
+            if torch.backends.mps.is_available():
+                logger.info("Auto-detected MPS device (Apple Silicon)")
+                return ["mps"]
+
+            logger.info("No GPU detected, using CPU")
+            return ["cpu"]
+
+        if device_spec == "cuda":
+            if torch.cuda.is_available():
+                num_devices = torch.cuda.device_count()
+                devices = [f"cuda:{i}" for i in range(num_devices)]
+                logger.info(f"Using {num_devices} CUDA device(s): {devices}")
+                return devices
+            logger.warning("CUDA requested but not available, falling back to CPU")
+            return ["cpu"]
+
+        if device_spec == "xpu":
+            if hasattr(torch, "xpu") and torch.xpu.is_available():
+                num_devices = torch.xpu.device_count()
+                devices = [f"xpu:{i}" for i in range(num_devices)]
+                logger.info(f"Using {num_devices} XPU device(s): {devices}")
+                return devices
+            logger.warning("XPU requested but not available, falling back to CPU")
+            return ["cpu"]
+
+        if device_spec == "mps":
+            if torch.backends.mps.is_available():
+                logger.info("Using MPS device")
+                return ["mps"]
+            logger.warning("MPS requested but not available, falling back to CPU")
+            return ["cpu"]
+
+        if device_spec == "cpu":
+            logger.info("Using CPU")
+            return ["cpu"]
+
+        logger.warning(f"Unknown device spec '{device_spec}', falling back to CPU")
+        return ["cpu"]
+
     def _load_model(self):
         if self.predictor is not None:
             return
@@ -212,7 +565,9 @@ class SharpGaussianProcessor(GaussianProcessor):
 
         ssl._create_default_https_context = ssl._create_unverified_context  # type: ignore[assignment]
 
-        logger.info(f"Initializing SHARP model with preset: {self.vit_preset}...")
+        logger.info(
+            f"Initializing SHARP model with preset: {self.vit_preset} on device {self.device}..."
+        )
         params = PredictorParams()
 
         params.monodepth.patch_encoder_preset = self.vit_preset  # type: ignore[assignment]
@@ -245,12 +600,14 @@ class SharpGaussianProcessor(GaussianProcessor):
 
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+        elif hasattr(torch, "xpu") and torch.xpu.is_available():
+            torch.xpu.empty_cache()
 
-        logger.info("SHARP model ready")
+        logger.info(f"SHARP model ready on {self.device}")
 
-    def _preprocess_on_gpu(self, img: np.ndarray) -> "torch.Tensor":
-        torch = self._torch
-        F = self._F
+    def _preprocess_on_gpu(self, img: np.ndarray):
+        import torch
+        import torch.nn.functional as F
 
         img_pt = torch.from_numpy(img).to(self.device, non_blocking=True).float()
         img_pt = img_pt.permute(2, 0, 1).unsqueeze(0) / 255.0
@@ -272,16 +629,37 @@ class SharpGaussianProcessor(GaussianProcessor):
         masks_dir: Path | None = None,
         mask_first_frame: bool = False,
     ) -> list[GaussianFrame]:
-        """Process frames using SHARP with async I/O and GPU preprocessing."""
-        import torch
+        """Process frames using SHARP with multi-device parallel processing."""
+        from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+        from tqdm import tqdm
+
+        logging.getLogger("sharp.cli.predict").setLevel(logging.WARNING)
+
+        devices = self._discover_devices(self.device)
+        logger.info(f"Using {len(devices)} device(s): {devices}")
+
+        if len(devices) == 1:
+            return self._process_single_device(
+                frame_paths, timestamps_ms, masks_dir, mask_first_frame
+            )
+
+        return self._process_multi_device(
+            frame_paths, timestamps_ms, masks_dir, mask_first_frame, devices
+        )
+
+    def _process_single_device(
+        self,
+        frame_paths: list[Path],
+        timestamps_ms: list[float],
+        masks_dir: Path | None,
+        mask_first_frame: bool,
+    ) -> list[GaussianFrame]:
+        """Process frames on a single device (original async I/O pipeline)."""
         import torch.nn.functional as F
-        from sharp.utils import color_space as cs_utils
         from sharp.utils.gaussians import unproject_gaussians
         from tqdm import tqdm
 
         self._load_model()
-
-        logging.getLogger("sharp.cli.predict").setLevel(logging.WARNING)
 
         SH_C0 = 0.28209479177387814
         stats = ProfilingStats() if self.enable_profiling else None
@@ -312,19 +690,17 @@ class SharpGaussianProcessor(GaussianProcessor):
                 img_gpu = self._preprocess_on_gpu(preloaded.image)
                 H, W = preloaded.height, preloaded.width
                 f_px = max(H, W) * 0.8
-                disparity_factor = torch.tensor([f_px / W]).float().to(self.device)
+                disparity_factor = self._torch.tensor([f_px / W]).float().to(self.device)
 
                 if stats:
-                    if torch.cuda.is_available():
-                        torch.cuda.synchronize()
                     stats.preprocess_time += time.perf_counter() - preprocess_start
 
                 inference_start = time.perf_counter()
-                with torch.no_grad():
+                with self._torch.no_grad():
                     gaussians_ndc = self.predictor(img_gpu, disparity_factor)
 
                 intrinsics = (
-                    torch.tensor(
+                    self._torch.tensor(
                         [
                             [f_px, 0, W / 2, 0],
                             [0, f_px, H / 2, 0],
@@ -342,39 +718,35 @@ class SharpGaussianProcessor(GaussianProcessor):
 
                 gaussians = unproject_gaussians(
                     gaussians_ndc,
-                    torch.eye(4).to(self.device),
+                    self._torch.eye(4).to(self.device),
                     intrinsics_resized,
                     self.INTERNAL_SIZE,
                 )
 
                 if stats:
-                    if hasattr(torch, "cuda") && torch.cuda.is_available():
-				torch.cuda.synchronize()
                     stats.inference_time += time.perf_counter() - inference_start
 
                 postprocess_start = time.perf_counter()
 
-                # Batch GPU operations before CPU transfer for better performance
                 means_tensor = gaussians.mean_vectors.squeeze(0)
                 scales_linear = gaussians.singular_values.squeeze(0)
                 rotations_tensor = gaussians.quaternions.squeeze(0)
                 opacities_prob = gaussians.opacities.squeeze(0)
                 colors_linear = gaussians.colors.squeeze(0)
 
-                # Compute all transformations on GPU
-                scales_tensor = torch.log(torch.clamp(scales_linear, min=1e-8))
-                opacities_prob = torch.clamp(opacities_prob, 1e-6, 1.0 - 1e-6)
-                opacities_tensor = torch.log(opacities_prob / (1.0 - opacities_prob))
-
-                # Convert linear RGB directly to SH coefficients (remove sRGB hack)
+                scales_tensor = self._torch.log(self._torch.clamp(scales_linear, min=1e-8))
+                opacities_prob = self._torch.clamp(opacities_prob, 1e-6, 1.0 - 1e-6)
+                opacities_tensor = self._torch.log(opacities_prob / (1.0 - opacities_prob))
                 colors_sh = (colors_linear - 0.5) / SH_C0
 
-                valid_mask = torch.ones(means_tensor.shape[0], dtype=torch.bool, device=self.device)
+                valid_mask = self._torch.ones(
+                    means_tensor.shape[0], dtype=self._torch.bool, device=self.device
+                )
 
                 if preloaded.mask is not None:
                     mask_np = preloaded.mask.astype(np.float32)
                     mask_tensor = (
-                        torch.from_numpy(mask_np).to(self.device).unsqueeze(0).unsqueeze(0)
+                        self._torch.from_numpy(mask_np).to(self.device).unsqueeze(0).unsqueeze(0)
                     )
 
                     x = means_tensor[:, 0]
@@ -384,22 +756,19 @@ class SharpGaussianProcessor(GaussianProcessor):
                     valid_z = z > 1e-3
                     valid_mask = valid_mask & valid_z
 
-                    fx = f_px
-                    fy = f_px
-                    cx = W / 2.0
-                    cy = H / 2.0
+                    z_safe = self._torch.where(valid_z, z, self._torch.ones_like(z))
 
-                    z_safe = torch.where(valid_z, z, torch.ones_like(z))
-
-                    u_px = (x * fx / z_safe) + cx
-                    v_px = (y * fy / z_safe) + cy
+                    u_px = (x * f_px / z_safe) + W / 2.0
+                    v_px = (y * f_px / z_safe) + H / 2.0
 
                     u_norm = 2.0 * (u_px / W) - 1.0
                     v_norm = 2.0 * (v_px / H) - 1.0
 
-                    grid_coords = torch.stack([u_norm, v_norm], dim=-1).unsqueeze(0).unsqueeze(0)
+                    grid_coords = (
+                        self._torch.stack([u_norm, v_norm], dim=-1).unsqueeze(0).unsqueeze(0)
+                    )
 
-                    mask_sampled = torch.nn.functional.grid_sample(
+                    mask_sampled = self._torch.nn.functional.grid_sample(
                         mask_tensor,
                         grid_coords,
                         mode="nearest",
@@ -408,7 +777,6 @@ class SharpGaussianProcessor(GaussianProcessor):
                     )
 
                     geometric_mask = mask_sampled.reshape(-1) > 0.5
-
                     valid_mask = valid_mask & geometric_mask
 
                 means_tensor = means_tensor[valid_mask]
@@ -417,7 +785,6 @@ class SharpGaussianProcessor(GaussianProcessor):
                 opacities_tensor = opacities_tensor[valid_mask]
                 colors_sh = colors_sh[valid_mask]
 
-                # Single batched CPU transfer (only valid Gaussians)
                 means = means_tensor.cpu().numpy()
                 scales = scales_tensor.cpu().numpy()
                 rotations = rotations_tensor.cpu().numpy()
@@ -454,3 +821,93 @@ class SharpGaussianProcessor(GaussianProcessor):
             stats.log_summary()
 
         return results
+
+    def _process_multi_device(
+        self,
+        frame_paths: list[Path],
+        timestamps_ms: list[float],
+        masks_dir: Path | None,
+        mask_first_frame: bool,
+        devices: list[str],
+    ) -> list[GaussianFrame]:
+        """Process frames across multiple devices using thread pool."""
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        from tqdm import tqdm
+
+        n_devices = len(devices)
+        n_frames = len(frame_paths)
+
+        logger.info(
+            f"Distributing {n_frames} frames across {n_devices} device(s) "
+            f"(~{n_frames // n_devices} frames per device)"
+        )
+
+        loader = AsyncImageLoader(
+            frame_paths=frame_paths,
+            timestamps_ms=timestamps_ms,
+            masks_dir=masks_dir,
+            mask_first_frame=mask_first_frame,
+            prefetch_count=max(4, n_devices * 2),
+            num_workers=self.num_io_workers,
+        )
+        loader.start()
+
+        frame_queue: list[tuple[int, PreloadedFrame]] = []
+        for idx, preloaded in enumerate(loader):
+            if preloaded is not None:
+                frame_queue.append((idx, preloaded))
+
+        results: list[tuple[int, GaussianFrame]] = [None] * n_frames
+        pbar = tqdm(total=n_frames, desc="Multi-device SHARP processing", unit="frame")
+
+        with ThreadPoolExecutor(max_workers=n_devices) as executor:
+            futures = {}
+
+            for device_idx, device in enumerate(devices):
+                worker = DeviceWorker(device, self.vit_preset)
+                start_idx = device_idx
+                for frame_idx in range(start_idx, n_frames, n_devices):
+                    if frame_idx < len(frame_queue):
+                        _, preloaded = frame_queue[frame_idx]
+                        future = executor.submit(
+                            self._process_frame_on_worker,
+                            worker,
+                            preloaded,
+                            frame_idx,
+                        )
+                        futures[future] = (device_idx, frame_idx)
+
+            for future in as_completed(futures):
+                device_idx, frame_idx = futures[future]
+                try:
+                    result = future.result()
+                    results[frame_idx] = (frame_idx, result)
+                    pbar.update(1)
+                    pbar.set_postfix(
+                        device=f"{device_idx}/{n_devices}", file=f"frame_{frame_idx:06d}.png"
+                    )
+                except Exception as e:
+                    logger.error(f"Error processing frame {frame_idx} on device {device}: {e}")
+                    results[frame_idx] = (frame_idx, None)
+
+        pbar.close()
+        loader.stop()
+
+        sorted_results = sorted(
+            [r for r in results if r is not None and r[1] is not None], key=lambda x: x[0]
+        )
+
+        return [r[1] for r in sorted_results]
+
+    def _process_frame_on_worker(
+        self, worker: DeviceWorker, preloaded: PreloadedFrame, frame_idx: int
+    ) -> GaussianFrame:
+        result = worker.process_frame(
+            preloaded.image,
+            preloaded.height,
+            preloaded.width,
+            preloaded.mask if preloaded.mask_applied else None,
+        )
+        result.frame_idx = frame_idx
+        result.timestamp_ms = preloaded.timestamp_ms
+        return result

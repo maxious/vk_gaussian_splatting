@@ -671,7 +671,13 @@ protected:
   std::unique_ptr<AnimationUI>         m_animationUI;
   bool                                  m_isAnimationPlaying = false;
 
+  // Async loading
+  std::filesystem::path                 m_pendingSequencePath;
+  std::thread                           m_sequenceLoadThread;
+  std::mutex                            m_sequenceLoadMutex;
+
   void enablePlySequencePlayback(const std::filesystem::path& dirPath);
+  void loadPlySequenceAsync(const std::filesystem::path& dirPath);
   void updateAnimation(float deltaTime);
   bool isAnimationActive() const { return m_isAnimationPlaying && m_animationController != nullptr; }
 

@@ -436,20 +436,18 @@ void GaussianSplattingUI::onUIMenu()
     ImGui::Separator();
     if(ImGui::MenuItem(ICON_MS_MOVIE " Open PLY Sequence...", ""))
     {
-      // Try folder dialog first
-      auto path = nvgui::windowOpenFolderDialog(m_app->getWindowHandle(), "Select PLY Sequence Folder");
-      if(path.empty())
+      auto path = nvgui::windowOpenFileDialog(m_app->getWindowHandle(), "Select PLY Sequence", "PLY Files|*.ply");
+      if(!path.empty())
       {
-        // Fall back to file dialog if user selected a file instead
-        path = nvgui::windowOpenFileDialog(m_app->getWindowHandle(), "Select PLY Sequence", "PLY Files|*.ply");
-        if(!path.empty() && std::filesystem::is_regular_file(path))
+        // If user picked a file, use its parent folder
+        if(std::filesystem::is_regular_file(path))
         {
           path = path.parent_path();
         }
-      }
-      if(!path.empty() && std::filesystem::is_directory(path))
-      {
-        enablePlySequencePlayback(path);
+        if(std::filesystem::is_directory(path))
+        {
+          enablePlySequencePlayback(path);
+        }
       }
     }
     ImGui::Separator();
