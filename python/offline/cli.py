@@ -86,7 +86,12 @@ def main():
         action="store_true",
         help="Keep black splats instead of removing them (default: remove)",
     )
-    export_parser.add_argument("--device", type=str, default="cuda")
+    export_parser.add_argument(
+        "--device",
+        type=str,
+        default="auto",
+        help="Device: 'auto', 'cuda', 'xpu', 'cpu', 'mps' (auto-detects best available)",
+    )
     export_parser.add_argument(
         "--extract-audio", action="store_true", help="Also extract audio to MP3"
     )
@@ -200,7 +205,12 @@ def main():
         action="store_true",
         help="Negate Y coordinates to flip the coordinate system (useful for SHARP models). If using postprocess afterward, don't flip there too.",
     )
-    images_parser.add_argument("--device", type=str, default="cuda")
+    images_parser.add_argument(
+        "--device",
+        type=str,
+        default="auto",
+        help="Device: 'auto', 'cuda', 'xpu', 'cpu', 'mps' (auto-detects best available)",
+    )
     images_parser.add_argument("-v", "--verbose", action="store_true")
 
     legacy_parser = subparsers.add_parser("legacy", help="Legacy CLI (deprecated)")
@@ -212,7 +222,12 @@ def main():
     legacy_parser.add_argument("--chunk-size", type=int, default=10)
     legacy_parser.add_argument("--max-frames", type=int, default=None)
     legacy_parser.add_argument("--process-res", type=int, default=518)
-    legacy_parser.add_argument("--device", type=str, default="cuda")
+    legacy_parser.add_argument(
+        "--device",
+        type=str,
+        default="auto",
+        help="Device: 'auto', 'cuda', 'xpu', 'cpu', 'mps' (auto-detects best available)",
+    )
     legacy_parser.add_argument("-v", "--verbose", action="store_true")
 
     trellis2_xpu_parser = subparsers.add_parser(

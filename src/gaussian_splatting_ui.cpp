@@ -38,6 +38,7 @@
 
 #include "gaussian_splatting_ui.h"
 #include "vdz_loader.h"
+#include "animation_ui.h"
 #include "utilities.h"
 #include <backends/imgui_impl_vulkan.h>
 #include <imgui/imgui_internal.h>
@@ -435,10 +436,20 @@ void GaussianSplattingUI::onUIMenu()
     ImGui::Separator();
     if(ImGui::MenuItem(ICON_MS_MOVIE " Open PLY Sequence...", ""))
     {
-      auto dirPath = nvgui::windowOpenFolderDialog(m_app->getWindowHandle(), "Select PLY Sequence Folder");
-      if(!dirPath.empty())
+      // Try folder dialog first
+      auto path = nvgui::windowOpenFolderDialog(m_app->getWindowHandle(), "Select PLY Sequence Folder");
+      if(path.empty())
       {
-        enablePlySequencePlayback(dirPath);
+        // Fall back to file dialog if user selected a file instead
+        path = nvgui::windowOpenFileDialog(m_app->getWindowHandle(), "Select PLY Sequence", "PLY Files|*.ply");
+        if(!path.empty() && std::filesystem::is_regular_file(path))
+        {
+          path = path.parent_path();
+        }
+      }
+      if(!path.empty() && std::filesystem::is_directory(path))
+      {
+        enablePlySequencePlayback(path);
       }
     }
     ImGui::Separator();

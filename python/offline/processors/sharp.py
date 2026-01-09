@@ -315,7 +315,8 @@ class SharpGaussianProcessor(GaussianProcessor):
                 disparity_factor = torch.tensor([f_px / W]).float().to(self.device)
 
                 if stats:
-                    torch.cuda.synchronize()
+                    if torch.cuda.is_available():
+                        torch.cuda.synchronize()
                     stats.preprocess_time += time.perf_counter() - preprocess_start
 
                 inference_start = time.perf_counter()
@@ -347,7 +348,8 @@ class SharpGaussianProcessor(GaussianProcessor):
                 )
 
                 if stats:
-                    torch.cuda.synchronize()
+                    if hasattr(torch, "cuda") && torch.cuda.is_available():
+				torch.cuda.synchronize()
                     stats.inference_time += time.perf_counter() - inference_start
 
                 postprocess_start = time.perf_counter()
