@@ -42,36 +42,66 @@ This directory contains Python tools for video-to-depth processing, supporting b
 
 ## Installation
 
+The project uses **uv** with extras-based GPU backend selection. PyTorch and related packages are automatically sourced from the correct index based on your chosen backend.
+
+### Quick Start
+
 ```bash
 cd python
-
-# Create virtual environment
 uv venv
 source .venv/bin/activate  # or .venv\Scripts\activate on Windows
 
-# Install base tools
-uv pip install -e .
+# NVIDIA GPU (most common)
+uv sync --extra cuda --extra offline --extra inference
 
-# For real-time backend
-uv pip install -e ".[backend,inference]"
+# Intel Arc/XPU
+uv sync --extra xpu --extra offline --extra inference
 
-# For offline preprocessing
-uv pip install -e ".[offline,inference]"
-
-# For everything
-uv pip install -e ".[backend,offline,inference,dev]"
-
-# Install CUDA-enabled PyTorch (recommended for NVIDIA GPU acceleration)
-uv pip install torch torchvision xformers --index-url https://download.pytorch.org/whl/cu130
-
-# Or install XPU-enabled PyTorch for Intel GPU acceleration (Arc, Data Center GPU, 集成显卡)
-uv pip install torch torchvision --index-url https://download.pytorch.org/whl/xpu
-
-# Windows-specific: Install triton-windows for xformers optimization
-if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" ]]; then
-    uv pip install triton-windows
-fi
+# CPU only (no GPU)
+uv sync --extra cpu --extra offline --extra inference
 ```
+
+### GPU Backend Extras (mutually exclusive)
+
+| Extra | Hardware | PyTorch Index |
+|-------|----------|---------------|
+| `cuda` | NVIDIA GPUs | `download.pytorch.org/whl/cu130` |
+| `xpu` | Intel Arc, Data Center GPU | `download.pytorch.org/whl/xpu` |
+| `cpu` | No GPU | `download.pytorch.org/whl/cpu` |
+
+### Feature Extras (combinable)
+
+| Extra | Description |
+|-------|-------------|
+| `backend` | FastAPI + WebSocket streaming server |
+| `inference` | Transformers, timm, einops for depth models |
+| `offline` | Trimesh, gsplat, plyfile for PLY generation |
+| `matrix3d` | Apple Matrix3D support via pytorch3d |
+| `dev` | pytest, ruff, ty for development |
+
+### Example Configurations
+
+```bash
+# Full offline toolchain with CUDA + Matrix3D
+uv sync --extra cuda --extra offline --extra inference --extra matrix3d
+
+# Streaming backend only
+uv sync --extra cuda --extra backend --extra inference
+
+# Development setup
+uv sync --extra cuda --extra offline --extra inference --extra dev
+```
+
+### Custom Package Indexes
+
+The `pyproject.toml` configures these indexes automatically:
+
+| Package | Index |
+|---------|-------|
+| `torch`, `torchvision`, `xformers` | PyTorch official (per backend) |
+| `pytorch3d` | `miropsota.github.io/torch_packages_builder` |
+
+No manual `--index-url` commands needed.
 
 ## Workflows
 

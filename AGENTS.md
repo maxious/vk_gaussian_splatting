@@ -79,20 +79,37 @@ For the `python/` subdirectory, we use the following tools:
 
 ### Python Setup
 
+The project uses **uv** with extras-based GPU backend selection. PyTorch is automatically sourced from the correct index.
+
 ```bash
 cd python
 uv venv
 source .venv/bin/activate  # or .venv\Scripts\activate
-uv pip install -e ".[dev,offline,inference,cuda]"
 
-# Install CUDA-enabled PyTorch (recommended for GPU acceleration)
-uv pip install torch torchvision xformers --index-url https://download.pytorch.org/whl/cu124  # or cu118/cu121
+# NVIDIA GPU (most common)
+uv sync --extra cuda --extra offline --extra inference
 
-# Windows-specific: Install triton-windows for xformers optimization
-if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" ]]; then
-    uv pip install triton-windows
-fi
+# Intel Arc/XPU
+uv sync --extra xpu --extra offline --extra inference
+
+# CPU only
+uv sync --extra cpu --extra offline --extra inference
+
+# With Matrix3D/pytorch3d support (CUDA only)
+uv sync --extra cuda --extra offline --extra inference --extra matrix3d
 ```
+
+**GPU Backend Extras** (mutually exclusive - pick ONE):
+- `cuda` - NVIDIA GPUs (cu130 index)
+- `xpu` - Intel Arc/Data Center GPU
+- `cpu` - No GPU acceleration
+
+**Feature Extras** (combinable):
+- `offline` - PLY generation tools
+- `inference` - Depth model dependencies
+- `backend` - FastAPI streaming server
+- `matrix3d` - Apple Matrix3D via pytorch3d
+- `dev` - Testing and linting tools
 
 ### Offline Processing Tools
 
