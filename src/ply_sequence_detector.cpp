@@ -21,6 +21,8 @@
 #include <algorithm>
 #include <regex>
 
+#include <nvutils/logger.hpp>
+
 namespace vk_gaussian_splatting {
 
 PlySequenceDetector::DetectionResult PlySequenceDetector::detect(const std::filesystem::path& path) {
@@ -34,6 +36,7 @@ PlySequenceDetector::DetectionResult PlySequenceDetector::detect(const std::file
         // Check if it's a PLY sequence directory
         size_t frameCount = countFramesInDirectory(path);
         if (frameCount > 0) {
+            LOGI("PlySequenceDetector: Detected PLY sequence in directory: %s (%zu frames)", path.string().c_str(), frameCount);
             result.formatType = FormatType::PLY_SEQUENCE;
             result.sequencePath = path;
             result.frameCount = frameCount;
@@ -49,6 +52,7 @@ PlySequenceDetector::DetectionResult PlySequenceDetector::detect(const std::file
     } else if (std::filesystem::is_regular_file(path)) {
         // Check if it's a single PLY file
         if (isSinglePly(path)) {
+            LOGI("PlySequenceDetector: Detected single PLY file: %s", path.string().c_str());
             result.formatType = FormatType::SINGLE_PLY;
             result.sequencePath = path;
         }

@@ -779,21 +779,29 @@ void GaussianSplattingUI::onUIRender()
 
       LOGI("Start loading file %s (add=%s)\n", prmScene.sceneToLoadFilename.string().c_str(),
            prmScene.addSceneToExisting ? "true" : "false");
-      
-      // Store the pending filename for when load completes
-      m_pendingLoadFilename = prmScene.sceneToLoadFilename;
-      
-      // Load into pending set (will be merged on success)
-      m_splatSetPending.clear();
-      if(!m_splatLoader.loadScene(prmScene.sceneToLoadFilename, m_splatSetPending))
+
+      if (std::filesystem::is_directory(prmScene.sceneToLoadFilename))
       {
-        // this should never occur since status is READY.
-        LOGE("Error: cannot start scene load while loader is not ready status=%d\n", static_cast<int>(m_splatLoader.getStatus()));
+        enablePlySequencePlayback(prmScene.sceneToLoadFilename);
+        prmScene.sceneToLoadFilename.clear();
       }
       else
       {
-        // open the modal window that will collect results
-        ImGui::OpenPopup("Loading");
+        // Store the pending filename for when load completes
+        m_pendingLoadFilename = prmScene.sceneToLoadFilename;
+        
+        // Load into pending set (will be merged on success)
+        m_splatSetPending.clear();
+        if(!m_splatLoader.loadScene(prmScene.sceneToLoadFilename, m_splatSetPending))
+        {
+          // this should never occur since status is READY.
+          LOGE("Error: cannot start scene load while loader is not ready status=%d\n", static_cast<int>(m_splatLoader.getStatus()));
+        }
+        else
+        {
+          // open the modal window that will collect results
+          ImGui::OpenPopup("Loading");
+        }
       }
 
       // reset request

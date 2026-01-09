@@ -38,6 +38,8 @@ bool PlySequenceLoader::open(const std::filesystem::path& dirPath, float frameRa
         return false;
     }
     
+    LOGI("PLY sequence: Processing directory: %s", dirPath.string().c_str());
+    
     m_dirPath = dirPath;
     m_frameRate = frameRate;
     m_frameDurationMs = static_cast<uint32_t>(1000.0f / frameRate);
@@ -74,7 +76,7 @@ bool PlySequenceLoader::open(const std::filesystem::path& dirPath, float frameRa
 
 void PlySequenceLoader::close() {
     std::lock_guard<std::mutex> lock(m_mutex);
-    clearCache();
+    m_frameCache.clear();
     m_frames.clear();
     m_audioPath.clear();
     m_dirPath.clear();
@@ -96,6 +98,8 @@ bool PlySequenceLoader::scanDirectory(const std::filesystem::path& dirPath) {
         // Look for pattern: frame_XXXXXXXX.ply
         if (filename.length() >= 6 && filename.substr(0, 6) == "frame_" && 
             filename.substr(filename.length() - 4) == ".ply") {
+            
+            LOGD("PLY sequence: Found frame file: %s", filename.c_str());
             
             PlyFrameInfo frameInfo;
             frameInfo.filepath = entry.path();
