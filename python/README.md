@@ -75,7 +75,7 @@ uv sync --extra cpu --extra offline --extra inference
 |-------|-------------|
 | `backend` | FastAPI + WebSocket streaming server |
 | `inference` | Transformers, timm, einops for depth models |
-| `offline` | Trimesh, gsplat, plyfile for PLY generation |
+| `offline` | Trimesh, plyfile for PLY generation |
 | `matrix3d` | Apple Matrix3D support via pytorch3d |
 | `dev` | pytest, ruff, ty for development |
 

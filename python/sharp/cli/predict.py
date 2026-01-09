@@ -29,7 +29,6 @@ from sharp.utils.gaussians import (
     unproject_gaussians,
 )
 
-from .render import render_gaussians
 
 LOGGER = logging.getLogger(__name__)
 
@@ -48,7 +47,7 @@ DEFAULT_MODEL_URL = "https://ml-site.cdn-apple.com/models/sharp/sharp_2572gikvuh
     "-o",
     "--output-path",
     type=click.Path(path_type=Path, file_okay=False),
-    help="Path to save the predicted Gaussians and renderings.",
+    help="Path to save the predicted Gaussians.",
     required=True,
 )
 @click.option(
@@ -60,24 +59,16 @@ DEFAULT_MODEL_URL = "https://ml-site.cdn-apple.com/models/sharp/sharp_2572gikvuh
     required=False,
 )
 @click.option(
-    "--render/--no-render",
-    "with_rendering",
-    is_flag=True,
-    default=False,
-    help="Whether to render trajectory for checkpoint.",
-)
-@click.option(
     "--device",
     type=str,
     default="default",
-    help="Device to run on. ['cpu', 'mps', 'cuda']",
+    help="Device to run on. ['cpu', 'mps', 'cuda', 'xpu']",
 )
 @click.option("-v", "--verbose", is_flag=True, help="Activate debug logs.")
 def predict_cli(
     input_path: Path,
     output_path: Path,
     checkpoint_path: Path,
-    with_rendering: bool,
     device: str,
     verbose: bool,
 ):
@@ -103,15 +94,13 @@ def predict_cli(
     if device == "default":
         if torch.cuda.is_available():
             device = "cuda"
+        elif torch.xpu.is_available():
+            device = "xpu"
         elif torch.mps.is_available():
             device = "mps"
         else:
             device = "cpu"
     LOGGER.info("Using device %s", device)
-
-    if with_rendering and device != "cuda":
-        LOGGER.warning("Can only run rendering with gsplat on CUDA. Rendering is disabled.")
-        with_rendering = False
 
     # Load or download checkpoint
     if checkpoint_path is None:
@@ -146,13 +135,6 @@ def predict_cli(
 
         LOGGER.info("Saving 3DGS to %s", output_path)
         save_ply(gaussians, f_px, (height, width), output_path / f"{image_path.stem}.ply")
-
-        if with_rendering:
-            output_video_path = (output_path / image_path.stem).with_suffix(".mp4")
-            LOGGER.info("Rendering trajectory to %s", output_video_path)
-
-            metadata = SceneMetaData(intrinsics[0, 0].item(), (width, height), "linearRGB")
-            render_gaussians(gaussians, metadata, output_video_path)
 
 
 @torch.no_grad()

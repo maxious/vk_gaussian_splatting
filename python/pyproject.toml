@@ -74,7 +74,7 @@ offline = [
     "trimesh>=4.0",
     "scipy>=1.11",
     "tqdm>=4.66",
-    "gsplat>=1.5.3",
+    
     "xxhash>=3.4",
     "faiss-cpu>=1.13",
     "plyfile>=1.0",
