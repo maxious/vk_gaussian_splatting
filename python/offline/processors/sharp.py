@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import logging
+import multiprocessing
 import os
 import platform
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from queue import Queue
@@ -140,121 +141,6 @@ class DeviceWorker:
         )
 
         f_px = max(H, W) * 0.8
-        disparity_factor = torch.tensor([f_px / W]).float().to(self.device)
-
-        with torch.no_grad():
-            gaussians_ndc = self.predictor(img_gpu, disparity_factor)
-
-        intrinsics = (
-            torch.tensor(
-                [
-                    [f_px, 0, W / 2, 0],
-                    [0, f_px, H / 2, 0],
-                    [0, 0, 1, 0],
-                    [0, 0, 0, 1],
-                ]
-            )
-            .float()
-            .to(self.device)
-        )
-
-        intrinsics_resized = intrinsics.clone()
-        intrinsics_resized[0] *= self.INTERNAL_SIZE[0] / W
-        intrinsics_resized[1] *= self.INTERNAL_SIZE[1] / H
-
-        gaussians = unproject_gaussians(
-            gaussians_ndc,
-            torch.eye(4).to(self.device),
-            intrinsics_resized,
-            self.INTERNAL_SIZE,
-        )
-
-        means_tensor = gaussians.mean_vectors.squeeze(0)
-        scales_linear = gaussians.singular_values.squeeze(0)
-        rotations_tensor = gaussians.quaternions.squeeze(0)
-        opacities_prob = gaussians.opacities.squeeze(0)
-        colors_linear = gaussians.colors.squeeze(0)
-
-        scales_tensor = torch.log(torch.clamp(scales_linear, min=1e-8))
-        opacities_prob = torch.clamp(opacities_prob, 1e-6, 1.0 - 1e-6)
-        opacities_tensor = torch.log(opacities_prob / (1.0 - opacities_prob))
-        colors_sh = (colors_linear - 0.5) / self.SH_C0
-
-        valid_mask = torch.ones(means_tensor.shape[0], dtype=torch.bool, device=self.device)
-
-        if mask is not None:
-            mask_tensor = (
-                torch.from_numpy(mask.astype(np.float32)).to(self.device).unsqueeze(0).unsqueeze(0)
-            )
-
-            x = means_tensor[:, 0]
-            y = means_tensor[:, 1]
-            z = means_tensor[:, 2]
-
-            valid_z = z > 1e-3
-            valid_mask = valid_mask & valid_z
-
-            z_safe = torch.where(valid_z, z, torch.ones_like(z))
-            u_px = (x * f_px / z_safe) + W / 2.0
-            v_px = (y * f_px / z_safe) + H / 2.0
-
-            u_norm = 2.0 * (u_px / W) - 1.0
-            v_norm = 2.0 * (v_px / H) - 1.0
-
-            grid_coords = torch.stack([u_norm, v_norm], dim=-1).unsqueeze(0).unsqueeze(0)
-
-            mask_sampled = torch.nn.functional.grid_sample(
-                mask_tensor,
-                grid_coords,
-                mode="nearest",
-                align_corners=False,
-                padding_mode="zeros",
-            )
-
-            geometric_mask = mask_sampled.reshape(-1) > 0.5
-            valid_mask = valid_mask & geometric_mask
-
-        means_tensor = means_tensor[valid_mask]
-        scales_tensor = scales_tensor[valid_mask]
-        rotations_tensor = rotations_tensor[valid_mask]
-        opacities_tensor = opacities_tensor[valid_mask]
-        colors_sh = colors_sh[valid_mask]
-
-        means = means_tensor.cpu().numpy()
-        scales = scales_tensor.cpu().numpy()
-        rotations = rotations_tensor.cpu().numpy()
-        opacities = opacities_tensor.cpu().numpy()
-        colors = colors_sh.cpu().numpy()
-
-        return GaussianFrame(
-            frame_idx=0,
-            timestamp_ms=0.0,
-            means=means.astype(np.float32),
-            scales=scales.astype(np.float32),
-            rotations=rotations.astype(np.float32),
-            colors=colors.astype(np.float32),
-            opacities=opacities.astype(np.float32),
-        )
-
-        f_px = max(H, W) * 0.8
-        disparity_factor = torch.tensor([f_px / W]).float().to(self.device)
-
-        return img_resized, f_px
-
-    def process_frame(
-        self,
-        img: np.ndarray,
-        H: int,
-        W: int,
-        mask: np.ndarray | None = None,
-    ) -> GaussianFrame:
-        from sharp.utils import color_space as cs_utils
-        from sharp.utils.gaussians import unproject_gaussians
-
-        torch = self._torch
-        F = self._F
-
-        img_gpu, f_px = self.preprocess_image(img, H, W)
         disparity_factor = torch.tensor([f_px / W]).float().to(self.device)
 
         with torch.no_grad():
@@ -830,8 +716,8 @@ class SharpGaussianProcessor(GaussianProcessor):
         mask_first_frame: bool,
         devices: list[str],
     ) -> list[GaussianFrame]:
-        """Process frames across multiple devices using thread pool."""
-        from concurrent.futures import ThreadPoolExecutor, as_completed
+        """Process frames across multiple devices using process pool (spawn)."""
+        from concurrent.futures import ProcessPoolExecutor, as_completed
         from tqdm import tqdm
 
         n_devices = len(devices)
@@ -841,6 +727,9 @@ class SharpGaussianProcessor(GaussianProcessor):
             f"Distributing {n_frames} frames across {n_devices} device(s) "
             f"(~{n_frames // n_devices} frames per device)"
         )
+
+        # PyTorch requires 'spawn' context for multiprocessing with CUDA/XPU
+        ctx = multiprocessing.get_context("spawn")
 
         loader = AsyncImageLoader(
             frame_paths=frame_paths,
@@ -857,38 +746,35 @@ class SharpGaussianProcessor(GaussianProcessor):
             if preloaded is not None:
                 frame_queue.append((idx, preloaded))
 
-        results: list[tuple[int, GaussianFrame]] = [None] * n_frames
+        results: list[tuple[int, GaussianFrame] | None] = [None] * n_frames
         pbar = tqdm(total=n_frames, desc="Multi-device SHARP processing", unit="frame")
 
-        with ThreadPoolExecutor(max_workers=n_devices) as executor:
+        # Use ProcessPoolExecutor with spawn context
+        with ProcessPoolExecutor(max_workers=n_devices, mp_context=ctx) as executor:
             futures = {}
 
-            for device_idx, device in enumerate(devices):
-                worker = DeviceWorker(device, self.vit_preset)
-                start_idx = device_idx
-                for frame_idx in range(start_idx, n_frames, n_devices):
-                    if frame_idx < len(frame_queue):
-                        _, preloaded = frame_queue[frame_idx]
-                        future = executor.submit(
-                            self._process_frame_on_worker,
-                            worker,
-                            preloaded,
-                            frame_idx,
-                        )
-                        futures[future] = (device_idx, frame_idx)
+            # Distribute frames to workers round-robin style
+            for i, (frame_idx, preloaded) in enumerate(frame_queue):
+                device = devices[i % n_devices]
+                future = executor.submit(
+                    _worker_process_task,
+                    device,
+                    self.vit_preset,
+                    preloaded,
+                    frame_idx,
+                )
+                futures[future] = (device, frame_idx)
 
             for future in as_completed(futures):
-                device_idx, frame_idx = futures[future]
+                device, frame_idx = futures[future]
                 try:
-                    result = future.result()
-                    results[frame_idx] = (frame_idx, result)
+                    res_idx, result = future.result()
+                    results[res_idx] = (res_idx, result)
                     pbar.update(1)
-                    pbar.set_postfix(
-                        device=f"{device_idx}/{n_devices}", file=f"frame_{frame_idx:06d}.png"
-                    )
+                    pbar.set_postfix(device=f"{device}", file=f"frame_{frame_idx:06d}.png")
                 except Exception as e:
-                    logger.error(f"Error processing frame {frame_idx} on device {device}: {e}")
-                    results[frame_idx] = (frame_idx, None)
+                    logger.error(f"Error processing frame {frame_idx} on {device}: {e}")
+                    results[frame_idx] = None
 
         pbar.close()
         loader.stop()
@@ -899,15 +785,21 @@ class SharpGaussianProcessor(GaussianProcessor):
 
         return [r[1] for r in sorted_results]
 
-    def _process_frame_on_worker(
-        self, worker: DeviceWorker, preloaded: PreloadedFrame, frame_idx: int
-    ) -> GaussianFrame:
-        result = worker.process_frame(
-            preloaded.image,
-            preloaded.height,
-            preloaded.width,
-            preloaded.mask if preloaded.mask_applied else None,
-        )
-        result.frame_idx = frame_idx
-        result.timestamp_ms = preloaded.timestamp_ms
-        return result
+
+def _worker_process_task(
+    device: str,
+    vit_preset: str,
+    preloaded: PreloadedFrame,
+    frame_idx: int,
+) -> tuple[int, GaussianFrame]:
+    """Standalone worker function for multiprocessing."""
+    worker = DeviceWorker(device, vit_preset)
+    result = worker.process_frame(
+        preloaded.image,
+        preloaded.height,
+        preloaded.width,
+        preloaded.mask if preloaded.mask_applied else None,
+    )
+    result.frame_idx = frame_idx
+    result.timestamp_ms = preloaded.timestamp_ms
+    return frame_idx, result
