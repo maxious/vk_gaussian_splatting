@@ -447,16 +447,20 @@ def benchmark_multi_device(
     model_id: str,
     process_res: int,
     device_spec: str,
+    batch_size: int = 4,
     warmup: int = 2,
     iterations: int = 3,
 ) -> BenchmarkResult:
     """Benchmark multi-device DA3 inference using DeviceWorkerPool.
+
+    Uses DeviceWorkerPool.map() with batch_size for efficient parallel processing.
 
     Args:
         frames: List of input frames
         model_id: DA3 model identifier
         process_res: Processing resolution
         device_spec: Device specification (e.g., "xpu:0,1", "auto")
+        batch_size: Batch size for per-worker batch inference
         warmup: Number of warmup iterations
         iterations: Number of timed iterations
 
@@ -464,7 +468,7 @@ def benchmark_multi_device(
         BenchmarkResult with timing statistics
     """
     logger.info("=" * 60)
-    logger.info(f"MULTI DEVICE BENCHMARK (device_spec={device_spec})")
+    logger.info(f"MULTI DEVICE BENCHMARK (device_spec={device_spec}, batch={batch_size})")
     logger.info("=" * 60)
 
     # Determine number of devices from device_spec
@@ -508,7 +512,9 @@ def benchmark_multi_device(
         # Use batch inference for warmup
         warmup_frames = frames[: min(4, len(frames))]  # Small batch for warmup
         target_sizes = [(f.shape[1], f.shape[0]) for f in warmup_frames]
-        _ = multi_model.infer_depth_batch(warmup_frames, target_sizes=target_sizes)
+        _ = multi_model.infer_depth_batch(
+            warmup_frames, target_sizes=target_sizes, batch_size=batch_size
+        )
         # Sync for accurate timing
         if hasattr(torch, "xpu") and torch.xpu.is_available():
             torch.xpu.synchronize()
@@ -524,7 +530,7 @@ def benchmark_multi_device(
 
         # Use batch inference for true parallel multi-device processing
         target_sizes = [(frame.shape[1], frame.shape[0]) for frame in frames]
-        _ = multi_model.infer_depth_batch(frames, target_sizes=target_sizes)
+        _ = multi_model.infer_depth_batch(frames, target_sizes=target_sizes, batch_size=batch_size)
 
         # Sync after all frames
         if hasattr(torch, "xpu") and torch.xpu.is_available():
@@ -853,17 +859,6 @@ Examples:
         help="Skip DataLoader batch benchmark",
     )
     parser.add_argument(
-        "--skip-batch-inference",
-        action="store_true",
-        help="Skip single-device batch inference benchmark",
-    )
-    parser.add_argument(
-        "--single-batch-size",
-        type=int,
-        default=4,
-        help="Batch size for single-device batch inference benchmark",
-    )
-    parser.add_argument(
         "--input-dir",
         type=Path,
         help="Directory containing input frames (frame_0000.png, etc.)",
@@ -877,13 +872,6 @@ Examples:
         "--verbose",
         action="store_true",
         help="Enable verbose logging",
-    )
-
-    # Add batch_size=8 as an additional test
-    parser.add_argument(
-        "--test-batch-8",
-        action="store_true",
-        help="Also test with batch_size=8 for single-device",
     )
 
     args = parser.parse_args()
@@ -940,35 +928,19 @@ Examples:
         except Exception as e:
             logger.error(f"Single device benchmark failed: {e}")
 
-    # Single device batch inference benchmark
-    if not args.skip_batch_inference:
-        try:
-            result = benchmark_single_device_batch(
-                frames=frames,
-                model_id=args.model_id,
-                process_res=args.process_res,
-                batch_size=args.single_batch_size,
-                warmup=args.warmup,
-                iterations=args.iterations,
-            )
-            results.add_result(result)
-        except Exception as e:
-            logger.error(f"Single device batch benchmark failed: {e}")
-
-        # Also test with batch_size=8 if requested
-        if args.test_batch_8:
-            try:
-                result = benchmark_single_device_batch(
-                    frames=frames,
-                    model_id=args.model_id,
-                    process_res=args.process_res,
-                    batch_size=8,
-                    warmup=args.warmup,
-                    iterations=args.iterations,
-                )
-                results.add_result(result)
-            except Exception as e:
-                logger.error(f"Single device batch8 benchmark failed: {e}")
+    # Single device batch inference benchmark (batch_size=8)
+    try:
+        result = benchmark_single_device_batch(
+            frames=frames,
+            model_id=args.model_id,
+            process_res=args.process_res,
+            batch_size=8,
+            warmup=args.warmup,
+            iterations=args.iterations,
+        )
+        results.add_result(result)
+    except Exception as e:
+        logger.error(f"Single device batch benchmark failed: {e}")
 
     # Multi-device benchmark
     if not args.skip_multi:
@@ -978,6 +950,7 @@ Examples:
                 model_id=args.model_id,
                 process_res=args.process_res,
                 device_spec=device_spec,
+                batch_size=2,  # Optimal for multi-device parallelism
                 warmup=args.warmup,
                 iterations=args.iterations,
             )

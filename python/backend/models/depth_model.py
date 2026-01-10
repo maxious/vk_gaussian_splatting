@@ -215,24 +215,28 @@ class MultiDeviceDepthModel:
         frames: list[np.ndarray],
         target_sizes: list[tuple[int, int]] | None = None,
         process_res: int | None = None,
+        batch_size: int | None = None,
     ) -> list[DepthPrediction]:
         """Process multiple frames in parallel across devices.
 
         Uses DeviceWorkerPool.map() for efficient parallel processing.
+        Supports per-worker batch inference for better throughput.
 
         Args:
             frames: List of input frames
             target_sizes: Optional list of target sizes (W, H) for each frame output
             process_res: Optional processing resolution override
+            batch_size: Optional batch size for per-worker batch inference.
+                       If None, processes one frame per worker call.
 
         Returns:
             List of DepthPrediction objects
         """
         pool = self._ensure_worker_pool()
 
-        # Process in parallel using pool.map (worker handles process_res internally)
+        # Process in parallel using pool.map with optional batch processing
         results: list[DepthPrediction] = []
-        for i, (depth, z_min, z_max) in enumerate(pool.map(frames)):
+        for i, (depth, z_min, z_max) in enumerate(pool.map(frames, batch_size=batch_size)):
             tgt_w, tgt_h = (
                 target_sizes[i] if target_sizes else (frames[i].shape[1], frames[i].shape[0])
             )

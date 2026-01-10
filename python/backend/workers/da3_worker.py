@@ -96,8 +96,36 @@ class DA3DeviceWorker(BaseDeviceWorker[np.ndarray, tuple[np.ndarray, float, floa
         return (depth, z_min, z_max)
 
     def process_batch(self, items: list[np.ndarray]) -> list[tuple[np.ndarray, float, float]]:
-        """Process batch of frames using DataLoader for efficient loading."""
-        return [self.process_item(item) for item in items]
+        """Process batch of frames using model batch inference.
+
+        Passes all frames to model.inference() at once for better throughput.
+        """
+        if not items:
+            return []
+
+        # Process all frames in a single model call (true batch inference)
+        prediction = self.model.inference(
+            items,
+            process_res=self.process_res,
+            process_res_method="upper_bound_resize",
+            export_dir=None,
+        )
+
+        results = []
+        for i, depth in enumerate(prediction.depth):
+            depth = np.array(depth, dtype=np.float32, copy=True)
+            depth = np.nan_to_num(depth, copy=True, nan=0.0, posinf=0.0, neginf=0.0)
+
+            z_min = float(np.percentile(depth, 1))
+            z_max = float(np.percentile(depth, 99))
+
+            if z_max <= z_min + 1e-6:
+                z_min = 0.5
+                z_max = 10.0
+
+            results.append((depth, z_min, z_max))
+
+        return results
 
     def process_batch_dataloader(
         self,
