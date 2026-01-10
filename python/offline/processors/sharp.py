@@ -12,9 +12,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from queue import Queue
 from threading import Thread
-from typing import Iterator
+from typing import Iterator, Tuple
 
 import numpy as np
+import torch
+from torch.utils.data import Dataset, DataLoader
 
 from ..types import GaussianFrame
 from .base import GaussianProcessor
@@ -68,6 +70,77 @@ class PreloadedFrame:
     width: int
     mask_applied: bool = False
     mask: np.ndarray | None = None
+
+
+class SharpFrameDataset(Dataset):
+    """Dataset for SHARP processing with pinned memory support.
+
+    Loads images and prepares them for efficient GPU transfer.
+    Uses pin_memory for faster CPU→GPU/XPU transfers.
+    """
+
+    def __init__(
+        self,
+        frame_paths: list[Path],
+        timestamps_ms: list[float],
+        masks_dir: Path | None = None,
+        mask_first_frame: bool = False,
+        transform: callable | None = None,
+    ):
+        self.frame_paths = frame_paths
+        self.timestamps_ms = timestamps_ms
+        self.masks_dir = masks_dir
+        self.mask_first_frame = mask_first_frame
+        self.transform = transform
+
+    def __len__(self) -> int:
+        return len(self.frame_paths)
+
+    def __getitem__(
+        self, idx: int
+    ) -> Tuple[int, torch.Tensor, float, int, int, torch.Tensor | None]:
+        """Returns: (index, image_tensor, timestamp_ms, height, width, mask_tensor or None)"""
+        import cv2
+
+        path = self.frame_paths[idx]
+        ts = self.timestamps_ms[idx]
+
+        # Load image
+        img = cv2.imread(str(path))
+        if img is None:
+            raise RuntimeError(f"Failed to load image: {path}")
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+        H, W = img.shape[:2]
+
+        # Load mask if needed
+        mask = None
+        if self.masks_dir is not None and (self.mask_first_frame or idx > 0):
+            mask_path = None
+            for ext in [path.suffix, ".png", ".jpg", ".jpeg"]:
+                candidate = self.masks_dir / f"{path.stem}{ext}"
+                if candidate.exists():
+                    mask_path = candidate
+                    break
+
+            if mask_path:
+                mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
+                if mask is not None:
+                    mask = cv2.resize(mask, (W, H), interpolation=cv2.INTER_NEAREST)
+
+        # Apply transforms
+        if self.transform:
+            img, mask = self.transform(img, mask)
+
+        # Convert to tensor with pin_memory support
+        img_tensor = torch.from_numpy(np.ascontiguousarray(img)).float().div(255.0).permute(2, 0, 1)
+        mask_tensor = (
+            torch.from_numpy(np.ascontiguousarray(mask)).float().unsqueeze(0)
+            if mask is not None
+            else torch.zeros(1, H, W, dtype=torch.float32)
+        )
+
+        return idx, img_tensor, ts, H, W, mask_tensor
 
 
 class SharpDeviceWorker(BaseDeviceWorker[tuple[int, PreloadedFrame], tuple[int, GaussianFrame]]):
@@ -137,6 +210,333 @@ class SharpDeviceWorker(BaseDeviceWorker[tuple[int, PreloadedFrame], tuple[int, 
         self, items: list[tuple[int, PreloadedFrame]]
     ) -> list[tuple[int, GaussianFrame]]:
         return [self.process_item(item) for item in items]
+
+    def process_batch_dataloader(
+        self,
+        frame_paths: list[Path],
+        timestamps_ms: list[float],
+        batch_size: int = 4,
+        num_workers: int = 2,
+        masks_dir: Path | None = None,
+        mask_first_frame: bool = False,
+    ) -> list[tuple[int, GaussianFrame]]:
+        """Process batch using DataLoader with pinned memory for optimized transfers.
+
+        This method is more efficient for large batches as it:
+        1. Loads images in background threads
+        2. Uses pin_memory for faster CPU→GPU/XPU transfer
+        3. Batches inference for better GPU utilization
+
+        Args:
+            frame_paths: List of image file paths
+            timestamps_ms: List of timestamps for each frame
+            batch_size: Number of frames to process per batch
+            num_workers: Number of background workers for loading
+            masks_dir: Optional directory containing masks
+            mask_first_frame: Whether to apply mask to first frame
+
+        Returns:
+            List of (frame_idx, GaussianFrame) tuples
+        """
+        import torch.nn.functional as F
+        from torch.utils.data import DataLoader
+
+        # Create dataset
+        dataset = SharpFrameDataset(
+            frame_paths=frame_paths,
+            timestamps_ms=timestamps_ms,
+            masks_dir=masks_dir,
+            mask_first_frame=mask_first_frame,
+        )
+
+        # Determine if we should use pin_memory
+        device_type = self.device.type if hasattr(self.device, "type") else str(self.device)
+        use_pin_memory = device_type in ("cuda", "xpu")
+
+        # Create DataLoader with pinned memory
+        dataloader = DataLoader(
+            dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            pin_memory=use_pin_memory,
+            collate_fn=self._collate_fn,
+        )
+
+        results = []
+        for batch in dataloader:
+            batch_results = self._process_batch(batch)
+            results.extend(batch_results)
+
+        return results
+
+    def _collate_fn(
+        self, batch: list[Tuple[int, torch.Tensor, float, int, int, torch.Tensor]]
+    ) -> dict:
+        """Custom collate function for SharpFrameDataset."""
+        indices, images, timestamps, heights, widths, masks = zip(*batch)
+        return {
+            "indices": list(indices),
+            "images": torch.stack(images),
+            "timestamps": list(timestamps),
+            "heights": list(heights),
+            "widths": list(widths),
+            "masks": torch.stack(masks) if masks[0] is not None else None,
+        }
+
+    def _process_batch(self, batch: dict) -> list[tuple[int, GaussianFrame]]:
+        """Process a batch of frames from DataLoader."""
+        import torch.nn.functional as F
+        from sharp.utils.gaussians import unproject_gaussians
+
+        images = batch["images"]
+        timestamps = batch["timestamps"]
+        heights = batch["heights"]
+        widths = batch["widths"]
+        masks = batch["masks"]
+
+        # Move to device
+        images = images.to(self.device, non_blocking=True)
+        if masks is not None:
+            masks = masks.to(self.device, non_blocking=True)
+
+        # Resize images
+        images = F.interpolate(
+            images,
+            size=self.INTERNAL_SIZE,
+            mode="bilinear",
+            align_corners=True,
+        )
+
+        results = []
+        batch_size = images.shape[0]
+
+        with torch.no_grad():
+            for i in range(batch_size):
+                H = heights[i]
+                W = widths[i]
+                img_gpu = images[i : i + 1]
+
+                f_px = max(H, W) * 0.8
+                disparity_factor = torch.tensor([f_px / W]).float().to(self.device)
+
+                gaussians_ndc = self.predictor(img_gpu, disparity_factor)
+
+                intrinsics = (
+                    torch.tensor(
+                        [
+                            [f_px, 0, W / 2, 0],
+                            [0, f_px, H / 2, 0],
+                            [0, 0, 1, 0],
+                            [0, 0, 0, 1],
+                        ]
+                    )
+                    .float()
+                    .to(self.device)
+                )
+
+                intrinsics_resized = intrinsics.clone()
+                intrinsics_resized[0] *= self.INTERNAL_SIZE[0] / W
+                intrinsics_resized[1] *= self.INTERNAL_SIZE[1] / H
+
+                gaussians = unproject_gaussians(
+                    gaussians_ndc,
+                    torch.eye(4).to(self.device),
+                    intrinsics_resized,
+                    self.INTERNAL_SIZE,
+                )
+
+                frame_result = self._gaussians_to_frame(
+                    gaussians, H, W, masks[i] if masks is not None else None, f_px
+                )
+                frame_result.frame_idx = batch["indices"][i]
+                frame_result.timestamp_ms = timestamps[i]
+
+                results.append((frame_result.frame_idx, frame_result))
+
+        return results
+
+    def _gaussians_to_frame(
+        self,
+        gaussians,
+        H: int,
+        W: int,
+        mask: torch.Tensor | None,
+        f_px: float,
+    ) -> GaussianFrame:
+        """Convert gaussians object to GaussianFrame."""
+        means_tensor = gaussians.mean_vectors.squeeze(0)
+        scales_linear = gaussians.singular_values.squeeze(0)
+        rotations_tensor = gaussians.quaternions.squeeze(0)
+        opacities_prob = gaussians.opacities.squeeze(0)
+        colors_linear = gaussians.colors.squeeze(0)
+
+        scales_tensor = torch.log(torch.clamp(scales_linear, min=1e-8))
+        opacities_prob = torch.clamp(opacities_prob, 1e-6, 1.0 - 1e-6)
+        opacities_tensor = torch.log(opacities_prob / (1.0 - opacities_prob))
+
+        colors_sh = (colors_linear - 0.5) / self.SH_C0
+
+        valid_mask = torch.ones(means_tensor.shape[0], dtype=torch.bool, device=self.device)
+
+        if mask is not None and mask.sum() > 0:
+            x = means_tensor[:, 0]
+            y = means_tensor[:, 1]
+            z = means_tensor[:, 2]
+
+            valid_z = z > 1e-3
+            valid_mask = valid_mask & valid_z
+
+            z_safe = torch.where(valid_z, z, torch.ones_like(z))
+            u_px = (x * f_px / z_safe) + W / 2.0
+            v_px = (y * f_px / z_safe) + H / 2.0
+
+            u_norm = 2.0 * (u_px / W) - 1.0
+            v_norm = 2.0 * (v_px / H) - 1.0
+
+            grid_coords = torch.stack([u_norm, v_norm], dim=-1).unsqueeze(0).unsqueeze(0)
+
+            mask_sampled = torch.nn.functional.grid_sample(
+                mask,
+                grid_coords,
+                mode="nearest",
+                align_corners=False,
+                padding_mode="zeros",
+            )
+
+            geometric_mask = mask_sampled.reshape(-1) > 0.5
+            valid_mask = valid_mask & geometric_mask
+
+        means_tensor = means_tensor[valid_mask]
+        scales_tensor = scales_tensor[valid_mask]
+        rotations_tensor = rotations_tensor[valid_mask]
+        opacities_tensor = opacities_tensor[valid_mask]
+        colors_sh = colors_sh[valid_mask]
+
+        return GaussianFrame(
+            frame_idx=0,
+            timestamp_ms=0.0,
+            means=means_tensor.cpu().numpy().astype(np.float32),
+            scales=scales_tensor.cpu().numpy().astype(np.float32),
+            rotations=rotations_tensor.cpu().numpy().astype(np.float32),
+            colors=colors_sh.cpu().numpy().astype(np.float32),
+            opacities=opacities_tensor.cpu().numpy().astype(np.float32),
+        )
+
+        results = []
+        batch_size = images.shape[0]
+
+        with torch.no_grad():
+            for i in range(batch_size):
+                H = heights[i]
+                W = widths[i]
+                img_gpu = images[i : i + 1]  # Keep batch dim for predictor
+
+                f_px = max(H, W) * 0.8
+                disparity_factor = torch.tensor([f_px / W]).float().to(self.device)
+
+                gaussians_ndc = self.predictor(img_gpu, disparity_factor)
+
+                intrinsics = (
+                    torch.tensor(
+                        [
+                            [f_px, 0, W / 2, 0],
+                            [0, f_px, H / 2, 0],
+                            [0, 0, 1, 0],
+                            [0, 0, 0, 1],
+                        ]
+                    )
+                    .float()
+                    .to(self.device)
+                )
+
+                intrinsics_resized = intrinsics.clone()
+                intrinsics_resized[0] *= self.INTERNAL_SIZE[0] / W
+                intrinsics_resized[1] *= self.INTERNAL_SIZE[1] / H
+
+                gaussians = unproject_gaussians(
+                    gaussians_ndc,
+                    torch.eye(4).to(self.device),
+                    intrinsics_resized,
+                    self.INTERNAL_SIZE,
+                )
+
+                frame_result = self._gaussians_to_frame(
+                    gaussians, H, W, masks[i] if masks is not None else None, f_px
+                )
+                frame_result.frame_idx = batch["indices"][i]
+                frame_result.timestamp_ms = timestamps[i]
+
+                results.append((frame_result.frame_idx, frame_result))
+
+        return results
+
+    def _gaussians_to_frame(
+        self,
+        gaussians,
+        H: int,
+        W: int,
+        mask: torch.Tensor | None,
+        f_px: float,
+    ) -> GaussianFrame:
+        """Convert gaussians object to GaussianFrame."""
+        means_tensor = gaussians.mean_vectors.squeeze(0)
+        scales_linear = gaussians.singular_values.squeeze(0)
+        rotations_tensor = gaussians.quaternions.squeeze(0)
+        opacities_prob = gaussians.opacities.squeeze(0)
+        colors_linear = gaussians.colors.squeeze(0)
+
+        scales_tensor = torch.log(torch.clamp(scales_linear, min=1e-8))
+        opacities_prob = torch.clamp(opacities_prob, 1e-6, 1.0 - 1e-6)
+        opacities_tensor = torch.log(opacities_prob / (1.0 - opacities_prob))
+
+        colors_sh = (colors_linear - 0.5) / self.SH_C0
+
+        valid_mask = torch.ones(means_tensor.shape[0], dtype=torch.bool, device=self.device)
+
+        if mask is not None and mask.sum() > 0:
+            x = means_tensor[:, 0]
+            y = means_tensor[:, 1]
+            z = means_tensor[:, 2]
+
+            valid_z = z > 1e-3
+            valid_mask = valid_mask & valid_z
+
+            z_safe = torch.where(valid_z, z, torch.ones_like(z))
+            u_px = (x * f_px / z_safe) + W / 2.0
+            v_px = (y * f_px / z_safe) + H / 2.0
+
+            u_norm = 2.0 * (u_px / W) - 1.0
+            v_norm = 2.0 * (v_px / H) - 1.0
+
+            grid_coords = torch.stack([u_norm, v_norm], dim=-1).unsqueeze(0).unsqueeze(0)
+
+            mask_sampled = torch.nn.functional.grid_sample(
+                mask,
+                grid_coords,
+                mode="nearest",
+                align_corners=False,
+                padding_mode="zeros",
+            )
+
+            geometric_mask = mask_sampled.reshape(-1) > 0.5
+            valid_mask = valid_mask & geometric_mask
+
+        means_tensor = means_tensor[valid_mask]
+        scales_tensor = scales_tensor[valid_mask]
+        rotations_tensor = rotations_tensor[valid_mask]
+        opacities_tensor = opacities_tensor[valid_mask]
+        colors_sh = colors_sh[valid_mask]
+
+        return GaussianFrame(
+            frame_idx=0,
+            timestamp_ms=0.0,
+            means=means_tensor.cpu().numpy().astype(np.float32),
+            scales=scales_tensor.cpu().numpy().astype(np.float32),
+            rotations=rotations_tensor.cpu().numpy().astype(np.float32),
+            colors=colors_sh.cpu().numpy().astype(np.float32),
+            opacities=opacities_tensor.cpu().numpy().astype(np.float32),
+        )
 
     def _process_frame(
         self,
