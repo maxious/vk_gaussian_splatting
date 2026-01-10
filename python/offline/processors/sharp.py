@@ -16,8 +16,9 @@ from typing import Iterator, Tuple
 
 import numpy as np
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader
 
+from common.datasets import FrameDataset
 from ..types import GaussianFrame
 from .base import GaussianProcessor
 from common.device_worker_pool import DeviceWorker as BaseDeviceWorker, DeviceWorkerPool
@@ -70,77 +71,6 @@ class PreloadedFrame:
     width: int
     mask_applied: bool = False
     mask: np.ndarray | None = None
-
-
-class SharpFrameDataset(Dataset):
-    """Dataset for SHARP processing with pinned memory support.
-
-    Loads images and prepares them for efficient GPU transfer.
-    Uses pin_memory for faster CPU→GPU/XPU transfers.
-    """
-
-    def __init__(
-        self,
-        frame_paths: list[Path],
-        timestamps_ms: list[float],
-        masks_dir: Path | None = None,
-        mask_first_frame: bool = False,
-        transform: callable | None = None,
-    ):
-        self.frame_paths = frame_paths
-        self.timestamps_ms = timestamps_ms
-        self.masks_dir = masks_dir
-        self.mask_first_frame = mask_first_frame
-        self.transform = transform
-
-    def __len__(self) -> int:
-        return len(self.frame_paths)
-
-    def __getitem__(
-        self, idx: int
-    ) -> Tuple[int, torch.Tensor, float, int, int, torch.Tensor | None]:
-        """Returns: (index, image_tensor, timestamp_ms, height, width, mask_tensor or None)"""
-        import cv2
-
-        path = self.frame_paths[idx]
-        ts = self.timestamps_ms[idx]
-
-        # Load image
-        img = cv2.imread(str(path))
-        if img is None:
-            raise RuntimeError(f"Failed to load image: {path}")
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-
-        H, W = img.shape[:2]
-
-        # Load mask if needed
-        mask = None
-        if self.masks_dir is not None and (self.mask_first_frame or idx > 0):
-            mask_path = None
-            for ext in [path.suffix, ".png", ".jpg", ".jpeg"]:
-                candidate = self.masks_dir / f"{path.stem}{ext}"
-                if candidate.exists():
-                    mask_path = candidate
-                    break
-
-            if mask_path:
-                mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
-                if mask is not None:
-                    mask = cv2.resize(mask, (W, H), interpolation=cv2.INTER_NEAREST)
-
-        # Apply transforms
-        if self.transform:
-            img, mask = self.transform(img, mask)
-
-        # Convert to tensor with pin_memory support
-        img_tensor = torch.from_numpy(np.ascontiguousarray(img)).float().div(255.0).permute(2, 0, 1)
-        mask_tensor = (
-            torch.from_numpy(np.ascontiguousarray(mask)).float().unsqueeze(0)
-            if mask is not None
-            else torch.zeros(1, H, W, dtype=torch.float32)
-        )
-
-        return idx, img_tensor, ts, H, W, mask_tensor
 
 
 class SharpDeviceWorker(BaseDeviceWorker[tuple[int, PreloadedFrame], tuple[int, GaussianFrame]]):
@@ -239,10 +169,9 @@ class SharpDeviceWorker(BaseDeviceWorker[tuple[int, PreloadedFrame], tuple[int, 
             List of (frame_idx, GaussianFrame) tuples
         """
         import torch.nn.functional as F
-        from torch.utils.data import DataLoader
 
-        # Create dataset
-        dataset = SharpFrameDataset(
+        # Create dataset using generic FrameDataset
+        dataset = FrameDataset(
             frame_paths=frame_paths,
             timestamps_ms=timestamps_ms,
             masks_dir=masks_dir,
@@ -273,7 +202,7 @@ class SharpDeviceWorker(BaseDeviceWorker[tuple[int, PreloadedFrame], tuple[int, 
     def _collate_fn(
         self, batch: list[Tuple[int, torch.Tensor, float, int, int, torch.Tensor]]
     ) -> dict:
-        """Custom collate function for SharpFrameDataset."""
+        """Custom collate function for FrameDataset."""
         indices, images, timestamps, heights, widths, masks = zip(*batch)
         return {
             "indices": list(indices),
