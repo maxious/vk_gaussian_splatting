@@ -495,8 +495,12 @@ class InputProcessor:
         else:
             raise ValueError(f"Unsupported process_res_method: {process_res_method}")
 
-        # Convert to tensor & normalize
-        img_tensor = self._to_tensor(Image.fromarray(img))
+        # Convert to tensor & normalize (using cv2 to avoid PIL dtype issues)
+        # T.ToTensor() converts PIL Image (H, W, C) [0,255] -> Tensor (C, H, W) [0,1]
+        # We replicate this with cv2/numpy to avoid PIL float32 handling issues
+        if img.dtype == np.float32 or img.dtype == np.float64:
+            img = (img * 255).clip(0, 255).astype(np.uint8)
+        img_tensor = torch.from_numpy(img).permute(2, 0, 1).float() / 255.0
 
         # Handle both RGB (3 channels) and RGBA (4 channels) images
         c = img_tensor.shape[0]

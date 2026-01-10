@@ -164,15 +164,21 @@ def load_test_frames(
         logger.info(f"Loading frames from {data_dir}...")
         frames = []
 
-        # Try 5-digit format first (frame_00000.png), then 4-digit (frame_0000.png)
+        # Try multiple filename formats: 6-digit (frame_000000.png), 5-digit (frame_00000.png), 4-digit (frame_0000.png)
         for i in range(num_frames):
-            frame_path = data_dir / f"frame_{i:05d}.png"
-            if not frame_path.exists():
-                frame_path = data_dir / f"frame_{i:04d}.png"
-            if not frame_path.exists():
-                frame_path = data_dir / f"frame_{i:04d}.jpg"
-            if not frame_path.exists():
-                logger.warning(f"Frame {frame_path} not found, falling back to synthetic frames")
+            frame_path = None
+            for fmt in ["06d", "05d", "04d"]:
+                candidate = data_dir / f"frame_{i:{fmt}}.png"
+                if candidate.exists():
+                    frame_path = candidate
+                    break
+                candidate = data_dir / f"frame_{i:{fmt}}.jpg"
+                if candidate.exists():
+                    frame_path = candidate
+                    break
+
+            if frame_path is None:
+                logger.warning(f"Frame {i} not found, falling back to synthetic frames")
                 break
 
             frame = cv2.imread(str(frame_path))
@@ -302,6 +308,136 @@ def benchmark_single_device(
     )
 
     logger.info(f"Single Device Result: {per_frame_ms:.1f} ms/frame ({fps:.2f} fps)")
+
+    return result
+
+
+def benchmark_single_device_batch(
+    frames: list[np.ndarray],
+    model_id: str,
+    process_res: int,
+    batch_size: int = 4,
+    warmup: int = 2,
+    iterations: int = 3,
+) -> BenchmarkResult:
+    """Benchmark single-device DA3 inference with batch processing.
+
+    Tests if processing multiple frames at once improves throughput on a single device.
+
+    Args:
+        frames: List of input frames
+        model_id: DA3 model identifier
+        process_res: Processing resolution
+        batch_size: Number of frames to process at once
+        warmup: Number of warmup iterations
+        iterations: Number of timed iterations
+
+    Returns:
+        BenchmarkResult with timing statistics
+    """
+    logger.info("=" * 60)
+    logger.info(f"SINGLE DEVICE BATCH BENCHMARK (batch_size={batch_size})")
+    logger.info("=" * 60)
+
+    # Determine device string
+    if hasattr(torch, "xpu") and torch.xpu.is_available():
+        device_str = "xpu"
+    elif torch.cuda.is_available():
+        device_str = "cuda"
+    else:
+        device_str = "cpu"
+
+    from depth_anything_3.api import DepthAnything3
+
+    logger.info(f"Using device: {device_str}")
+
+    # Load model
+    logger.info(f"Loading DA3 model {model_id}...")
+    cache_dir = Path("checkpoints")
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    model = DepthAnything3.from_pretrained(model_id, cache_dir=str(cache_dir))
+    model = model.to(device_str).eval()
+    logger.info("Model loaded")
+
+    # Prepare batches
+    num_complete_batches = len(frames) // batch_size
+    remainder = len(frames) % batch_size
+
+    # Warmup
+    logger.info(f"Warming up ({warmup} iterations)...")
+    for i in range(warmup):
+        # Use first batch_size frames for warmup
+        warmup_batch = frames[:batch_size] if len(frames) >= batch_size else frames
+        target_sizes = [(f.shape[1], f.shape[0]) for f in warmup_batch]
+        _ = model.inference(
+            warmup_batch,
+            process_res=process_res,
+            process_res_method="upper_bound_resize",
+            export_dir=None,
+        )
+        # Sync for accurate timing
+        if hasattr(torch, "xpu") and torch.xpu.is_available():
+            torch.xpu.synchronize()
+        elif torch.cuda.is_available():
+            torch.cuda.synchronize()
+
+    # Benchmark iterations
+    logger.info(f"Running benchmark ({iterations} iterations)...")
+    times = []
+
+    for iteration in range(iterations):
+        start = time.perf_counter()
+
+        # Process complete batches
+        for b in range(num_complete_batches):
+            start_idx = b * batch_size
+            end_idx = start_idx + batch_size
+            batch_frames = frames[start_idx:end_idx]
+            _ = model.inference(
+                batch_frames,
+                process_res=process_res,
+                process_res_method="upper_bound_resize",
+                export_dir=None,
+            )
+
+        # Process remainder frames
+        if remainder > 0:
+            remainder_frames = frames[num_complete_batches * batch_size :]
+            if remainder_frames:
+                _ = model.inference(
+                    remainder_frames,
+                    process_res=process_res,
+                    process_res_method="upper_bound_resize",
+                    export_dir=None,
+                )
+
+        # Sync after all frames
+        if hasattr(torch, "xpu") and torch.xpu.is_available():
+            torch.xpu.synchronize()
+        elif torch.cuda.is_available():
+            torch.cuda.synchronize()
+
+        elapsed = time.perf_counter() - start
+        times.append(elapsed)
+        logger.info(f"  Iteration {iteration + 1}: {elapsed * 1000:.1f} ms ({len(frames)} frames)")
+
+    # Calculate statistics
+    avg_time = sum(times) / len(times)
+    total_time_ms = avg_time * 1000
+    per_frame_ms = total_time_ms / len(frames)
+    fps = 1000 / per_frame_ms
+
+    result = BenchmarkResult(
+        device_spec=f"single+batch{batch_size}",
+        num_frames=len(frames),
+        total_time_ms=total_time_ms,
+        per_frame_time_ms=per_frame_ms,
+        fps=fps,
+        num_devices=1,
+        iterations=iterations,
+    )
+
+    logger.info(f"Single Device Batch Result: {per_frame_ms:.1f} ms/frame ({fps:.2f} fps)")
 
     return result
 
@@ -485,12 +621,46 @@ def benchmark_batch_with_dataloader(
         # Determine pin_memory based on device
         pin_memory = "cuda" in device_spec or "xpu" in device_spec
 
+        # Custom collate function that works with multiprocessing
+        # (tuples get converted to lists by pickle, so we need to handle both)
+        def collate_batch(batch):
+            """Collate function that handles tuple/list conversion from multiprocessing."""
+            # Each item is either a tuple or list of (idx, img_tensor, ts, H, W, mask)
+            indices = []
+            images = []
+            timestamps = []
+            heights = []
+            widths = []
+            masks = []
+
+            for item in batch:
+                # Handle tuple/list conversion from multiprocessing
+                if isinstance(item, (list, tuple)):
+                    idx, img, ts, H, W, mask = item
+                    # Convert to tensors where needed
+                    indices.append(idx if isinstance(idx, torch.Tensor) else torch.tensor(idx))
+                    images.append(img if isinstance(img, torch.Tensor) else torch.tensor(img))
+                    timestamps.append(ts)
+                    heights.append(H if isinstance(H, torch.Tensor) else torch.tensor(H))
+                    widths.append(W if isinstance(W, torch.Tensor) else torch.tensor(W))
+                    masks.append(mask if isinstance(mask, torch.Tensor) else torch.tensor(mask))
+
+            # Stack into batch tensors
+            return (
+                torch.stack(indices) if indices else torch.tensor([], dtype=torch.long),
+                torch.stack(images) if images else torch.tensor([]),
+                timestamps,
+                torch.stack(heights) if heights else torch.tensor([], dtype=torch.long),
+                torch.stack(widths) if widths else torch.tensor([], dtype=torch.long),
+                torch.stack(masks) if masks else torch.tensor([]),
+            )
+
         dataloader = DataLoader(
             dataset,
             batch_size=batch_size,
             num_workers=num_workers,
             pin_memory=pin_memory,
-            collate_fn=lambda batch: batch,  # Pass through
+            collate_fn=collate_batch,
         )
 
         # Create multi-device model
@@ -508,11 +678,21 @@ def benchmark_batch_with_dataloader(
         logger.info(f"Warming up ({warmup} iterations)...")
         for i in range(warmup):
             for batch in dataloader:
-                for item in batch:
-                    _, frame_tensor, _, H, W, _ = item
+                indices, frame_tensors, batch_timestamps, H_tensors, W_tensors, masks = batch
+                # frame_tensors: (B, 3, H, W) tensor
+                for j in range(frame_tensors.shape[0]):
+                    frame_tensor = frame_tensors[j]
                     frame_np = frame_tensor.permute(1, 2, 0).cpu().numpy()
-                    H_val = int(H.item()) if hasattr(H, "item") else int(H)
-                    W_val = int(W.item()) if hasattr(W, "item") else int(W)
+                    H_val = (
+                        int(H_tensors[j].item())
+                        if hasattr(H_tensors[j], "item")
+                        else int(H_tensors[j])
+                    )
+                    W_val = (
+                        int(W_tensors[j].item())
+                        if hasattr(W_tensors[j], "item")
+                        else int(W_tensors[j])
+                    )
                     _ = multi_model.infer_depth(frame_np, target_size=(W_val, H_val))
             # Sync
             if hasattr(torch, "xpu") and torch.xpu.is_available():
@@ -528,11 +708,21 @@ def benchmark_batch_with_dataloader(
             start = time.perf_counter()
 
             for batch in dataloader:
-                for item in batch:
-                    _, frame_tensor, _, H, W, _ = item
+                indices, frame_tensors, batch_timestamps, H_tensors, W_tensors, masks = batch
+                # frame_tensors: (B, 3, H, W) tensor
+                for j in range(frame_tensors.shape[0]):
+                    frame_tensor = frame_tensors[j]
                     frame_np = frame_tensor.permute(1, 2, 0).cpu().numpy()
-                    H_val = int(H.item()) if hasattr(H, "item") else int(H)
-                    W_val = int(W.item()) if hasattr(W, "item") else int(W)
+                    H_val = (
+                        int(H_tensors[j].item())
+                        if hasattr(H_tensors[j], "item")
+                        else int(H_tensors[j])
+                    )
+                    W_val = (
+                        int(W_tensors[j].item())
+                        if hasattr(W_tensors[j], "item")
+                        else int(W_tensors[j])
+                    )
                     _ = multi_model.infer_depth(frame_np, target_size=(W_val, H_val))
 
             # Sync after all frames
@@ -663,6 +853,17 @@ Examples:
         help="Skip DataLoader batch benchmark",
     )
     parser.add_argument(
+        "--skip-batch-inference",
+        action="store_true",
+        help="Skip single-device batch inference benchmark",
+    )
+    parser.add_argument(
+        "--single-batch-size",
+        type=int,
+        default=4,
+        help="Batch size for single-device batch inference benchmark",
+    )
+    parser.add_argument(
         "--input-dir",
         type=Path,
         help="Directory containing input frames (frame_0000.png, etc.)",
@@ -676,6 +877,13 @@ Examples:
         "--verbose",
         action="store_true",
         help="Enable verbose logging",
+    )
+
+    # Add batch_size=8 as an additional test
+    parser.add_argument(
+        "--test-batch-8",
+        action="store_true",
+        help="Also test with batch_size=8 for single-device",
     )
 
     args = parser.parse_args()
@@ -731,6 +939,36 @@ Examples:
             results.add_result(result)
         except Exception as e:
             logger.error(f"Single device benchmark failed: {e}")
+
+    # Single device batch inference benchmark
+    if not args.skip_batch_inference:
+        try:
+            result = benchmark_single_device_batch(
+                frames=frames,
+                model_id=args.model_id,
+                process_res=args.process_res,
+                batch_size=args.single_batch_size,
+                warmup=args.warmup,
+                iterations=args.iterations,
+            )
+            results.add_result(result)
+        except Exception as e:
+            logger.error(f"Single device batch benchmark failed: {e}")
+
+        # Also test with batch_size=8 if requested
+        if args.test_batch_8:
+            try:
+                result = benchmark_single_device_batch(
+                    frames=frames,
+                    model_id=args.model_id,
+                    process_res=args.process_res,
+                    batch_size=8,
+                    warmup=args.warmup,
+                    iterations=args.iterations,
+                )
+                results.add_result(result)
+            except Exception as e:
+                logger.error(f"Single device batch8 benchmark failed: {e}")
 
     # Multi-device benchmark
     if not args.skip_multi:
