@@ -25,7 +25,9 @@ import numpy as np
 import torch
 
 
-def numpy_to_torch_zerocopy(arr: np.ndarray, dtype: torch.dtype | None = None, device: str | torch.device = "cpu") -> torch.Tensor:
+def numpy_to_torch_zerocopy(
+    arr: np.ndarray, dtype: torch.dtype | None = None, device: str | torch.device = "cpu"
+) -> torch.Tensor:
     """
     Convert NumPy array to PyTorch tensor with zero-copy when possible.
 
@@ -50,7 +52,7 @@ def numpy_to_torch_zerocopy(arr: np.ndarray, dtype: torch.dtype | None = None, d
         >>> # No intermediate copy on CPU if arr is C-contiguous
     """
     # Check if zero-copy is possible
-    is_contiguous = arr.flags['C_CONTIGUOUS']
+    is_contiguous = arr.flags["C_CONTIGUOUS"]
 
     if not is_contiguous:
         # Need to make contiguous copy anyway
@@ -125,7 +127,7 @@ def stack_arrays_zerocopy(arrays: list[np.ndarray], dtype: np.dtype | None = Non
     # This may create copies, but better done once than repeatedly
     arrays_contig = []
     for arr in arrays:
-        if arr.dtype != dtype or not arr.flags['C_CONTIGUOUS']:
+        if arr.dtype != dtype or not arr.flags["C_CONTIGUOUS"]:
             arr = np.ascontiguousarray(arr, dtype=dtype)
         arrays_contig.append(arr)
 
@@ -136,7 +138,7 @@ def stack_arrays_zerocopy(arrays: list[np.ndarray], dtype: np.dtype | None = Non
 def batch_to_device(
     tensors: list[torch.Tensor] | tuple[torch.Tensor, ...],
     device: str | torch.device,
-    non_blocking: bool = True
+    non_blocking: bool = True,
 ) -> list[torch.Tensor]:
     """
     Move multiple tensors to device with optimal settings.
@@ -161,9 +163,9 @@ def get_optimal_pin_memory() -> bool:
     Determine if pin_memory should be used for DataLoader.
 
     Returns:
-        True if CUDA is available and pinned memory is beneficial
+        True if CUDA or XPU is available and pinned memory is beneficial
 
     Usage:
         >>> DataLoader(dataset, pin_memory=get_optimal_pin_memory())
     """
-    return torch.cuda.is_available()
+    return torch.cuda.is_available() or (hasattr(torch, "xpu") and torch.xpu.is_available())
