@@ -406,12 +406,12 @@ class InputProcessor:
         batched_images = torch.stack(proc_imgs)
         batched_masks = torch.stack(alpha_masks)
         out_exts = (
-            torch.from_numpy(np.asarray(out_exts)).float()
+            torch.from_numpy(np.ascontiguousarray(np.asarray(out_exts))).float()
             if out_exts is not None and out_exts[0] is not None
             else None
         )
         out_ixts = (
-            torch.from_numpy(np.asarray(out_ixts)).float()
+            torch.from_numpy(np.ascontiguousarray(np.asarray(out_ixts))).float()
             if out_ixts is not None and out_ixts[0] is not None
             else None
         )
