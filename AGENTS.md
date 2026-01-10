@@ -152,6 +152,42 @@ uv run python -m offline.export_gaussian_ply images \
 **Note on SHARP**:
 The `sharp` library is vendored in `python/sharp` to provide better control and suppress noisy logging. If running from the project root, set `PYTHONPATH=python` or run via `uv run python -m ...` from inside the `python/` directory.
 
+### Running Commands with uv run
+
+For any Python command that requires GPU support, use `uv run --extras` to ensure the correct GPU backend is active:
+
+```bash
+# Run with CUDA backend (NVIDIA GPUs)
+uv run --extra cuda python script.py
+
+# Run with XPU backend (Intel Arc/GPU)
+uv run --extra xpu python script.py
+
+# Run with CPU only (no GPU)
+uv run --extra cpu python script.py
+
+# Combine with feature extras (e.g., backend for streaming server)
+uv run --extra cuda --extra backend uvicorn backend.main:app --port 8000
+```
+
+### Backend Environment Variables
+
+When running the streaming backend, these environment variables control behavior:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `VIDEO_DEPTH_MULTI_DEVICE` | Enable multi-device mode | `0` |
+| `VIDEO_DEPTH_DEVICE_SPEC` | Device specification (e.g., `xpu:0,1`) | `auto` |
+| `VIDEO_DEPTH_MODEL_ID` | Model to use | `depth-anything/DA3METRIC-LARGE` |
+| `VIDEO_DEPTH_PROCESS_RES` | Processing resolution | `640` |
+| `VIDEO_DEPTH_LOG_LEVEL` | Logging level | `WARNING` |
+
+Example with multi-XPU:
+```bash
+VIDEO_DEPTH_MULTI_DEVICE=1 VIDEO_DEPTH_DEVICE_SPEC=xpu:0,1 VIDEO_DEPTH_LOG_LEVEL=INFO \
+  uv run --extra xpu --extra backend uvicorn backend.main:app --host 0.0.0.0 --port 8000
+```
+
 ### Running Type Checks
 
 Use `ty` to run type checks:
