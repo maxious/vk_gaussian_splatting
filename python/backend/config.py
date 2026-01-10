@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import List
 
 from pydantic import Field
-from pydantic_settings import BaseSettings  # type: ignore[import-untyped]
+from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
@@ -38,7 +38,6 @@ class Settings(BaseSettings):
     log_level: str = Field(default="WARNING", validation_alias="VIDEO_DEPTH_LOG_LEVEL")
     use_multi_device: bool = Field(default=False, validation_alias="VIDEO_DEPTH_MULTI_DEVICE")
     device_spec: str = Field(default="auto", validation_alias="VIDEO_DEPTH_DEVICE_SPEC")
-    use_torchcodec: bool = Field(default=True, validation_alias="VIDEO_DEPTH_TORCHCODEC")
 
     model_config = {
         "frozen": True,

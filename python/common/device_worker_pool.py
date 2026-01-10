@@ -392,7 +392,7 @@ class DeviceWorkerPool(Generic[T, R]):
                     logger.error(f"Error processing item {idx} on {device}: {e}")
                     raise
 
-            return [r for r in results if r is not None]  # type: ignore
+            return [r for r in results if r is not None]
 
         else:
             # Batch distribution

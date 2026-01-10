@@ -1,4 +1,4 @@
-"""Video decoding helpers built on top of PyAV and torchcodec."""
+"""Video decoding helpers built on top of torchcodec."""
 
 from __future__ import annotations
 
@@ -9,16 +9,7 @@ from typing import Iterator, Optional
 import numpy as np
 import threading
 
-# Optional PyAV import (only needed for FrameDecoder)
-try:
-    import av  # type: ignore[import-untyped]
-
-    _PYAV_AVAILABLE = True
-except ImportError:
-    av = None  # type: ignore[assignment]
-    _PYAV_AVAILABLE = False
-
-from backend.utils.frame_info import FrameInfo, frame_info_from_av, frame_info_from_torchcodec
+from backend.utils.frame_info import FrameInfo, frame_info_from_torchcodec
 
 
 @dataclass(frozen=True)
@@ -35,110 +26,9 @@ class VideoMetadata:
 
 
 class FrameDecoder:
-    """Thin wrapper around PyAV for timestamp-based decoding."""
-
-    SEEK_PAD_MS = 0.0
-    STREAM_WINDOW_MS = 1000.0
-    MAX_SCAN_FRAMES = 360
-
-    def __init__(self, source: Path) -> None:
-        self.source = source
-        self._container = av.open(str(source))
-        self._stream = self._container.streams.video[0]
-        self._frame_iter: Optional[Iterator] = None
-        self._last_frame_time_ms: Optional[float] = None
-
-    def metadata(self) -> VideoMetadata:
-        stream = self._stream
-        fps = float(stream.average_rate) if stream.average_rate else 30.0
-        duration_ms = float(stream.duration * stream.time_base * 1000) if stream.duration else None
-        return VideoMetadata(
-            width=stream.width,
-            height=stream.height,
-            frames=stream.frames or None,
-            fps=fps,
-            duration_ms=duration_ms,
-        )
-
-    def decode_at(self, time_ms: float) -> tuple[np.ndarray, FrameInfo]:
-        """Decode the frame nearest to the requested timestamp (ms).
-
-        The decoder defaults to forward streaming: if the caller requests a
-        timestamp slightly ahead of the last frame we returned, we simply advance
-        the existing decode iterator. When the caller jumps far ahead or backwards
-        we fall back to a guarded seek toward the preceding keyframe, then resume
-        forward decoding until we reach (or slightly surpass) the target time.
-        """
-
-        time_ms = max(time_ms, 0.0)
-        if not self._should_stream_forward(time_ms):
-            self._seek_near(time_ms)
-        frame, info = self._advance_to(time_ms)
-        return frame, info
-
-    def iter_frames(self) -> Iterator[np.ndarray]:
-        for packet in self._container.demux(self._stream):
-            for frame in packet.decode():
-                yield frame.to_ndarray(format="rgb24")
-
-    def close(self) -> None:
-        self._container.close()
-
-    def __del__(self) -> None:  # pragma: no cover - destructor best-effort
-        try:
-            self.close()
-        except Exception:  # noqa: BLE001
-            pass
-
-    def _reset_iterator(self) -> None:
-        self._frame_iter = self._container.decode(self._stream)
-
-    def should_stream_forward(self, time_ms: float) -> bool:
-        if self._last_frame_time_ms is None:
-            return False
-        delta = time_ms - self._last_frame_time_ms
-        return 0.0 <= delta <= self.STREAM_WINDOW_MS
-
-    def _should_stream_forward(self, time_ms: float) -> bool:
-        return self.should_stream_forward(time_ms)
-
-    def _seek_near(self, time_ms: float) -> None:
-        # Seek exactly to the target time with backward=True.
-        # This finds the closest keyframe <= time_ms.
-        seek_ts = time_ms / 1000.0
-        time_base = float(self._stream.time_base)
-        target_pts = int(seek_ts / time_base)
-        self._container.seek(target_pts, stream=self._stream, any_frame=False, backward=True)
-        self._reset_iterator()
-        self._last_frame_time_ms = None
-
-    def _advance_to(self, time_ms: float) -> tuple[np.ndarray, FrameInfo]:
-        if self._frame_iter is None:
-            self._reset_iterator()
-        assert self._frame_iter is not None
-        frames_examined = 0
-        while True:
-            try:
-                frame = next(self._frame_iter)
-            except StopIteration as exc:  # pragma: no cover - EOF
-                self._frame_iter = None
-                raise StopIteration from exc
-            info = frame_info_from_av(frame)
-            frames_examined += 1
-            actual_time = info.time_ms if info.time_ms >= 0 else time_ms
-            self._last_frame_time_ms = actual_time
-            if (
-                info.time_ms < 0
-                or actual_time >= time_ms
-                or frames_examined >= self.MAX_SCAN_FRAMES
-            ):
-                return frame.to_ndarray(format="rgb24"), info
-
-
-class TorchcodecFrameDecoder:
     """Video decoder using torchcodec for fast, accurate timestamp decoding.
 
-    Advantages over PyAV:
+    Advantages:
     - ~2x faster decoding with num_ffmpeg_threads=0
     - Accurate PTS timestamps from video stream
     - Supports GPU decoding (CUDA backend)
@@ -175,8 +65,7 @@ class TorchcodecFrameDecoder:
             from torchcodec.decoders import VideoDecoder
         except ImportError as exc:
             raise ImportError(
-                "torchcodec is required for TorchcodecFrameDecoder. "
-                "Install with: pip install torchcodec"
+                "torchcodec is required for FrameDecoder. Install with: pip install torchcodec"
             ) from exc
         return VideoDecoder(str(self.source), num_ffmpeg_threads=self._num_ffmpeg_threads)
 
@@ -270,7 +159,7 @@ class TorchcodecFrameDecoder:
 class DecoderPool:
     """Manages a pool of FrameDecoders for parallel random access with locality awareness.
 
-    Supports both PyAV and torchcodec decoders. Torchcodec is preferred for:
+    Uses torchcodec for:
     - ~2x faster decoding (with num_ffmpeg_threads=0)
     - Accurate PTS timestamps from video stream
     """
@@ -279,7 +168,6 @@ class DecoderPool:
         self,
         source: Path,
         count: int = 4,
-        use_torchcodec: bool = True,
         num_ffmpeg_threads: int = 0,
     ) -> None:
         """Initialize decoder pool.
@@ -287,22 +175,17 @@ class DecoderPool:
         Args:
             source: Path to video file
             count: Number of decoders in pool
-            use_torchcodec: Use torchcodec instead of PyAV (default: True)
             num_ffmpeg_threads: FFmpeg thread count for torchcodec (0 = auto)
         """
         self.source = source
         self.count = count
-        self.use_torchcodec = use_torchcodec
+        self._num_ffmpeg_threads = num_ffmpeg_threads
 
-        if use_torchcodec:
-            # torchcodec: Create decoders that can be reused (each creates fresh VideoDecoder per decode)
-            self._decoders = [
-                TorchcodecFrameDecoder(source, num_ffmpeg_threads=num_ffmpeg_threads)
-                for _ in range(count)
-            ]
-        else:
-            # PyAV: Traditional decoder pool with stateful decoders
-            self._decoders = [FrameDecoder(source) for _ in range(count)]
+        # Create decoders that can be reused
+        # Each creates fresh VideoDecoder per decode operation
+        self._decoders = [
+            FrameDecoder(source, num_ffmpeg_threads=num_ffmpeg_threads) for _ in range(count)
+        ]
 
         self._free_decoders = list(self._decoders)
         self._lock = threading.Lock()

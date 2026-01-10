@@ -1,4 +1,4 @@
-"""Utilities for inspecting PyAV and torchcodec frames."""
+"""Utilities for inspecting torchcodec frames."""
 
 from __future__ import annotations
 
@@ -11,16 +11,6 @@ class FrameInfo:
     index: int
     pts: int | None
     key_frame: bool
-
-
-def frame_info_from_av(frame) -> FrameInfo:
-    time_ms = float(frame.time) * 1000 if frame.time is not None else -1.0
-    return FrameInfo(
-        time_ms=time_ms,
-        index=getattr(frame, "index", -1),
-        pts=frame.pts,
-        key_frame=bool(frame.key_frame),
-    )
 
 
 def frame_info_from_torchcodec(frame_batch, frame_idx: int = 0) -> FrameInfo:
@@ -48,13 +38,6 @@ def frame_info_from_torchcodec(frame_batch, frame_idx: int = 0) -> FrameInfo:
         getattr(frame_batch, "key_frames", [False])[frame_idx]
         if hasattr(frame_batch, "key_frames")
         else False
-    )
-
-    return FrameInfo(
-        time_ms=time_ms,
-        index=frame_idx,
-        pts=int(pts_sec * 1000) if pts_sec else None,
-        key_frame=key_frame,
     )
 
     return FrameInfo(

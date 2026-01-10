@@ -13,7 +13,7 @@ import numpy as np
 from fastapi import UploadFile
 
 from backend.config import get_settings
-from backend.video.io import DecoderPool, FrameDecoder, VideoMetadata
+from backend.video.io import DecoderPool, VideoMetadata
 
 
 @dataclass
@@ -29,7 +29,7 @@ class VideoSession:
     session_id: str
     source_path: Path
     metadata: VideoMetadata
-    decoder: DecoderPool  # Changed from FrameDecoder
+    decoder: DecoderPool
     depth_buffer: Deque[DepthFrame] = field(init=False)
     last_depth_time_ms: float | None = None
     telemetry: dict[str, float] = field(default_factory=dict, init=False)
@@ -228,7 +228,6 @@ class SessionManager:
         decoder = DecoderPool(
             target,
             count=16,
-            use_torchcodec=self.settings.use_torchcodec,
             num_ffmpeg_threads=0,  # Let FFmpeg decide optimal thread count
         )
         metadata = decoder.metadata()

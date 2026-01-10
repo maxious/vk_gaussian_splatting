@@ -21,7 +21,7 @@ inference, and export capabilities. It supports both single and nested model arc
 from __future__ import annotations
 
 import time
-from typing import Optional, Sequence
+from typing import Any, Dict, Optional, Sequence
 import numpy as np
 import torch
 import torch.nn as nn
@@ -239,7 +239,7 @@ class DepthAnything3(nn.Module, PyTorchModelHubMixin):
         # Feat_vis export parameters
         feat_vis_fps: int = 15,
         # Other export parameters, e.g., gs_ply, gs_video
-        export_kwargs: Optional[dict] = {},
+        export_kwargs: Optional[Dict[str, Any]] = None,
         alpha_blend_method: str = "mean",
         batch_method: str = "center_crop",
     ) -> Prediction:
@@ -328,6 +328,8 @@ class DepthAnything3(nn.Module, PyTorchModelHubMixin):
 
         # Export if requested
         if export_dir is not None:
+            # Initialize export_kwargs if None to avoid type errors
+            export_kwargs = export_kwargs or {}
             if "gs" in export_format:
                 if infer_gs and "gs_video" not in export_format:
                     export_format = f"{export_format}-gs_video"

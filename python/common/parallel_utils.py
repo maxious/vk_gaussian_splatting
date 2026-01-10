@@ -156,7 +156,7 @@ def parallel_imap(
     with parallel_config(backend=backend, n_jobs=n_jobs):
         parallel = Parallel()
         for idx, item in enumerate(items):
-            future = parallel.delayed(func)(item)
+            future = delayed(func)(item)
             futures[future] = idx
 
         # Yield in order of completion, but track original indices
