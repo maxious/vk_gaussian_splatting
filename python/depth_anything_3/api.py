@@ -123,6 +123,22 @@ class DepthAnything3(nn.Module, PyTorchModelHubMixin):
         self.input_processor = InputProcessor()
         self.output_processor = OutputProcessor()
 
+    def _ensure_model_dtype(self) -> None:
+        """Ensure model is on correct dtype for optimal performance.
+
+        For XPU, we keep the model in float32 and rely on autocast for bfloat16 ops.
+        This is necessary because some operations (like torch.quantile) don't support
+        bfloat16 on XPU. Autocast will selectively use bfloat16 where supported.
+        """
+        # For XPU, keep model in float32 and let autocast handle dtype conversion
+        # This avoids issues with operations that don't support bfloat16
+        model_device = next(self.model.parameters()).device
+        if model_device.type == "xpu":
+            current_dtype = next(self.model.parameters()).dtype
+            if current_dtype == torch.bfloat16:
+                # Cast back to float32 since some ops don't support bfloat16 on XPU
+                self.model = self.model.to(torch.float32)
+
     def _auto_detect_device(self) -> torch.device:
         """Auto-detect best available device."""
         if torch.cuda.is_available():
@@ -164,10 +180,31 @@ class DepthAnything3(nn.Module, PyTorchModelHubMixin):
         Returns:
             Dictionary containing model predictions
         """
-        # Determine optimal autocast dtype
-        autocast_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        # Ensure model is on correct dtype (handles models loaded via from_pretrained)
+        self._ensure_model_dtype()
+
+        # Use autocast for CUDA/XPU devices for optimal performance
+        # Autocast will selectively use bfloat16 where supported, fall back to float32 otherwise
+        device = image.device
+        use_autocast = device.type in ("cuda", "xpu")
+
         with torch.no_grad():
-            with torch.autocast(device_type=image.device.type, dtype=autocast_dtype):
+            if use_autocast:
+                bf16_supported = torch.cuda.is_bf16_supported()
+                if not bf16_supported and hasattr(torch, "xpu") and torch.xpu.is_bf16_supported():
+                    bf16_supported = torch.xpu.is_bf16_supported()
+                autocast_dtype = torch.bfloat16 if bf16_supported else torch.float16
+                with torch.autocast(device_type=device.type, dtype=autocast_dtype):
+                    return self.model(
+                        image,
+                        extrinsics,
+                        intrinsics,
+                        export_feat_layers,
+                        infer_gs,
+                        use_ray_pose,
+                        ref_view_strategy,
+                    )
+            else:
                 return self.model(
                     image,
                     extrinsics,
@@ -418,7 +455,7 @@ class DepthAnything3(nn.Module, PyTorchModelHubMixin):
         """Preprocess input images using input processor."""
         start_time = time.time()
         imgs_cpu, masks_cpu, extrinsics, intrinsics = self.input_processor(
-            image=image,
+            images=image,
             extrinsics=extrinsics.copy() if extrinsics is not None else None,
             intrinsics=intrinsics.copy() if intrinsics is not None else None,
             process_res=process_res,
@@ -453,21 +490,25 @@ class DepthAnything3(nn.Module, PyTorchModelHubMixin):
         if device.type in ("cuda", "xpu") and imgs_cpu.device.type == "cpu":
             imgs_cpu = imgs_cpu.pin_memory()
 
-        # Move images to model device with non-blocking transfer
-        imgs = imgs_cpu.to(device, non_blocking=True)[None].float()
+        # Get model dtype to maintain consistency (e.g., bfloat16 for XPU)
+        model_dtype = next(self.model.parameters()).dtype
+
+        # Move images to model device with non-blocking transfer, maintaining model dtype
+        # Use combined to() call with both device and dtype to avoid intermediate tensor issues
+        imgs = imgs_cpu.to(device, dtype=model_dtype, non_blocking=True)[None]
 
         # Convert camera parameters to tensors with non-blocking transfer
         ex_t = (
-            extrinsics.pin_memory().to(device, non_blocking=True)[None].float()
+            extrinsics.pin_memory().to(device, dtype=model_dtype, non_blocking=True)[None]
             if extrinsics is not None and device.type in ("cuda", "xpu")
-            else extrinsics.to(device, non_blocking=True)[None].float()
+            else extrinsics.to(device, dtype=model_dtype, non_blocking=True)[None]
             if extrinsics is not None
             else None
         )
         in_t = (
-            intrinsics.pin_memory().to(device, non_blocking=True)[None].float()
+            intrinsics.pin_memory().to(device, dtype=model_dtype, non_blocking=True)[None]
             if intrinsics is not None and device.type in ("cuda", "xpu")
-            else intrinsics.to(device, non_blocking=True)[None].float()
+            else intrinsics.to(device, dtype=model_dtype, non_blocking=True)[None]
             if intrinsics is not None
             else None
         )
@@ -583,18 +624,23 @@ class DepthAnything3(nn.Module, PyTorchModelHubMixin):
         """
         Get the device where the model is located.
 
+        Returns the actual device of model parameters, not the cached self.device.
+        This ensures correctness when model is moved via .to() after initialization.
+
         Returns:
             Device where the model parameters are located
 
         Raises:
             ValueError: If no tensors are found in the model
         """
-        if self.device is not None:
-            return self.device
-
-        # Find device from parameters
+        # Always get device from actual model parameters, not cached self.device
+        # This handles models loaded via from_pretrained() and moved with .to()
         for param in self.parameters():
-            self.device = param.device
+            return param.device
+
+        # Find device from buffers if no parameters found
+        for buffer in self.buffers():
+            return buffer.device
             return param.device
 
         # Find device from buffers

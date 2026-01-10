@@ -295,6 +295,10 @@ def _alpha_blend(
 
     Returns:
         torch.Tensor: Blended RGB image tensor.
+
+    Raises:
+        ValueError: If blend_method is unknown.
+        RuntimeError: If rgb_tensor channel count doesn't match expected channels for the blend method.
     """
     if blend_method == "keep":
         return rgb_tensor
@@ -307,7 +311,18 @@ def _alpha_blend(
         return rgb_tensor * alpha_mask[None, ...] + (1 - alpha_mask[None, ...]) * white_bg
 
     if blend_method == "mean":
-        mean_bg = torch.ones_like(rgb_tensor) * rgb_tensor.new_tensor(IMAGENET_MEAN)[:, None, None]
+        # Use channel-aware mean based on rgb_tensor's channel count
+        c = rgb_tensor.shape[0]
+        if c == 3:
+            mean_values = IMAGENET_MEAN  # Standard RGB: (0.485, 0.456, 0.406)
+        elif c == 1:
+            mean_values = (
+                IMAGENET_MEAN[0] + IMAGENET_MEAN[1] + IMAGENET_MEAN[2]
+            ) / 3.0  # Grayscale: use mean of RGB
+        else:
+            # For other channel counts, use the first 3 values or pad if needed
+            mean_values = tuple(IMAGENET_MEAN[:c]) if c < len(IMAGENET_MEAN) else IMAGENET_MEAN[:c]
+        mean_bg = torch.ones_like(rgb_tensor) * rgb_tensor.new_tensor(mean_values)[:, None, None]
         return rgb_tensor * alpha_mask[None, ...] + (1 - alpha_mask[None, ...]) * mean_bg
 
     raise ValueError(f"Unknown blend method: {blend_method}")
@@ -483,8 +498,18 @@ class InputProcessor:
         # Convert to tensor & normalize
         img_tensor = self._to_tensor(Image.fromarray(img))
 
-        alpha_mask = img_tensor[-1]
-        rgb_tensor = img_tensor[:-1, ...]
+        # Handle both RGB (3 channels) and RGBA (4 channels) images
+        c = img_tensor.shape[0]
+        if c == 4:
+            # RGBA image: split alpha channel from RGB
+            alpha_mask = img_tensor[-1]
+            rgb_tensor = img_tensor[:-1, ...]
+        elif c == 3:
+            # RGB image: create full alpha mask (all ones)
+            rgb_tensor = img_tensor
+            alpha_mask = torch.ones_like(rgb_tensor[0])  # [H, W] of ones
+        else:
+            raise ValueError(f"Unsupported image channel count: {c}. Expected 3 (RGB) or 4 (RGBA).")
 
         rgb_tensor = _alpha_blend(rgb_tensor, alpha_mask, blend_method)
         rgb_tensor = self._normalize_image(rgb_tensor)
