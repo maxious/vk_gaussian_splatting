@@ -342,6 +342,14 @@ def benchmark_multi_device(
             num_devices = torch.cuda.device_count()
         else:
             num_devices = 1
+    elif device_spec in ("xpu", "cuda"):
+        # Handle generic device type spec (e.g., "xpu" means all available XPU devices)
+        if device_spec == "xpu" and hasattr(torch, "xpu") and torch.xpu.is_available():
+            num_devices = torch.xpu.device_count()
+        elif device_spec == "cuda" and torch.cuda.is_available():
+            num_devices = torch.cuda.device_count()
+        else:
+            num_devices = 1
     else:
         num_devices = 1
 
@@ -361,10 +369,10 @@ def benchmark_multi_device(
     # Warmup
     logger.info(f"Warming up ({warmup} iterations)...")
     for i in range(warmup):
-        _ = multi_model.infer_depth(
-            frames[i % len(frames)],
-            target_size=(frames[0].shape[1], frames[0].shape[0]),
-        )
+        # Use batch inference for warmup
+        warmup_frames = frames[: min(4, len(frames))]  # Small batch for warmup
+        target_sizes = [(f.shape[1], f.shape[0]) for f in warmup_frames]
+        _ = multi_model.infer_depth_batch(warmup_frames, target_sizes=target_sizes)
         # Sync for accurate timing
         if hasattr(torch, "xpu") and torch.xpu.is_available():
             torch.xpu.synchronize()
@@ -378,13 +386,15 @@ def benchmark_multi_device(
     for iteration in range(iterations):
         start = time.perf_counter()
 
-        for frame in frames:
-            _ = multi_model.infer_depth(frame)
-            # Sync after each frame for accurate per-frame timing
-            if hasattr(torch, "xpu") and torch.xpu.is_available():
-                torch.xpu.synchronize()
-            elif torch.cuda.is_available():
-                torch.cuda.synchronize()
+        # Use batch inference for true parallel multi-device processing
+        target_sizes = [(frame.shape[1], frame.shape[0]) for frame in frames]
+        _ = multi_model.infer_depth_batch(frames, target_sizes=target_sizes)
+
+        # Sync after all frames
+        if hasattr(torch, "xpu") and torch.xpu.is_available():
+            torch.xpu.synchronize()
+        elif torch.cuda.is_available():
+            torch.cuda.synchronize()
 
         elapsed = time.perf_counter() - start
         times.append(elapsed)

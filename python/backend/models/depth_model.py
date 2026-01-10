@@ -210,6 +210,37 @@ class MultiDeviceDepthModel:
 
         return DepthPrediction(depth=depth, z_min=z_min, z_max=z_max)
 
+    def infer_depth_batch(
+        self,
+        frames: list[np.ndarray],
+        target_sizes: list[tuple[int, int]] | None = None,
+        process_res: int | None = None,
+    ) -> list[DepthPrediction]:
+        """Process multiple frames in parallel across devices.
+
+        Uses DeviceWorkerPool.map() for efficient parallel processing.
+
+        Args:
+            frames: List of input frames
+            target_sizes: Optional list of target sizes (W, H) for each frame output
+            process_res: Optional processing resolution override
+
+        Returns:
+            List of DepthPrediction objects
+        """
+        pool = self._ensure_worker_pool()
+
+        # Process in parallel using pool.map (worker handles process_res internally)
+        results: list[DepthPrediction] = []
+        for i, (depth, z_min, z_max) in enumerate(pool.map(frames)):
+            tgt_w, tgt_h = (
+                target_sizes[i] if target_sizes else (frames[i].shape[1], frames[i].shape[0])
+            )
+            depth = self._resize_depth(depth, tgt_h, tgt_w)
+            results.append(DepthPrediction(depth=depth, z_min=z_min, z_max=z_max))
+
+        return results
+
     @staticmethod
     def _resize_depth(depth: np.ndarray, target_h: int, target_w: int) -> np.ndarray:
         if depth.shape == (target_h, target_w):
