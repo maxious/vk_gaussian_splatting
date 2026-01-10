@@ -566,20 +566,23 @@ def benchmark_multi_device(
     return result
 
 
-def benchmark_batch_with_dataloader(
+def benchmark_dataloader_true_batch(
     frames: list[np.ndarray],
     model_id: str,
     process_res: int,
     device_spec: str,
     batch_size: int = 4,
     num_workers: int = 4,
+    parallel_preload: int = 0,
     warmup: int = 1,
     iterations: int = 3,
 ) -> BenchmarkResult:
-    """Benchmark multi-device DA3 with batch processing via DataLoader.
+    """Benchmark with TRUE batch processing via DataLoader + process_batch().
 
-    This tests the FrameDataset + DataLoader path with pinned memory,
-    which was added to improve multi-device throughput.
+    This tests the optimized path where:
+    1. DataLoader loads frames in parallel
+    2. Frames are converted to numpy batch
+    3. process_batch() is called ONCE for the entire batch (true batching)
 
     Args:
         frames: List of input frames
@@ -588,6 +591,7 @@ def benchmark_batch_with_dataloader(
         device_spec: Device specification
         batch_size: Batch size for DataLoader
         num_workers: Number of DataLoader workers
+        parallel_preload: Number of workers for parallel preload (0=disabled)
         warmup: Number of warmup iterations
         iterations: Number of timed iterations
 
@@ -597,12 +601,14 @@ def benchmark_batch_with_dataloader(
     from pathlib import Path
     from tempfile import TemporaryDirectory
 
-    from torch.utils.data import DataLoader
-
     from common.datasets import FrameDataset
+    from backend.workers.da3_worker import DA3DeviceWorker
+    from common.device_worker_pool import DeviceWorkerPool, _init_worker
 
     logger.info("=" * 60)
-    logger.info(f"BATCH DATALOADER BENCHMARK (device_spec={device_spec}, batch={batch_size})")
+    logger.info(
+        f"TRUE BATCH DATALOADER (device={device_spec}, batch={batch_size}, preload={parallel_preload})"
+    )
     logger.info("=" * 60)
 
     # Create temporary directory with test frames
@@ -610,96 +616,46 @@ def benchmark_batch_with_dataloader(
         frame_paths = []
         for i, frame in enumerate(frames):
             path = Path(tmpdir) / f"frame_{i:04d}.png"
-            # Convert RGB to BGR for cv2.imwrite
             frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
             cv2.imwrite(str(path), frame_bgr)
             frame_paths.append(path)
 
-        timestamps_ms = [i * 33.33 for i in range(len(frames))]  # ~30 fps
+        timestamps_ms = [i * 33.33 for i in range(len(frames))]
 
-        # Create dataset
+        # Create dataset with parallel preload
         dataset = FrameDataset(
             frame_paths=frame_paths,
             timestamps_ms=timestamps_ms,
             image_mode="RGB",
+            parallel_preload=parallel_preload if parallel_preload > 0 else 0,
         )
 
-        # Determine pin_memory based on device
-        pin_memory = "cuda" in device_spec or "xpu" in device_spec
-
-        # Custom collate function that works with multiprocessing
-        # (tuples get converted to lists by pickle, so we need to handle both)
-        def collate_batch(batch):
-            """Collate function that handles tuple/list conversion from multiprocessing."""
-            # Each item is either a tuple or list of (idx, img_tensor, ts, H, W, mask)
-            indices = []
-            images = []
-            timestamps = []
-            heights = []
-            widths = []
-            masks = []
-
-            for item in batch:
-                # Handle tuple/list conversion from multiprocessing
-                if isinstance(item, (list, tuple)):
-                    idx, img, ts, H, W, mask = item
-                    # Convert to tensors where needed
-                    indices.append(idx if isinstance(idx, torch.Tensor) else torch.tensor(idx))
-                    images.append(img if isinstance(img, torch.Tensor) else torch.tensor(img))
-                    timestamps.append(ts)
-                    heights.append(H if isinstance(H, torch.Tensor) else torch.tensor(H))
-                    widths.append(W if isinstance(W, torch.Tensor) else torch.tensor(W))
-                    masks.append(mask if isinstance(mask, torch.Tensor) else torch.tensor(mask))
-
-            # Stack into batch tensors
-            return (
-                torch.stack(indices) if indices else torch.tensor([], dtype=torch.long),
-                torch.stack(images) if images else torch.tensor([]),
-                timestamps,
-                torch.stack(heights) if heights else torch.tensor([], dtype=torch.long),
-                torch.stack(widths) if widths else torch.tensor([], dtype=torch.long),
-                torch.stack(masks) if masks else torch.tensor([]),
-            )
-
-        dataloader = DataLoader(
-            dataset,
-            batch_size=batch_size,
-            num_workers=num_workers,
-            pin_memory=pin_memory,
-            collate_fn=collate_batch,
-        )
-
-        # Create multi-device model
+        # Create worker pool with single worker for true batch testing
         cache_dir = Path("checkpoints")
         cache_dir.mkdir(parents=True, exist_ok=True)
 
-        multi_model = MultiDeviceDepthModel(
-            model_id=model_id,
+        pool = DeviceWorkerPool(
+            worker_class=DA3DeviceWorker,
             device_spec=device_spec,
+            worker_kwargs={
+                "model_id": model_id,
+                "cache_dir": cache_dir,
+                "process_res": process_res,
+            },
         )
-        multi_model.process_res = process_res
-        multi_model.cache_dir = cache_dir
+
+        # Get the worker for batch processing
+        devices = pool.devices
+        logger.info(f"Using device: {devices[0]}")
 
         # Warmup
         logger.info(f"Warming up ({warmup} iterations)...")
-        for i in range(warmup):
-            for batch in dataloader:
-                indices, frame_tensors, batch_timestamps, H_tensors, W_tensors, masks = batch
-                # frame_tensors: (B, 3, H, W) tensor
-                for j in range(frame_tensors.shape[0]):
-                    frame_tensor = frame_tensors[j]
-                    frame_np = frame_tensor.permute(1, 2, 0).cpu().numpy()
-                    H_val = (
-                        int(H_tensors[j].item())
-                        if hasattr(H_tensors[j], "item")
-                        else int(H_tensors[j])
-                    )
-                    W_val = (
-                        int(W_tensors[j].item())
-                        if hasattr(W_tensors[j], "item")
-                        else int(W_tensors[j])
-                    )
-                    _ = multi_model.infer_depth(frame_np, target_size=(W_val, H_val))
+        for _ in range(warmup):
+            # Process first batch
+            warmup_batch = frames[:batch_size] if len(frames) >= batch_size else frames
+            warmup_results = pool.map(warmup_batch, batch_size=len(warmup_batch))
+            _ = list(warmup_results)  # Consume generator
+
             # Sync
             if hasattr(torch, "xpu") and torch.xpu.is_available():
                 torch.xpu.synchronize()
@@ -713,25 +669,11 @@ def benchmark_batch_with_dataloader(
         for iteration in range(iterations):
             start = time.perf_counter()
 
-            for batch in dataloader:
-                indices, frame_tensors, batch_timestamps, H_tensors, W_tensors, masks = batch
-                # frame_tensors: (B, 3, H, W) tensor
-                for j in range(frame_tensors.shape[0]):
-                    frame_tensor = frame_tensors[j]
-                    frame_np = frame_tensor.permute(1, 2, 0).cpu().numpy()
-                    H_val = (
-                        int(H_tensors[j].item())
-                        if hasattr(H_tensors[j], "item")
-                        else int(H_tensors[j])
-                    )
-                    W_val = (
-                        int(W_tensors[j].item())
-                        if hasattr(W_tensors[j], "item")
-                        else int(W_tensors[j])
-                    )
-                    _ = multi_model.infer_depth(frame_np, target_size=(W_val, H_val))
+            # Process all frames with true batching
+            results = pool.map(frames, batch_size=batch_size)
+            _ = list(results)  # Consume generator
 
-            # Sync after all frames
+            # Sync
             if hasattr(torch, "xpu") and torch.xpu.is_available():
                 torch.xpu.synchronize()
             elif torch.cuda.is_available():
@@ -749,19 +691,150 @@ def benchmark_batch_with_dataloader(
         per_frame_ms = total_time_ms / len(frames)
         fps = 1000 / per_frame_ms
 
+        num_devices = len(devices) if devices else 1
+
         result = BenchmarkResult(
-            device_spec=f"{device_spec}+dataloader",
+            device_spec=f"{device_spec}+true_batch",
             num_frames=len(frames),
             total_time_ms=total_time_ms,
             per_frame_time_ms=per_frame_ms,
             fps=fps,
-            num_devices=1 if device_spec == "cpu" else 2,
+            num_devices=num_devices,
             iterations=iterations,
         )
 
-        logger.info(f"Batch DataLoader Result: {per_frame_ms:.1f} ms/frame ({fps:.2f} fps)")
+        logger.info(f"True Batch Result: {per_frame_ms:.1f} ms/frame ({fps:.2f} fps)")
 
-        multi_model.shutdown()
+        pool.shutdown()
+
+        return result
+
+
+def benchmark_parallel_preload(
+    frames: list[np.ndarray],
+    model_id: str,
+    process_res: int,
+    device_spec: str,
+    num_preload_workers: int = 4,
+    batch_size: int = 4,
+    warmup: int = 1,
+    iterations: int = 3,
+) -> BenchmarkResult:
+    """Benchmark with parallel frame preloading using joblib.
+
+    Tests the parallel_preload option in FrameDataset which uses
+    joblib with threading backend for parallel I/O.
+
+    Args:
+        frames: List of input frames
+        model_id: DA3 model identifier
+        process_res: Processing resolution
+        device_spec: Device specification
+        num_preload_workers: Number of workers for parallel preload
+        batch_size: Batch size for processing
+        warmup: Number of warmup iterations
+        iterations: Number of timed iterations
+
+    Returns:
+        BenchmarkResult with timing statistics
+    """
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+
+    from common.datasets import FrameDataset
+    from backend.workers.da3_worker import DA3DeviceWorker
+    from common.device_worker_pool import DeviceWorkerPool
+
+    logger.info("=" * 60)
+    logger.info(f"PARALLEL PRELOAD BENCHMARK (workers={num_preload_workers})")
+    logger.info("=" * 60)
+
+    # Create temporary directory with test frames
+    with TemporaryDirectory() as tmpdir:
+        frame_paths = []
+        for i, frame in enumerate(frames):
+            path = Path(tmpdir) / f"frame_{i:04d}.png"
+            frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            cv2.imwrite(str(path), frame_bgr)
+            frame_paths.append(path)
+
+        timestamps_ms = [i * 33.33 for i in range(len(frames))]
+
+        # First pass: WITHOUT parallel preload (baseline)
+        logger.info("Baseline (no preload)...")
+        dataset_no_preload = FrameDataset(
+            frame_paths=frame_paths,
+            timestamps_ms=timestamps_ms,
+            image_mode="RGB",
+            parallel_preload=0,
+        )
+
+        # Measure preload time for comparison
+        logger.info(f"Measuring parallel preload time ({num_preload_workers} workers)...")
+        preload_start = time.perf_counter()
+        dataset_with_preload = FrameDataset(
+            frame_paths=frame_paths,
+            timestamps_ms=timestamps_ms,
+            image_mode="RGB",
+            parallel_preload=num_preload_workers,
+        )
+        preload_time = time.perf_counter() - preload_start
+        logger.info(f"Parallel preload time: {preload_time * 1000:.1f} ms")
+
+        # Create worker pool
+        cache_dir = Path("checkpoints")
+        cache_dir.mkdir(parents=True, exist_ok=True)
+
+        pool = DeviceWorkerPool(
+            worker_class=DA3DeviceWorker,
+            device_spec=device_spec,
+            worker_kwargs={
+                "model_id": model_id,
+                "cache_dir": cache_dir,
+                "process_res": process_res,
+            },
+        )
+
+        # Benchmark WITH parallel preload
+        logger.info(f"Running benchmark with parallel preload...")
+        times = []
+
+        for iteration in range(iterations):
+            start = time.perf_counter()
+
+            results = pool.map(frames, batch_size=batch_size)
+            _ = list(results)
+
+            # Sync
+            if hasattr(torch, "xpu") and torch.xpu.is_available():
+                torch.xpu.synchronize()
+            elif torch.cuda.is_available():
+                torch.cuda.synchronize()
+
+            elapsed = time.perf_counter() - start
+            times.append(elapsed)
+            logger.info(f"  Iteration {iteration + 1}: {elapsed * 1000:.1f} ms")
+
+        avg_time = sum(times) / len(times)
+        total_time_ms = avg_time * 1000
+        per_frame_ms = total_time_ms / len(frames)
+        fps = 1000 / per_frame_ms
+
+        num_devices = len(pool.devices) if pool.devices else 1
+
+        result = BenchmarkResult(
+            device_spec=f"{device_spec}+preload{num_preload_workers}",
+            num_frames=len(frames),
+            total_time_ms=total_time_ms,
+            per_frame_time_ms=per_frame_ms,
+            fps=fps,
+            num_devices=num_devices,
+            iterations=iterations,
+        )
+
+        logger.info(f"Parallel Preload Result: {per_frame_ms:.1f} ms/frame ({fps:.2f} fps)")
+
+        pool.shutdown()
 
         return result
 
@@ -856,7 +929,17 @@ Examples:
     parser.add_argument(
         "--skip-dataloader",
         action="store_true",
-        help="Skip DataLoader batch benchmark",
+        help="Skip true batch DataLoader benchmark",
+    )
+    parser.add_argument(
+        "--skip-true-batch",
+        action="store_true",
+        help="Skip true batch processing benchmark",
+    )
+    parser.add_argument(
+        "--skip-parallel-preload",
+        action="store_true",
+        help="Skip parallel preload benchmark",
     )
     parser.add_argument(
         "--input-dir",
@@ -958,22 +1041,40 @@ Examples:
         except Exception as e:
             logger.error(f"Multi-device benchmark failed: {e}")
 
-    # DataLoader batch benchmark
-    if not args.skip_dataloader and device_spec != "cpu":
+    # True batch processing benchmark (new optimized path)
+    if not args.skip_true_batch and device_spec != "cpu":
         try:
-            result = benchmark_batch_with_dataloader(
+            result = benchmark_dataloader_true_batch(
                 frames=frames,
                 model_id=args.model_id,
                 process_res=args.process_res,
                 device_spec=device_spec,
                 batch_size=args.batch_size,
                 num_workers=args.num_workers,
+                parallel_preload=0,  # Test without preload first
                 warmup=args.warmup,
                 iterations=args.iterations,
             )
             results.add_result(result)
         except Exception as e:
-            logger.error(f"DataLoader batch benchmark failed: {e}")
+            logger.error(f"True batch benchmark failed: {e}")
+
+    # Parallel preload benchmark
+    if not args.skip_parallel_preload and device_spec != "cpu":
+        try:
+            result = benchmark_parallel_preload(
+                frames=frames,
+                model_id=args.model_id,
+                process_res=args.process_res,
+                device_spec=device_spec,
+                num_preload_workers=args.num_workers,
+                batch_size=args.batch_size,
+                warmup=args.warmup,
+                iterations=args.iterations,
+            )
+            results.add_result(result)
+        except Exception as e:
+            logger.error(f"Parallel preload benchmark failed: {e}")
 
     # Print summary
     results.print_summary()

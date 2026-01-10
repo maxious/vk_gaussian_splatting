@@ -134,7 +134,11 @@ class DA3DeviceWorker(BaseDeviceWorker[np.ndarray, tuple[np.ndarray, float, floa
         batch_size: int = 4,
         num_workers: int = 4,
     ) -> list[tuple[np.ndarray, float, float]]:
-        """Process frames using DataLoader for parallel loading and pinned memory."""
+        """Process frames using DataLoader for parallel loading and pinned memory.
+
+        Uses TRUE batch inference - all frames in a batch are processed at once
+        via model.inference() for optimal throughput.
+        """
         dataset = frame_dataset_factory(
             frame_paths=frame_paths,
             timestamps_ms=timestamps_ms,
@@ -155,20 +159,41 @@ class DA3DeviceWorker(BaseDeviceWorker[np.ndarray, tuple[np.ndarray, float, floa
         results = []
         for batch in dataloader:
             indices, frames, batch_timestamps, H, W, masks = batch
-            # frames: (B, C, H, W) tensor
+            # frames: (B, C, H, W) tensor in [0, 1] range
 
-            # Convert tensors to numpy arrays for DA3
-            batch_np = []
-            for i in range(frames.shape[0]):
-                frame_np = self._convert_tensor_to_numpy(frames[i])
-                batch_np.append(frame_np)
+            # Convert tensor batch to numpy for DA3 model
+            # True batching - all frames at once, not loop-per-frame
+            batch_np = self._convert_tensor_batch_to_numpy(frames)
 
-            # Process each frame in batch
-            for i, frame_np in enumerate(batch_np):
-                result = self.process_item(frame_np)
-                results.append(result)
+            # TRUE BATCH INFERENCE - process entire batch at once
+            batch_results = self.process_batch(batch_np)
+            results.extend(batch_results)
 
         return results
+
+    def _convert_tensor_batch_to_numpy(self, frames: torch.Tensor) -> list[np.ndarray]:
+        """Convert a batch of float32 tensors to numpy arrays efficiently.
+
+        Args:
+            frames: (B, C, H, W) float32 tensor in [0, 1] range
+
+        Returns:
+            List of (H, W, C) uint8 numpy arrays
+        """
+        # Handle float32 tensors from DataLoader (denormalize from ImageNet)
+        if frames.dtype == torch.float32:
+            # Denormalize from ImageNet normalization
+            mean = torch.tensor([0.485, 0.456, 0.406], device=frames.device, dtype=frames.dtype)
+            std = torch.tensor([0.229, 0.224, 0.225], device=frames.device, dtype=frames.dtype)
+            frames = frames * std.view(1, 3, 1, 1) + mean.view(1, 3, 1, 1)
+            frames = frames.clamp(0, 1)
+
+        # Convert to numpy: (B, C, H, W) -> [(H, W, C), ...]
+        frames_np = frames.cpu().numpy()
+        frames_np = (frames_np * 255).clip(0, 255).astype(np.uint8)
+
+        # Permute to HWC for each frame in batch
+        return [frames_np[i].transpose(1, 2, 0) for i in range(frames_np.shape[0])]
 
     @staticmethod
     def _collate_frames(

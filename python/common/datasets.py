@@ -7,6 +7,7 @@ Features:
 - C-contiguous array conversion for zero-copy tensor creation
 - Optional mask loading and resizing
 - Timestamp tracking
+- Optional parallel preload for small datasets (joblib-based)
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from typing import Tuple
 import cv2
 import numpy as np
 import torch
+from joblib import Parallel, delayed
 from torch.utils.data import Dataset
 
 
@@ -33,6 +35,11 @@ class FrameDataset(Dataset):
         >>> for batch in dataloader:
         ...     indices, images, timestamps = batch
         ...     # images is (B, C, H, W) tensor, ready for GPU
+
+    Parallel Preload:
+        For small datasets, use parallel_preload to load all frames in parallel
+        at initialization. This is useful when the full dataset fits in memory
+        and you want to avoid I/O bottlenecks during training.
     """
 
     def __init__(
@@ -43,6 +50,7 @@ class FrameDataset(Dataset):
         mask_first_frame: bool = False,
         transform: callable | None = None,
         image_mode: str = "RGB",
+        parallel_preload: int = 0,
     ):
         """Initialize FrameDataset.
 
@@ -53,6 +61,8 @@ class FrameDataset(Dataset):
             mask_first_frame: Whether to apply mask to first frame
             transform: Optional transform function (img, mask) -> (img, mask)
             image_mode: OpenCV color mode ("RGB", "BGR", "GRAYSCALE")
+            parallel_preload: Number of parallel workers for preloading (0 = disabled).
+                             Use for small datasets that fit in memory.
         """
         self.frame_paths = frame_paths
         self.timestamps_ms = timestamps_ms
@@ -60,6 +70,7 @@ class FrameDataset(Dataset):
         self.mask_first_frame = mask_first_frame
         self.transform = transform
         self.image_mode = image_mode
+        self.parallel_preload = parallel_preload
 
         # Map image_mode to cv2 constants
         mode_map = {
@@ -68,6 +79,24 @@ class FrameDataset(Dataset):
             "GRAYSCALE": cv2.COLOR_BGR2GRAY,
         }
         self.color_convert = mode_map.get(image_mode)
+
+        # Parallel preload if requested
+        self._cached_frames: list[np.ndarray] | None = None
+        if parallel_preload > 0:
+            self._preload_all()
+
+    def _preload_all(self) -> None:
+        """Preload all frames in parallel using joblib."""
+        if len(self.frame_paths) == 0:
+            self._cached_frames = []
+            return
+
+        # Use threading backend since cv2 releases GIL during I/O
+        n_jobs = min(self.parallel_preload, len(self.frame_paths))
+        loaded = Parallel(n_jobs=n_jobs, prefer="threads")(
+            delayed(self._load_image)(path) for path in self.frame_paths
+        )
+        self._cached_frames = list(loaded)  # type: ignore[assignment]
 
     def __len__(self) -> int:
         return len(self.frame_paths)
@@ -117,15 +146,19 @@ class FrameDataset(Dataset):
             - image_tensor: (C, H, W) float tensor in [0, 1] range
             - mask_tensor: (1, H, W) float tensor or None
         """
-        path = self.frame_paths[idx]
-        ts = self.timestamps_ms[idx]
+        if self._cached_frames is not None:
+            # Use preloaded frame
+            img = self._cached_frames[idx]
+        else:
+            # Load from disk
+            path = self.frame_paths[idx]
+            img = self._load_image(path)
 
-        # Load image
-        img = self._load_image(path)
+        ts = self.timestamps_ms[idx]
         H, W = img.shape[:2]
 
         # Load mask
-        mask = self._load_mask(path, H, W)
+        mask = self._load_mask(self.frame_paths[idx], H, W)
 
         # Apply transforms
         if self.transform:
@@ -149,11 +182,16 @@ def frame_dataset_factory(
     mask_first_frame: bool = False,
     transform: callable | None = None,
     image_mode: str = "RGB",
+    parallel_preload: int = 0,
 ) -> FrameDataset:
     """Factory function for creating FrameDataset with optimal defaults.
 
     This is the recommended way to create a FrameDataset as it provides
     a consistent interface across the codebase.
+
+    Args:
+        parallel_preload: Number of parallel workers for preloading (0 = disabled).
+                         Use for small datasets that fit in memory.
     """
     return FrameDataset(
         frame_paths=frame_paths,
@@ -162,4 +200,5 @@ def frame_dataset_factory(
         mask_first_frame=mask_first_frame,
         transform=transform,
         image_mode=image_mode,
+        parallel_preload=parallel_preload,
     )

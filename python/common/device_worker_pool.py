@@ -19,7 +19,10 @@ import multiprocessing
 from abc import ABC, abstractmethod
 from concurrent.futures import ProcessPoolExecutor, Future
 from dataclasses import dataclass
-from typing import Any, Callable, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar
+
+if TYPE_CHECKING:
+    from types import GeneratorType
 
 logger = logging.getLogger(__name__)
 
@@ -305,18 +308,74 @@ class DeviceWorkerPool(Generic[T, R]):
         future = executor.submit(_worker_process_batch, items)
         return future, device
 
-    def map(self, items: list[T], batch_size: int | None = None) -> list[R]:
+    def map(self, items: list[T], batch_size: int | None = None, return_as: str = "list"):
         """Process items across all devices.
 
         Args:
             items: List of input items
             batch_size: Optional batch size for batched processing
+            return_as: "list" for blocking list, "generator" for streaming results
 
         Returns:
-            List of processed results (order preserved)
+            If return_as="list": List of processed results (order preserved)
+            If return_as="generator": Generator yielding results as they complete
         """
         from concurrent.futures import as_completed
+        import types
 
+        # Generator return type annotation (Python 3.6 compatible)
+        if return_as == "generator":
+
+            def result_generator():
+                """Generator yielding results as they complete."""
+                if batch_size is None:
+                    # Single-item distribution
+                    futures = {}
+                    for idx, item in enumerate(items):
+                        future, device = self.submit(item)
+                        futures[future] = (idx, device)
+
+                    completed_results: dict[int, R] = {}
+                    next_idx = 0
+                    for future in as_completed(futures):
+                        idx, device = futures[future]
+                        try:
+                            result = future.result()
+                            completed_results[idx] = result
+                            # Yield results in order as they become available
+                            while next_idx in completed_results:
+                                yield completed_results.pop(next_idx)
+                                next_idx += 1
+                        except Exception as e:
+                            logger.error(f"Error processing item {idx} on {device}: {e}")
+                            raise
+                else:
+                    # Batch distribution
+                    batches = [items[i : i + batch_size] for i in range(0, len(items), batch_size)]
+                    futures = {}
+                    for batch_idx, batch in enumerate(batches):
+                        future, device = self.submit_batch(batch)
+                        futures[future] = (batch_idx, device)
+
+                    completed_batches: dict[int, list[R]] = {}
+                    next_batch = 0
+                    for future in as_completed(futures):
+                        batch_idx, device = futures[future]
+                        try:
+                            result = future.result()
+                            completed_batches[batch_idx] = result
+                            # Flatten and yield in order as batches complete
+                            while next_batch in completed_batches:
+                                for item_result in completed_batches.pop(next_batch):
+                                    yield item_result
+                                next_batch += 1
+                        except Exception as e:
+                            logger.error(f"Error processing batch {batch_idx} on {device}: {e}")
+                            raise
+
+            return result_generator()
+
+        # Blocking list (original behavior)
         if batch_size is None:
             # Single-item distribution
             futures = {}
