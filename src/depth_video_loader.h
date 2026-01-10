@@ -252,7 +252,7 @@ private:
  *
  * Manages both video and depth video playback with synchronization.
  * This replaces the need to separately load video via VideoDecoder
- * and depth via VDZSequenceLoader.
+ * and depth via DepthVideoLoader.
  */
 class VideoDepthPlaybackManager {
 public:

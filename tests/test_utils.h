@@ -156,18 +156,6 @@ inline std::vector<uint8_t> createVDZ1LargeScale()
     return createVDZ1Header(208, 320, 180, 0.000002f, 0.902846f, 1.004264f, true);
 }
 
-// Helper to create a VDZ sequence with multiple frames (for VDZSequenceLoader tests)
-inline std::vector<uint8_t> createVDZ1Sequence(size_t frameCount, uint32_t width = 64, uint32_t height = 48)
-{
-    std::vector<uint8_t> sequence;
-    
-    for (size_t i = 0; i < frameCount; ++i) {
-        uint32_t timestampMs = static_cast<uint32_t>(i * 33);  // ~30 FPS
-        auto frame = createVDZ1Header(timestampMs, width, height, 0.000001f, 0.5f, 1.0f, true);
-        sequence.insert(sequence.end(), frame.begin(), frame.end());
-    }
-    
-    return sequence;
-}
+
 
 } // namespace test_utils

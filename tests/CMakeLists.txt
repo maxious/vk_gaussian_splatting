@@ -5,13 +5,11 @@ cmake_minimum_required(VERSION 3.22)
 add_executable(unit_tests
     main.cpp
     test_depth.cpp
-    test_vdz_sequence.cpp
 )
 
 # Add source files we need to test
 target_sources(unit_tests PRIVATE
     ../src/depth_parser.cpp
-    ../src/vdz_sequence_loader.cpp
 )
 
 # Include directories for src files and tests
