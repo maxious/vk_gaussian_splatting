@@ -103,10 +103,7 @@
 #include "mesh_set_vk.h"
 #include "light_set_vk.h"
 #include "camera_set.h"
-#include "camera_trajectory.h"
-#include "video_renderer.h"
 #include "gaussian_splatting.h"
-#include "async_frame_saver.h"
 
 #ifdef WITH_COMFYUI
 #include "comfyui_client.h"
@@ -159,9 +156,6 @@ private:
   void guiDrawObjectTree();
   void guiDrawDepthStreamTree();
 
-  void guiDrawVideoExportWindow();
-  void startVideoRender();
-  void updateVideoRender();
 
   void guiDrawPropertiesWindow(void);
   void guiDrawRendererProperties();
@@ -268,16 +262,6 @@ private:
 
   // Video Export
   bool                  m_showSuperSplatUrlPopup = false;
-  bool                  m_showVideoExportWindow = false;
-  VideoRenderer         m_videoRenderer;
-  VideoRenderSettings   m_videoSettings;
-  bool                  m_videoRenderActive   = false;
-  bool                  m_pendingFrameSave    = false;
-  std::filesystem::path m_pendingFramePath;
-  bool                  m_savedVsync          = true;
-  AsyncFrameSaver       m_asyncFrameSaver;
-
-  void saveFrameAsync(VkImage srcImage, VkExtent2D size, const std::filesystem::path& path);
 
 #ifdef WITH_COMFYUI
   // ComfyUI integration

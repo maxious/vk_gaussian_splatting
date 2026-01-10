@@ -91,9 +91,6 @@ void GaussianSplattingUI::onAttach(nvapp::Application* app)
   // we hide the UI dy default in benchmark mode
   m_showUI = !(*m_pBenchmarkEnabled);
 
-  // Detect FFmpeg capabilities once at startup
-  VideoRenderer::initCapabilities();
-
   // Init combo selectors used in UI
 
   m_ui.enumAdd(GUI_STORAGE, STORAGE_BUFFERS, "Buffers");
@@ -474,8 +471,8 @@ void GaussianSplattingUI::onUIMenu()
     ImGui::MenuItem(ICON_MS_BOTTOM_PANEL_OPEN " V-Sync", "Ctrl+Shift+V", &v_sync);
     ImGui::MenuItem(ICON_MS_SPACE_DASHBOARD " ShowUI", "", &m_showUI);
     ImGui::Separator();
-    ImGui::MenuItem(ICON_MS_VIDEOCAM " Video Export...", "", &m_showVideoExportWindow);
     ImGui::MenuItem(ICON_MS_QUERY_STATS " Depth Performance", "", &m_showDepthPerformance);
+
 #ifdef WITH_COMFYUI
     ImGui::Separator();
     ImGui::MenuItem(ICON_MS_AUTO_AWESOME " ComfyUI Generator", "", &m_showComfyUIWindow);
@@ -594,21 +591,6 @@ void GaussianSplattingUI::onFileDrop(const std::filesystem::path& filename)
 
 void GaussianSplattingUI::onUIRender()
 {
-  // Handle pending frame save from video rendering (save G-buffer after render completes)
-  if(m_pendingFrameSave)
-  {
-    VkImage    srcImage = m_gBuffers.getColorImage(COLOR_MAIN);
-    VkExtent2D size     = {static_cast<uint32_t>(m_viewSize.x), static_cast<uint32_t>(m_viewSize.y)};
-    saveFrameAsync(srcImage, size, m_pendingFramePath);
-    m_pendingFrameSave = false;
-  }
-
-  // Video rendering progress
-  if(m_videoRenderActive)
-  {
-    updateVideoRender();
-  }
-
   /////////////
   // Rendering Viewport display the GBuffer
   {
@@ -1028,11 +1010,6 @@ void GaussianSplattingUI::onUIRender()
     }
 
   guiDrawFooterBar();
-
-  if(m_showVideoExportWindow)
-  {
-    guiDrawVideoExportWindow();
-  }
 
   if(m_showDepthPerformance)
   {
@@ -3665,378 +3642,13 @@ void GaussianSplattingUI::onComfyUIWorkflowComplete(const ComfyUIClient::Workflo
 }
 #endif  // WITH_COMFYUI
 
-void GaussianSplattingUI::guiDrawVideoExportWindow()
-{
-  namespace PE = nvgui::PropertyEditor;
 
-  ImGui::SetNextWindowSize(ImVec2(450, 600), ImGuiCond_FirstUseEver);
-  if(!ImGui::Begin("Video Export", &m_showVideoExportWindow))
-  {
-    ImGui::End();
-    return;
-  }
 
-  bool isRendering = m_videoRenderer.isRendering();
 
-  ImGui::BeginDisabled(isRendering);
 
-  if(ImGui::CollapsingHeader("Trajectory", ImGuiTreeNodeFlags_DefaultOpen))
-  {
-    PE::begin("##Trajectory");
 
-    static const char* trajectoryTypes[] = {"Orbit", "Swipe", "Rotate + Zoom", "Shake"};
-    int                trajectoryIdx     = static_cast<int>(m_videoSettings.trajectory.type);
-    if(trajectoryIdx > 3) trajectoryIdx = 0;  // Clamp if invalid
-    if(PE::entry(
-           "Type", [&]() { return ImGui::Combo("##TrajType", &trajectoryIdx, trajectoryTypes, IM_ARRAYSIZE(trajectoryTypes)); },
-           "Camera movement pattern"))
-    {
-      m_videoSettings.trajectory.type = static_cast<TrajectoryType>(trajectoryIdx);
-    }
 
-    PE::SliderFloat("Orbit Radius", &m_videoSettings.trajectory.orbitRadius, 0.01f, 5.0f, "%.2f m", 0,
-                    "Lateral camera movement range");
 
-    if(m_videoSettings.trajectory.type == TrajectoryType::ROTATE_FORWARD)
-    {
-      PE::SliderFloat("Zoom Range", &m_videoSettings.trajectory.zoomRange, 0.0f, 2.0f, "%.2f m", 0,
-                      "Forward/backward movement range");
-    }
-
-    PE::SliderInt("Orbits/Cycles", &m_videoSettings.trajectory.numOrbits, 1, 10, "%d", 0, "Number of complete cycles");
-
-    PE::Checkbox("Look at Center", &m_videoSettings.trajectory.lookAtCenter, "Keep camera pointed at scene center");
-
-    if(m_videoSettings.trajectory.type == TrajectoryType::SWIPE)
-    {
-      PE::Checkbox("Ping-Pong", &m_videoSettings.trajectory.pingPong, "Return to start position smoothly");
-    }
-
-    PE::end();
-  }
-
-  if(ImGui::CollapsingHeader("Video Settings", ImGuiTreeNodeFlags_DefaultOpen))
-  {
-    PE::begin("##VideoSettings");
-
-    static const char* frameRates[] = {"24 fps", "30 fps", "60 fps", "120 fps"};
-    static int         frameRateValues[] = {24, 30, 60, 120};
-    int                frameRateIdx = 1;
-    for(int i = 0; i < 4; ++i)
-    {
-      if(frameRateValues[i] == m_videoSettings.frameRate)
-        frameRateIdx = i;
-    }
-    if(PE::entry(
-           "Frame Rate", [&]() { return ImGui::Combo("##FPS", &frameRateIdx, frameRates, IM_ARRAYSIZE(frameRates)); },
-           "Output video frame rate"))
-    {
-      m_videoSettings.frameRate = frameRateValues[frameRateIdx];
-    }
-
-    PE::SliderFloat("Duration", &m_videoSettings.durationSec, 1.0f, 120.0f, "%.1f sec", 0, "Total video length");
-
-    int totalFrames = m_videoSettings.getTotalFrames();
-    PE::Text("Total Frames", "%d", totalFrames);
-
-    PE::end();
-  }
-
-  if(ImGui::CollapsingHeader("Resolution", ImGuiTreeNodeFlags_DefaultOpen))
-  {
-    PE::begin("##Resolution");
-
-    m_videoSettings.width  = static_cast<int>(m_viewSize.x);
-    m_videoSettings.height = static_cast<int>(m_viewSize.y);
-
-    PE::Text("Size", "%d x %d", m_videoSettings.width, m_videoSettings.height);
-    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Resize viewport to change resolution");
-
-    PE::end();
-  }
-
-  if(ImGui::CollapsingHeader("Stereo VR (SBS)", ImGuiTreeNodeFlags_DefaultOpen))
-  {
-    PE::begin("##StereoVR");
-
-    PE::Checkbox("Enable SBS Stereo", &m_videoSettings.enableSBS, "Render side-by-side stereo for VR");
-
-    ImGui::BeginDisabled(!m_videoSettings.enableSBS);
-
-    float ipdMM = m_videoSettings.stereoIPD * 1000.0f;
-    if(PE::SliderFloat("IPD", &ipdMM, 50.0f, 75.0f, "%.1f mm", 0, "Inter-pupillary distance"))
-    {
-      m_videoSettings.stereoIPD = ipdMM / 1000.0f;
-    }
-
-    PE::SliderFloat("Convergence", &m_videoSettings.stereoConvergence, 0.1f, 10.0f, "%.2f m", 0,
-                    "Distance where stereo images overlap perfectly");
-
-    PE::Checkbox("Off-Axis Projection", &m_videoSettings.stereoOffAxis, "Use asymmetric frustum for proper stereo");
-
-    ImGui::EndDisabled();
-
-    PE::end();
-  }
-
-  if(ImGui::CollapsingHeader("Output", ImGuiTreeNodeFlags_DefaultOpen))
-  {
-    PE::begin("##Output");
-
-    static char outputDir[512] = "";
-    if(outputDir[0] == '\0')
-    {
-      auto defaultPath = std::filesystem::current_path() / "video_output";
-#ifdef _WIN32
-      strncpy_s(outputDir, sizeof(outputDir), defaultPath.string().c_str(), _TRUNCATE);
-#else
-      snprintf(outputDir, sizeof(outputDir), "%s", defaultPath.string().c_str());
-#endif
-      m_videoSettings.outputDir = defaultPath;
-    }
-
-    if(PE::entry(
-           "Directory",
-           [&]()
-           {
-             bool changed = ImGui::InputText("##OutDir", outputDir, sizeof(outputDir));
-             return changed;
-           },
-           "Enter output directory path"))
-    {
-      m_videoSettings.outputDir = outputDir;
-    }
-
-    static char outputName[256] = "video";
-    if(PE::InputText("Filename", outputName, sizeof(outputName)))
-    {
-      m_videoSettings.outputName = outputName;
-    }
-
-    static const char* formats[]    = {"TGA", "HDR (Radiance .hdr)"};
-    int                formatIdx    = static_cast<int>(m_videoSettings.outputFormat);
-    if(PE::entry(
-           "Frame Format", [&]() { return ImGui::Combo("##Format", &formatIdx, formats, IM_ARRAYSIZE(formats)); }, "Frame output format"))
-    {
-      m_videoSettings.outputFormat = static_cast<VideoOutputFormat>(formatIdx);
-    }
-
-    if(m_videoSettings.outputFormat == VideoOutputFormat::FORMAT_HDR)
-    {
-      const auto& caps = VideoRenderer::getCapabilities();
-      if(!caps.hdr10Available)
-      {
-        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), ICON_MS_WARNING " FFmpeg 6+ required for HDR10 video");
-      }
-      else
-      {
-        ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), ICON_MS_CHECK_CIRCLE " HDR10 encoding (BT.2020/PQ)");
-      }
-    }
-
-    static const char* codecs[]     = {"NVENC HEVC HQ", "NVENC H.264 HQ", "NVENC HEVC Lossless", "NVENC H.264 Lossless",
-                                       "H.264 Lossless (CPU)", "H.265 Lossless (CPU)", "ProRes 4444"};
-    int                codecIdx     = static_cast<int>(m_videoSettings.codec);
-    if(PE::entry(
-           "Codec", [&]() { return ImGui::Combo("##Codec", &codecIdx, codecs, IM_ARRAYSIZE(codecs)); }, "Video encoding codec"))
-    {
-      m_videoSettings.codec = static_cast<VideoCodec>(codecIdx);
-    }
-
-    const auto& caps = VideoRenderer::getCapabilities();
-    if(caps.available)
-    {
-      if(caps.nvencAvailable)
-      {
-        ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), ICON_MS_CHECK_CIRCLE " FFmpeg + NVENC available");
-      }
-      else
-      {
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), ICON_MS_CHECK_CIRCLE " FFmpeg available (no NVENC)");
-      }
-    }
-    else
-    {
-      ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), ICON_MS_WARNING " FFmpeg not found - frames only");
-    }
-
-    PE::Checkbox("Encode Video", &m_videoSettings.encodeVideo, "Automatically encode frames to video");
-    PE::Checkbox("Delete Frames After", &m_videoSettings.deleteFramesAfterEncode, "Remove PNG files after encoding");
-
-    PE::end();
-  }
-
-  ImGui::EndDisabled();
-
-  ImGui::Separator();
-
-  if(isRendering)
-  {
-    auto progress = m_videoRenderer.getProgress();
-
-    ImGui::ProgressBar(progress.progressPct / 100.0f, ImVec2(-1, 0),
-                       (std::to_string(progress.currentFrame) + "/" + std::to_string(progress.totalFrames)).c_str());
-
-    ImGui::TextWrapped("%s", progress.statusMessage.c_str());
-
-    if(!progress.errorMessage.empty())
-    {
-      ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "%s", progress.errorMessage.c_str());
-    }
-
-    if(ImGui::Button("Cancel", ImVec2(-1, 0)))
-    {
-      m_videoRenderer.cancelRender();
-      m_videoRenderActive = false;
-    }
-  }
-  else
-  {
-    auto progress = m_videoRenderer.getProgress();
-    if(progress.state == VideoRenderState::STATE_COMPLETED)
-    {
-      ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), ICON_MS_CHECK_CIRCLE " %s", progress.statusMessage.c_str());
-    }
-    else if(progress.state == VideoRenderState::STATE_ERROR)
-    {
-      ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), ICON_MS_ERROR " %s", progress.errorMessage.c_str());
-    }
-
-    bool sceneLoaded = !m_radianceFields.empty();
-    ImGui::BeginDisabled(!sceneLoaded);
-
-    if(ImGui::Button(ICON_MS_MOVIE " Start Render", ImVec2(-1, 30)))
-    {
-      startVideoRender();
-    }
-
-    ImGui::EndDisabled();
-
-    if(!sceneLoaded)
-    {
-      ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "Load a scene first");
-    }
-  }
-
-  ImGui::End();
-}
-
-void GaussianSplattingUI::startVideoRender()
-{
-  Camera startCam = m_cameraSet.getCamera();
-
-  m_videoSettings.trajectory.numFrames = m_videoSettings.getTotalFrames();
-
-  // Disable vsync for faster rendering
-  m_savedVsync = m_app->isVsync();
-  m_app->setVsync(false);
-
-  if(m_videoSettings.enableSBS)
-  {
-    m_renderSBS           = true;
-    m_stereoSeparation    = m_videoSettings.stereoIPD;
-    m_stereoConvergence   = m_videoSettings.stereoConvergence;
-    m_stereoOffAxisProj   = m_videoSettings.stereoOffAxis;
-  }
-
-  m_videoRenderer.startRender(
-      m_videoSettings, startCam, {},
-      [this](const Camera& cam, int frameIndex)
-      {
-        m_cameraSet.setCamera(cam, true);
-
-        if(m_videoSettings.enableSBS)
-        {
-          m_renderSBS = true;
-        }
-      },
-      [this](const std::filesystem::path& framePath)
-      {
-        // Queue frame save - will be processed next frame after render completes
-        m_pendingFramePath = framePath;
-        m_pendingFrameSave = true;
-      });
-
-  m_videoRenderActive = true;
-}
-
-void GaussianSplattingUI::updateVideoRender()
-{
-  if(!m_videoRenderActive)
-    return;
-
-  // Wait for pending frame save before advancing
-  if(m_pendingFrameSave)
-    return;
-
-  auto progress = m_videoRenderer.getProgress();
-
-  if(progress.state == VideoRenderState::STATE_COMPLETED || progress.state == VideoRenderState::STATE_ERROR ||
-     progress.state == VideoRenderState::STATE_CANCELLED)
-  {
-    m_videoRenderActive = false;
-
-    // Restore vsync
-    m_app->setVsync(m_savedVsync);
-
-    if(m_videoSettings.enableSBS)
-    {
-      m_renderSBS = false;
-    }
-    return;
-  }
-
-  if(progress.state == VideoRenderState::STATE_RENDERING)
-  {
-    m_videoRenderer.renderNextFrame();
-  }
-  else if(progress.state == VideoRenderState::STATE_WAITING_FRAMES)
-  {
-    // Wait for async frame saver to finish before encoding
-    if(!m_asyncFrameSaver.hasPendingFrames())
-    {
-      m_videoRenderer.checkFramesComplete();
-    }
-  }
-}
-
-void GaussianSplattingUI::saveFrameAsync(VkImage srcImage, VkExtent2D size, const std::filesystem::path& path)
-{
-  VkDevice         device         = m_app->getDevice();
-  VkPhysicalDevice physicalDevice = m_app->getPhysicalDevice();
-  VkImage          dstImage       = {};
-  VkDeviceMemory   dstImageMemory = {};
-
-  bool isHDR = (path.extension() == ".hdr");
-  VkFormat format = isHDR ? VK_FORMAT_R32G32B32A32_SFLOAT : VK_FORMAT_R8G8B8A8_UNORM;
-
-  VkCommandBuffer cmd = m_app->createTempCmdBuffer();
-  nvvk::imageToLinear(cmd, device, physicalDevice, srcImage, size, dstImage, dstImageMemory, format);
-  m_app->submitAndWaitTempCmdBuffer(cmd);
-
-  VkImageSubresource  subResource{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0};
-  VkSubresourceLayout subResourceLayout;
-  vkGetImageSubresourceLayout(device, dstImage, &subResource, &subResourceLayout);
-
-  const char* data = nullptr;
-  vkMapMemory(device, dstImageMemory, 0, VK_WHOLE_SIZE, 0, (void**)&data);
-  data += subResourceLayout.offset;
-
-  size_t bytesPerPixel = isHDR ? sizeof(float) * 4 : sizeof(uint8_t) * 4;
-  size_t rowSize       = size.width * bytesPerPixel;
-
-  std::vector<uint8_t> pixelData(size.width * size.height * bytesPerPixel);
-  for(uint32_t y = 0; y < size.height; y++)
-  {
-    memcpy(pixelData.data() + y * rowSize, data + y * subResourceLayout.rowPitch, rowSize);
-  }
-
-  vkUnmapMemory(device, dstImageMemory);
-  vkFreeMemory(device, dstImageMemory, nullptr);
-  vkDestroyImage(device, dstImage, nullptr);
-
-  m_asyncFrameSaver.queueFrame(pixelData.data(), size.width, size.height, isHDR, path);
-}
 
 void GaussianSplattingUI::guiDrawDepthStreamProperties()
 {
