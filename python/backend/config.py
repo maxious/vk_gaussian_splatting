@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     uv_cache_dir: Path | None = None
     inference_worker_count: int = Field(default=3, validation_alias="VIDEO_DEPTH_INFER_WORKERS")
     log_level: str = Field(default="WARNING", validation_alias="VIDEO_DEPTH_LOG_LEVEL")
+    use_multi_device: bool = Field(default=False, validation_alias="VIDEO_DEPTH_MULTI_DEVICE")
+    device_spec: str = Field(default="auto", validation_alias="VIDEO_DEPTH_DEVICE_SPEC")
 
     model_config = {
         "frozen": True,

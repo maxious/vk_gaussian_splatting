@@ -13,10 +13,11 @@ import cv2
 import torch
 
 from backend.config import get_settings
+from common.device_worker_pool import DeviceWorkerPool
 
-try:  # pragma: no cover - heavy dependency optional in tests
+try:
     from depth_anything_3.api import DepthAnything3
-except ImportError:  # pragma: no cover
+except ImportError:
     DepthAnything3 = None  # type: ignore[assignment]
 
 
@@ -138,10 +139,92 @@ class DepthModel:
 
 
 _depth_model: DepthModel | None = None
+_multi_device_depth_model: MultiDeviceDepthModel | None = None
 
 
-def get_depth_model() -> DepthModel:
-    global _depth_model
-    if _depth_model is None:
-        _depth_model = DepthModel()
-    return _depth_model
+def get_depth_model(use_multi_device: bool = False) -> DepthModel | MultiDeviceDepthModel:
+    global _depth_model, _multi_device_depth_model
+
+    if use_multi_device:
+        if _multi_device_depth_model is None:
+            _multi_device_depth_model = MultiDeviceDepthModel()
+        return _multi_device_depth_model
+    else:
+        if _depth_model is None:
+            _depth_model = DepthModel()
+        return _depth_model
+
+
+class MultiDeviceDepthModel:
+    def __init__(self, model_id: Optional[str] = None, device_spec: str = "auto") -> None:
+        settings = get_settings()
+        self.model_id = model_id or settings.depth_model_id
+        self.device_spec = device_spec
+        self.process_res = settings.depth_process_res
+        self.cache_dir = settings.data_root.parent / "checkpoints"
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self._worker_pool: DeviceWorkerPool | None = None
+        self._max_workers = settings.inference_worker_count
+
+    def _ensure_worker_pool(self) -> DeviceWorkerPool:
+        if self._worker_pool is not None:
+            return self._worker_pool
+
+        from backend.workers.da3_worker import DA3DeviceWorker
+
+        self._worker_pool = DeviceWorkerPool(
+            worker_class=DA3DeviceWorker,
+            device_spec=self.device_spec,
+            worker_kwargs={
+                "model_id": self.model_id,
+                "cache_dir": self.cache_dir,
+                "process_res": self.process_res,
+            },
+        )
+        return self._worker_pool
+
+    async def infer_depth_async(
+        self,
+        frame: np.ndarray,
+        process_res: Optional[int] = None,
+        target_size: Optional[tuple[int, int]] = None,
+    ) -> DepthPrediction:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self.infer_depth, frame, process_res, target_size)
+
+    @property
+    def inflight_count(self) -> int:
+        return 0
+
+    def infer_depth(
+        self,
+        frame: np.ndarray,
+        process_res: Optional[int] = None,
+        target_size: Optional[tuple[int, int]] = None,
+    ) -> DepthPrediction:
+        pool = self._ensure_worker_pool()
+
+        future, device = pool.submit(frame)
+        depth, z_min, z_max = future.result()
+
+        tgt_w, tgt_h = target_size if target_size else (frame.shape[1], frame.shape[0])
+        depth = self._resize_depth(depth, tgt_h, tgt_w)
+
+        return DepthPrediction(depth=depth, z_min=z_min, z_max=z_max)
+
+    @staticmethod
+    def _resize_depth(depth: np.ndarray, target_h: int, target_w: int) -> np.ndarray:
+        if depth.shape == (target_h, target_w):
+            return depth
+
+        interpolation = cv2.INTER_CUBIC
+        if target_w < depth.shape[1] and target_h < depth.shape[0]:
+            interpolation = cv2.INTER_AREA
+
+        resized = cv2.resize(depth, (target_w, target_h), interpolation=interpolation)
+        return resized.astype(np.float32, copy=False)
+
+    def shutdown(self):
+        if self._worker_pool is not None:
+            self._worker_pool.shutdown()
+            self._worker_pool = None

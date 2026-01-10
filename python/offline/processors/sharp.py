@@ -18,6 +18,7 @@ import numpy as np
 
 from ..types import GaussianFrame
 from .base import GaussianProcessor
+from common.device_worker_pool import DeviceWorker as BaseDeviceWorker, DeviceWorkerPool
 
 logger = logging.getLogger(__name__)
 
@@ -69,19 +70,16 @@ class PreloadedFrame:
     mask: np.ndarray | None = None
 
 
-class DeviceWorker:
-    """Worker that processes frames on a specific device."""
-
+class SharpDeviceWorker(BaseDeviceWorker[tuple[int, PreloadedFrame], tuple[int, GaussianFrame]]):
     INTERNAL_SIZE = (1536, 1536)
     SH_C0 = 0.28209479177387814
 
-    def __init__(self, device: str, vit_preset: str = "dinov2l16_384"):
-        self.device = device
+    def __init__(self, device: str, worker_id: int, vit_preset: str = "dinov2l16_384"):
+        super().__init__(device, worker_id, vit_preset=vit_preset)
         self.vit_preset = vit_preset
         self.predictor = None
-        self._load_model()
 
-    def _load_model(self):
+    def load_model(self) -> None:
         import ssl
         import torch
         from sharp.models import create_predictor, PredictorParams
@@ -119,7 +117,28 @@ class DeviceWorker:
         elif hasattr(torch, "xpu") and torch.xpu.is_available():
             torch.xpu.empty_cache()
 
-    def process_frame(
+    def process_item(self, item: tuple[int, PreloadedFrame]) -> tuple[int, GaussianFrame]:
+        frame_idx, preloaded = item
+        try:
+            result = self._process_frame(
+                preloaded.image,
+                preloaded.height,
+                preloaded.width,
+                preloaded.mask if preloaded.mask_applied else None,
+            )
+            result.frame_idx = frame_idx
+            result.timestamp_ms = preloaded.timestamp_ms
+            return (frame_idx, result)
+        except Exception as e:
+            logger.error(f"Error processing frame {frame_idx}: {e}")
+            raise
+
+    def process_batch(
+        self, items: list[tuple[int, PreloadedFrame]]
+    ) -> list[tuple[int, GaussianFrame]]:
+        return [self.process_item(item) for item in items]
+
+    def _process_frame(
         self,
         img: np.ndarray,
         H: int,
@@ -756,12 +775,12 @@ class SharpGaussianProcessor(GaussianProcessor):
 
         # Create one executor per device to ensure affinity and persistent model loading
         executors = {}
-        for device in devices:
+        for worker_id, device in enumerate(devices):
             executor = ProcessPoolExecutor(
                 max_workers=1,
                 mp_context=ctx,
                 initializer=_init_worker,
-                initargs=(device, self.vit_preset),
+                initargs=(device, worker_id, self.vit_preset),
             )
             executors[device] = executor
 
@@ -815,33 +834,15 @@ class SharpGaussianProcessor(GaussianProcessor):
 _GLOBAL_WORKER = None
 
 
-def _init_worker(device: str, vit_preset: str):
-    """Initialize global worker instance."""
+def _init_worker(device: str, worker_id: int, vit_preset: str):
     global _GLOBAL_WORKER
-    _GLOBAL_WORKER = DeviceWorker(device, vit_preset)
+    _GLOBAL_WORKER = SharpDeviceWorker(device, worker_id, vit_preset)
+    _GLOBAL_WORKER.load_model()
 
 
 def _worker_process_batch(
     batch: list[tuple[int, PreloadedFrame]],
 ) -> list[tuple[int, GaussianFrame]]:
-    """Process a batch of frames using the global worker."""
-    results = []
     if _GLOBAL_WORKER is None:
         raise RuntimeError("Worker not initialized!")
-
-    for frame_idx, preloaded in batch:
-        try:
-            result = _GLOBAL_WORKER.process_frame(
-                preloaded.image,
-                preloaded.height,
-                preloaded.width,
-                preloaded.mask if preloaded.mask_applied else None,
-            )
-            result.frame_idx = frame_idx
-            result.timestamp_ms = preloaded.timestamp_ms
-            results.append((frame_idx, result))
-        except Exception as e:
-            logger.error(f"Error processing frame {frame_idx}: {e}")
-            # Continue processing batch, missing frames will be handled by main process
-
-    return results
+    return _GLOBAL_WORKER.process_batch(batch)

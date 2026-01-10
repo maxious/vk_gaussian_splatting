@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+checkpoints/
+output/
+preprocessed/
+*.ply
+*.vdz
