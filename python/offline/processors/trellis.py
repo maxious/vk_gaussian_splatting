@@ -2,8 +2,10 @@ import os
 import sys
 import logging
 from pathlib import Path
+
 import numpy as np
 import torch
+from torch.utils.data import DataLoader
 from PIL import Image
 
 # Add vendored vkgs_trellis to path before any imports
@@ -13,6 +15,7 @@ if str(_VKGS_TRELLIS_PARENT) not in sys.path:
 
 from ..types import GaussianFrame
 from .base import GaussianProcessor
+from common.datasets import frame_dataset_factory
 
 logger = logging.getLogger(__name__)
 
@@ -69,30 +72,27 @@ class TrellisProcessor(GaussianProcessor):
             logger.info("Cast image_cond_model to float16 for attention compatibility")
 
         if low_vram:
-            # Optional: Enable some optimizations for low VRAM if available
-            # Current TRELLIS implementation doesn't expose much explicit low-vram flags
-            # other than standard torch optimizations
             pass
 
-    def _crop_to_mask(self, img: Image.Image) -> Image.Image:
-        """Crop image to the bounding box of the mask (alpha channel).
+    def _crop_to_mask(self, img: np.ndarray, mask: np.ndarray | None = None) -> np.ndarray:
+        """Crop image to the bounding box of the mask (if provided).
 
         Args:
-            img: RGBA PIL Image
+            img: RGB numpy array (H, W, 3)
+            mask: Optional grayscale numpy array (H, W)
 
         Returns:
-            Cropped RGBA Image
+            Cropped RGB numpy array
         """
-        if img.mode != "RGBA":
-            img = img.convert("RGBA")
+        if mask is None:
+            return img
 
-        alpha = np.array(img)[:, :, 3]
-        # Find non-zero alpha pixels
-        rows = np.any(alpha > 0, axis=1)
-        cols = np.any(alpha > 0, axis=0)
+        # Find non-zero mask pixels
+        rows = np.any(mask > 0, axis=1)
+        cols = np.any(mask > 0, axis=0)
 
         if not np.any(rows) or not np.any(cols):
-            logger.warning("No non-zero alpha pixels found, returning original image")
+            logger.warning("No non-zero mask pixels found, returning original image")
             return img
 
         rmin, rmax = np.where(rows)[0][[0, -1]]
@@ -111,10 +111,10 @@ class TrellisProcessor(GaussianProcessor):
         # Crop with bounds checking
         left = max(0, left)
         top = max(0, top)
-        right = min(img.width, right)
-        bottom = min(img.height, bottom)
+        right = min(img.shape[1], right)
+        bottom = min(img.shape[0], bottom)
 
-        return img.crop((left, top, right, bottom))
+        return img[top:bottom, left:right]
 
     def process_frames(
         self,
@@ -128,77 +128,90 @@ class TrellisProcessor(GaussianProcessor):
         if len(frame_paths) == 0:
             return []
 
-        # Load images
-        images = []
-        for p in frame_paths:
-            img = Image.open(p).convert("RGB")
+        # Create dataset with FrameDataset for parallel loading
+        dataset = frame_dataset_factory(
+            frame_paths=frame_paths,
+            timestamps_ms=timestamps_ms,
+            masks_dir=masks_dir,
+            mask_first_frame=mask_first_frame,
+            image_mode="RGB",
+        )
 
-            # Apply mask if available
-            if masks_dir:
-                mask_path = None
-
-                # Try different mask path patterns:
-                # 1. masks_dir/{stem}.png (direct mask files)
-                # 2. masks_dir/{folder}/{stem}.png (nested structure like masks.tar/masks/00/000000.png)
-                for pattern in [
-                    masks_dir / f"{p.stem}.png",
-                    masks_dir / f"{p.stem}{p.suffix}",
-                    masks_dir / f"{p.parent.name}" / f"{p.stem}.png",
-                    masks_dir / "masks" / f"{p.parent.name}" / f"{p.stem}.png",
-                ]:
-                    if pattern.exists():
-                        mask_path = pattern
-                        break
-
-                if mask_path:
-                    mask = Image.open(mask_path).convert("L")
-                    # Resize mask to match image
-                    mask = mask.resize(img.size, Image.Resampling.NEAREST)
-                    # Convert to RGBA and apply mask to alpha channel
-                    img = img.convert("RGBA")
-                    img.putalpha(mask)
-
-                    # Pre-crop to mask bounding box to skip TRELLIS's internal preprocessing
-                    img = self._crop_to_mask(img)
-
-            images.append(img)
+        # Use DataLoader for parallel loading with pinned memory
+        pin_memory = self.device in ("cuda", "xpu")
+        dataloader = DataLoader(
+            dataset,
+            batch_size=min(4, len(frame_paths)),  # Process up to 4 frames at once
+            num_workers=4,
+            pin_memory=pin_memory,
+            collate_fn=self._collate_frames,
+        )
 
         results = []
 
-        # Single image processing or Multi-image processing
-        if len(images) > 1:
-            logger.info(f"Running TRELLIS multi-image inference on {len(images)} frames")
-            try:
-                outputs = self.pipeline.run_multi_image(
-                    images,
-                    seed=1,
-                    sparse_structure_sampler_params={"steps": 25, "cfg_strength": 7.5},
-                    slat_sampler_params={"steps": 25, "cfg_strength": 3},
-                    preprocess_image=self.preprocess,
-                )
-                self._extract_gaussian(
-                    outputs,
-                    results,
-                    frame_idx=0,
-                    timestamp=timestamps_ms[0] if timestamps_ms else 0.0,
-                )
-            except AttributeError:
-                logger.warning(
-                    "run_multi_image not found (older TRELLIS version?), falling back to single image loop"
-                )
-                for i, img in enumerate(images):
-                    self._process_single(img, i, timestamps_ms[i], results)
-        else:
-            logger.info("Running TRELLIS single-image inference")
-            self._process_single(images[0], 0, timestamps_ms[0], results)
+        for batch in dataloader:
+            indices, images, batch_timestamps, H, W, masks = batch
+            # images: (B, C, H, W) tensor in [0, 1] range
+            # Convert to PIL Images for TRELLIS pipeline
+            images_np = (images.permute(0, 2, 3, 1).cpu().numpy() * 255).astype(np.uint8)
+
+            # Apply mask cropping if masks are present
+            if masks is not None and masks.sum() > 0:
+                masks_np = masks.squeeze(1).cpu().numpy()
+                images_np = [
+                    self._crop_to_mask(img, mask) for img, mask in zip(images_np, masks_np)
+                ]
+
+            # Convert to PIL Images
+            pil_images = [Image.fromarray(img).convert("RGB") for img in images_np]
+
+            # Process images through TRELLIS
+            if len(pil_images) > 1:
+                logger.info(f"Running TRELLIS multi-image inference on {len(pil_images)} frames")
+                try:
+                    outputs = self.pipeline.run_multi_image(
+                        pil_images,
+                        seed=1,
+                        sparse_structure_sampler_params={"steps": 25, "cfg_strength": 7.5},
+                        slat_sampler_params={"steps": 25, "cfg_strength": 3},
+                        preprocess_image=self.preprocess,
+                    )
+                    for i, idx in enumerate(indices):
+                        self._extract_gaussian(
+                            outputs if len(pil_images) == 1 else [outputs["gaussian"][i]],
+                            results,
+                            frame_idx=int(idx),
+                            timestamp=batch_timestamps[i],
+                        )
+                except AttributeError:
+                    logger.warning(
+                        "run_multi_image not found (older TRELLIS version?), falling back to single image loop"
+                    )
+                    for i, pil_img in enumerate(pil_images):
+                        self._process_single(pil_img, int(indices[i]), batch_timestamps[i], results)
+            else:
+                logger.info("Running TRELLIS single-image inference")
+                self._process_single(pil_images[0], int(indices[0]), batch_timestamps[0], results)
 
         return results
+
+    @staticmethod
+    def _collate_frames(batch):
+        """Custom collate function for FrameDataset items."""
+        indices, images, timestamps, H, W, masks = zip(*batch)
+        return (
+            torch.stack(indices),
+            torch.stack(images),
+            list(timestamps),
+            torch.stack(H),
+            torch.stack(W),
+            torch.stack(masks) if masks[0] is not None else None,
+        )
 
     def _process_single(self, image, index, timestamp, results):
         outputs = self.pipeline.run(
             image,
             seed=1,
-            # Use default sampler params
         )
         self._extract_gaussian(outputs, results, index, timestamp)
 
@@ -209,18 +222,11 @@ class TrellisProcessor(GaussianProcessor):
 
         gs = outputs["gaussian"][0]
 
-        # Extract data from TRELLIS Gaussian object
-        # Based on trellis/representations/gaussian/gaussian_model.py
-
         # Positions
         means = gs.get_xyz.detach().cpu().numpy().astype(np.float32)
 
         # Opacities (logit)
-        # get_opacity returns sigmoid(opacity), so we inverse it.
-        # But we can also access _opacity + opacity_bias
-        # Safe way using public API:
         opacities_prob = gs.get_opacity
-        # Inverse sigmoid: log(p / (1-p))
         opacities_prob = torch.clamp(opacities_prob, 1e-6, 1.0 - 1e-6)
         opacities = (
             torch.log(opacities_prob / (1.0 - opacities_prob))
@@ -231,20 +237,15 @@ class TrellisProcessor(GaussianProcessor):
         )
 
         # Scales (log)
-        # get_scaling returns scales. We need log(scales)
         scales_act = gs.get_scaling
         scales = (
             torch.log(torch.clamp(scales_act, min=1e-8)).detach().cpu().numpy().astype(np.float32)
         )
 
         # Rotations (quaternion)
-        # TRELLIS returns [w, x, y, z] (standard)
-        # GaussianFrame expects [w, x, y, z] (standard)
         rotations = gs.get_rotation.detach().cpu().numpy().astype(np.float32)
 
         # Colors (SH DC)
-        # TRELLIS stores DC features in _features_dc with shape [N, 3, 1]
-        # Transform to [N, 3] by transposing and flattening
         features_dc = gs._features_dc.detach().cpu().numpy()
         colors = (
             np.transpose(features_dc, (0, 2, 1)).reshape(features_dc.shape[0], 3).astype(np.float32)

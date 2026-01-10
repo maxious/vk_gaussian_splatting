@@ -295,7 +295,7 @@ class DepthAnything3(nn.Module, PyTorchModelHubMixin):
                 if infer_gs and "gs_video" not in export_format:
                     export_format = f"{export_format}-gs_video"
                 if "gs_video" in export_format:
-                    if "gs_video" not in export_kwargs:
+                    if export_kwargs.get("gs_video") is None:
                         export_kwargs["gs_video"] = {}
                     export_kwargs["gs_video"].update(
                         {
@@ -306,7 +306,7 @@ class DepthAnything3(nn.Module, PyTorchModelHubMixin):
                     )
             # Add GLB export parameters
             if "glb" in export_format:
-                if "glb" not in export_kwargs:
+                if export_kwargs.get("glb") is None:
                     export_kwargs["glb"] = {}
                 export_kwargs["glb"].update(
                     {
@@ -317,7 +317,7 @@ class DepthAnything3(nn.Module, PyTorchModelHubMixin):
                 )
             # Add Feat_vis export parameters
             if "feat_vis" in export_format:
-                if "feat_vis" not in export_kwargs:
+                if export_kwargs.get("feat_vis") is None:
                     export_kwargs["feat_vis"] = {}
                 export_kwargs["feat_vis"].update(
                     {
@@ -326,11 +326,77 @@ class DepthAnything3(nn.Module, PyTorchModelHubMixin):
                 )
             # Add COLMAP export parameters
             if "colmap" in export_format:
-                if "colmap" not in export_kwargs:
+                if export_kwargs.get("colmap") is None:
                     export_kwargs["colmap"] = {}
                 export_kwargs["colmap"].update(
                     {
                         "image_paths": image,
+                        "conf_thresh_percentile": conf_thresh_percentile,
+                        "process_res_method": process_res_method,
+                    }
+                )
+            self._export_results(prediction, export_format, export_dir, **export_kwargs)
+
+        return prediction
+
+        raw_output = self._run_model_forward(
+            imgs, ex_t_norm, in_t, export_feat_layers, infer_gs, use_ray_pose, ref_view_strategy
+        )
+
+        # Convert raw output to prediction
+        prediction = self._convert_to_prediction(raw_output)
+
+        # Align prediction to extrinsincs
+        prediction = self._align_to_input_extrinsics_intrinsics(
+            extrinsics, intrinsics, prediction, align_to_input_ext_scale
+        )
+
+        # Add processed images for visualization
+        prediction = self._add_processed_images(prediction, imgs_cpu)
+        prediction = self._add_alpha_masks(prediction, masks_cpu)
+
+        # Export if requested
+        if export_dir is not None:
+            if "gs" in export_format:
+                if infer_gs and "gs_video" not in export_format:
+                    export_format = f"{export_format}-gs_video"
+                if "gs_video" in export_format:
+                    if export_kwargs.get("gs_video") is None:
+                        export_kwargs["gs_video"] = {}
+                    export_kwargs["gs_video"].update(
+                        {
+                            "extrinsics": render_exts,
+                            "intrinsics": render_ixts,
+                            "out_image_hw": render_hw,
+                        }
+                    )
+            # Add GLB export parameters
+            if "glb" in export_format:
+                if export_kwargs.get("glb") is None:
+                    export_kwargs["glb"] = {}
+                export_kwargs["glb"].update(
+                    {
+                        "conf_thresh_percentile": conf_thresh_percentile,
+                        "num_max_points": num_max_points,
+                        "show_cameras": show_cameras,
+                    }
+                )
+            # Add Feat_vis export parameters
+            if "feat_vis" in export_format:
+                if export_kwargs.get("feat_vis") is None:
+                    export_kwargs["feat_vis"] = {}
+                export_kwargs["feat_vis"].update(
+                    {
+                        "fps": feat_vis_fps,
+                    }
+                )
+            # Add COLMAP export parameters
+            if "colmap" in export_format:
+                if export_kwargs.get("colmap") is None:
+                    export_kwargs["colmap"] = {}
+                export_kwargs["colmap"].update(
+                    {
+                        "image_paths": images,
                         "conf_thresh_percentile": conf_thresh_percentile,
                         "process_res_method": process_res_method,
                     }
