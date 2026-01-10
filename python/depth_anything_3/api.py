@@ -73,7 +73,13 @@ class DepthAnything3(nn.Module, PyTorchModelHubMixin):
 
     _commit_hash: str | None = None  # Set by mixin when loading from Hub
 
-    def __init__(self, model_name: str = "da3-large", device: str | torch.device | None = None, use_cache: bool = True, **kwargs):
+    def __init__(
+        self,
+        model_name: str = "da3-large",
+        device: str | torch.device | None = None,
+        use_cache: bool = True,
+        **kwargs,
+    ):
         """
         Initialize DepthAnything3 with specified preset.
 
@@ -103,7 +109,7 @@ class DepthAnything3(nn.Module, PyTorchModelHubMixin):
             self.model = cache.get(
                 model_name=self.model_name,
                 device=self.device,
-                loader_fn=lambda: self._create_model()
+                loader_fn=lambda: self._create_model(),
             )
         else:
             logger.info(f"Model cache disabled, loading {self.model_name} from disk")
@@ -163,7 +169,13 @@ class DepthAnything3(nn.Module, PyTorchModelHubMixin):
         with torch.no_grad():
             with torch.autocast(device_type=image.device.type, dtype=autocast_dtype):
                 return self.model(
-                    image, extrinsics, intrinsics, export_feat_layers, infer_gs, use_ray_pose, ref_view_strategy
+                    image,
+                    extrinsics,
+                    intrinsics,
+                    export_feat_layers,
+                    infer_gs,
+                    use_ray_pose,
+                    ref_view_strategy,
                 )
 
     def inference(
@@ -279,7 +291,6 @@ class DepthAnything3(nn.Module, PyTorchModelHubMixin):
 
         # Export if requested
         if export_dir is not None:
-
             if "gs" in export_format:
                 if infer_gs and "gs_video" not in export_format:
                     export_format = f"{export_format}-gs_video"
@@ -372,8 +383,8 @@ class DepthAnything3(nn.Module, PyTorchModelHubMixin):
         """
         device = self._get_model_device()
 
-        # Pin memory for faster CPU→GPU transfer (CUDA only)
-        if device.type == "cuda" and imgs_cpu.device.type == "cpu":
+        # Pin memory for faster CPU→GPU/XPU transfer
+        if device.type in ("cuda", "xpu") and imgs_cpu.device.type == "cpu":
             imgs_cpu = imgs_cpu.pin_memory()
 
         # Move images to model device with non-blocking transfer
@@ -382,14 +393,14 @@ class DepthAnything3(nn.Module, PyTorchModelHubMixin):
         # Convert camera parameters to tensors with non-blocking transfer
         ex_t = (
             extrinsics.pin_memory().to(device, non_blocking=True)[None].float()
-            if extrinsics is not None and device.type == "cuda"
+            if extrinsics is not None and device.type in ("cuda", "xpu")
             else extrinsics.to(device, non_blocking=True)[None].float()
             if extrinsics is not None
             else None
         )
         in_t = (
             intrinsics.pin_memory().to(device, non_blocking=True)[None].float()
-            if intrinsics is not None and device.type == "cuda"
+            if intrinsics is not None and device.type in ("cuda", "xpu")
             else intrinsics.to(device, non_blocking=True)[None].float()
             if intrinsics is not None
             else None
@@ -454,7 +465,9 @@ class DepthAnything3(nn.Module, PyTorchModelHubMixin):
             torch.cuda.synchronize(device)
         start_time = time.time()
         feat_layers = list(export_feat_layers) if export_feat_layers is not None else None
-        output = self.forward(imgs, ex_t, in_t, feat_layers, infer_gs, use_ray_pose, ref_view_strategy)
+        output = self.forward(
+            imgs, ex_t, in_t, feat_layers, infer_gs, use_ray_pose, ref_view_strategy
+        )
         if need_sync:
             torch.cuda.synchronize(device)
         end_time = time.time()
