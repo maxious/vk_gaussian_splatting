@@ -1,4 +1,4 @@
-"""Video decoding helpers built on top of PyAV."""
+"""Video decoding helpers built on top of PyAV and torchcodec."""
 
 from __future__ import annotations
 
@@ -6,12 +6,19 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator, Optional
 
-import av  # type: ignore[import-untyped]
 import numpy as np
 import threading
 
+# Optional PyAV import (only needed for FrameDecoder)
+try:
+    import av  # type: ignore[import-untyped]
 
-from backend.utils.frame_info import FrameInfo, frame_info_from_av
+    _PYAV_AVAILABLE = True
+except ImportError:
+    av = None  # type: ignore[assignment]
+    _PYAV_AVAILABLE = False
+
+from backend.utils.frame_info import FrameInfo, frame_info_from_av, frame_info_from_torchcodec
 
 
 @dataclass(frozen=True)
@@ -128,13 +135,175 @@ class FrameDecoder:
                 return frame.to_ndarray(format="rgb24"), info
 
 
-class DecoderPool:
-    """Manages a pool of FrameDecoders for parallel random access with locality awareness."""
+class TorchcodecFrameDecoder:
+    """Video decoder using torchcodec for fast, accurate timestamp decoding.
 
-    def __init__(self, source: Path, count: int = 4) -> None:
+    Advantages over PyAV:
+    - ~2x faster decoding with num_ffmpeg_threads=0
+    - Accurate PTS timestamps from video stream
+    - Supports GPU decoding (CUDA backend)
+
+    Note: torchcodec VideoDecoder has state issues when reusing - create fresh
+    decoder instances for each decode_at() call or accept sequential access.
+    """
+
+    SEEK_PAD_MS = 0.0
+    STREAM_WINDOW_MS = 1000.0
+
+    def __init__(self, source: Path, num_ffmpeg_threads: int = 0) -> None:
+        """Initialize torchcodec decoder.
+
+        Args:
+            source: Path to video file
+            num_ffmpeg_threads: FFmpeg thread count. 0 = auto, 1 = single-threaded.
+                               Use 0 for single decoder, 1 for multiple parallel decoders.
+        """
+        self.source = source
+        self._num_ffmpeg_threads = num_ffmpeg_threads
+        self._container = self._create_decoder()
+        self._stream = self._container.metadata
+        self._total_frames: Optional[int] = None
+        self._fps: Optional[float] = None
+        self._frame_indices: list[int] = []
+
+        # Initialize frame index mapping
+        self._init_frame_mapping()
+
+    def _create_decoder(self):
+        """Create a fresh VideoDecoder instance."""
+        try:
+            from torchcodec.decoders import VideoDecoder
+        except ImportError as exc:
+            raise ImportError(
+                "torchcodec is required for TorchcodecFrameDecoder. "
+                "Install with: pip install torchcodec"
+            ) from exc
+        return VideoDecoder(str(self.source), num_ffmpeg_threads=self._num_ffmpeg_threads)
+
+    def _init_frame_mapping(self) -> None:
+        """Initialize frame index to timestamp mapping."""
+        total = self._stream.num_frames
+        fps = self._stream.average_fps
+
+        if total is None or fps is None or fps == 0:
+            self._total_frames = 0
+            self._fps = 30.0
+            self._frame_indices = []
+            return
+
+        self._total_frames = total
+        self._fps = float(fps)
+        self._frame_indices = list(range(total))
+
+    def metadata(self) -> VideoMetadata:
+        fps = self._fps or 30.0
+        duration_ms = (self._total_frames / fps * 1000) if self._total_frames else None
+        # torchcodec metadata may have Optional width/height
+        width = self._stream.width or 640
+        height = self._stream.height or 480
+        return VideoMetadata(
+            width=width,
+            height=height,
+            frames=self._total_frames,
+            fps=fps,
+            duration_ms=duration_ms,
+        )
+
+    def decode_at(self, time_ms: float) -> tuple[np.ndarray, FrameInfo]:
+        """Decode the frame nearest to the requested timestamp (ms).
+
+        Uses get_frame_played_at for accurate timestamp-based seeking.
+        torchcodec's get_frame_played_at(seconds) returns the frame at that exact timestamp.
+        """
+        if self._total_frames is None or self._total_frames == 0:
+            raise StopIteration("No frames in video")
+
+        time_ms = max(time_ms, 0.0)
+        time_sec = time_ms / 1000.0
+
+        # Create fresh decoder for this decode operation (torchcodec state issues)
+        decoder = self._create_decoder()
+
+        try:
+            # Use get_frame_played_at for accurate timestamp-based seeking
+            frame = decoder.get_frame_played_at(time_sec)
+
+            # Convert to numpy (RGB)
+            frame_np = frame.data.permute(1, 2, 0).cpu().numpy()
+
+            # Get accurate timestamp from PTS
+            pts_ms = float(frame.pts_seconds) * 1000
+
+            info = FrameInfo(
+                time_ms=pts_ms,
+                index=-1,  # Frame object doesn't expose index
+                pts=int(pts_ms) if pts_ms else None,
+                key_frame=False,  # Frame object doesn't expose key_frame
+            )
+
+            return frame_np, info
+
+        finally:
+            del decoder
+
+    def should_stream_forward(self, time_ms: float) -> bool:
+        """Check if we can stream forward from current position."""
+        # Torchcodec doesn't maintain forward streaming state
+        # Always return False to force fresh decode
+        return False
+
+    def close(self) -> None:
+        if hasattr(self, "_container") and self._container is not None:
+            try:
+                del self._container
+                self._container = None
+            except Exception:
+                pass
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
+
+
+class DecoderPool:
+    """Manages a pool of FrameDecoders for parallel random access with locality awareness.
+
+    Supports both PyAV and torchcodec decoders. Torchcodec is preferred for:
+    - ~2x faster decoding (with num_ffmpeg_threads=0)
+    - Accurate PTS timestamps from video stream
+    """
+
+    def __init__(
+        self,
+        source: Path,
+        count: int = 4,
+        use_torchcodec: bool = True,
+        num_ffmpeg_threads: int = 0,
+    ) -> None:
+        """Initialize decoder pool.
+
+        Args:
+            source: Path to video file
+            count: Number of decoders in pool
+            use_torchcodec: Use torchcodec instead of PyAV (default: True)
+            num_ffmpeg_threads: FFmpeg thread count for torchcodec (0 = auto)
+        """
         self.source = source
         self.count = count
-        self._decoders = [FrameDecoder(source) for _ in range(count)]
+        self.use_torchcodec = use_torchcodec
+
+        if use_torchcodec:
+            # torchcodec: Create decoders that can be reused (each creates fresh VideoDecoder per decode)
+            self._decoders = [
+                TorchcodecFrameDecoder(source, num_ffmpeg_threads=num_ffmpeg_threads)
+                for _ in range(count)
+            ]
+        else:
+            # PyAV: Traditional decoder pool with stateful decoders
+            self._decoders = [FrameDecoder(source) for _ in range(count)]
+
         self._free_decoders = list(self._decoders)
         self._lock = threading.Lock()
         self._cond = threading.Condition(self._lock)

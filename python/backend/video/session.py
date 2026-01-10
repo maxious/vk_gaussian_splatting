@@ -33,14 +33,17 @@ class VideoSession:
     depth_buffer: Deque[DepthFrame] = field(init=False)
     last_depth_time_ms: float | None = None
     telemetry: dict[str, float] = field(default_factory=dict, init=False)
-    rolling_stats: dict[str, float] = field(default_factory=lambda: {
-        "depth_fps": 0.0,
-        "latency_ms": 0.0,
-        "infer_avg_s": 0.0,
-        "queue_avg_s": 0.0,
-        "ws_send_avg_s": 0.0,
-        "drop_count": 0.0,
-    }, init=False)
+    rolling_stats: dict[str, float] = field(
+        default_factory=lambda: {
+            "depth_fps": 0.0,
+            "latency_ms": 0.0,
+            "infer_avg_s": 0.0,
+            "queue_avg_s": 0.0,
+            "ws_send_avg_s": 0.0,
+            "drop_count": 0.0,
+        },
+        init=False,
+    )
     _buffer_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False, init=False)
 
     _quality_cooldown: int = field(default=0, init=False)
@@ -58,7 +61,7 @@ class VideoSession:
     async def update_telemetry(self, metrics: dict[str, float]) -> None:
         async with self._buffer_lock:
             self.telemetry.update(metrics)
-            
+
             # Update rolling stats with EMA (alpha=0.1)
             alpha = 0.1
             for key, val in metrics.items():
@@ -71,7 +74,7 @@ class VideoSession:
                         avg_key = key[:-2] + "_avg_s"
                     else:
                         avg_key = key
-                    
+
                     current = self.rolling_stats.get(avg_key, 0.0)
                     if current == 0.0:
                         self.rolling_stats[avg_key] = val
@@ -83,7 +86,7 @@ class VideoSession:
                         self.rolling_stats[key] = val
                     else:
                         self.rolling_stats[key] = alpha * val + (1 - alpha) * current
-            
+
             # Calculate FPS if total_s is present
             if "total_s" in metrics and metrics["total_s"] > 0:
                 fps_sample = 1.0 / metrics["total_s"]
@@ -110,67 +113,71 @@ class VideoSession:
         queue_avg = self.rolling_stats.get("queue_avg_s", 0.0)
         latency_ms = self.rolling_stats.get("latency_ms", 0.0)
         settings = get_settings()
-        
+
         # Initialize if not present
         if "quality_process_res" not in self.telemetry:
-             self.telemetry["quality_process_res"] = float(settings.depth_process_res)
+            self.telemetry["quality_process_res"] = float(settings.depth_process_res)
 
         current_res = int(self.telemetry["quality_process_res"])
-        
+
         # Available steps for resolution
         all_steps = [960, 720, 640, 512, 480, 384, 320]
-        
+
         # Clamp max resolution
         max_res = int(settings.depth_process_res)
         steps = [s for s in all_steps if s <= max_res]
-        
+
         if not steps:
             steps = [max_res]
-            
+
         # Find closest step
         closest_step = min(steps, key=lambda x: abs(x - current_res))
         current_idx = steps.index(closest_step)
 
         # Thresholds
         UP_THRESHOLD = 0.20  # Infer > 200ms
-        DOWN_THRESHOLD = 0.08 # Infer < 80ms
-        
-        QUEUE_UP_THRESHOLD = 0.30 # Queue > 300ms
-        QUEUE_DOWN_THRESHOLD = 0.10 # Queue < 100ms
-        
+        DOWN_THRESHOLD = 0.08  # Infer < 80ms
+
+        QUEUE_UP_THRESHOLD = 0.30  # Queue > 300ms
+        QUEUE_DOWN_THRESHOLD = 0.10  # Queue < 100ms
+
         # Latency (RTT) Thresholds for Network Congestion
         # If RTT > 500ms, we are likely sending too much data.
-        LATENCY_UP_THRESHOLD = 500.0 
+        LATENCY_UP_THRESHOLD = 500.0
         LATENCY_DOWN_THRESHOLD = 200.0
-        
+
         new_idx = current_idx
-        
+
         # Logic: Reduce quality if ANY metric is bad
-        if (infer_avg > UP_THRESHOLD or 
-            queue_avg > QUEUE_UP_THRESHOLD or 
-            latency_ms > LATENCY_UP_THRESHOLD):
-            
+        if (
+            infer_avg > UP_THRESHOLD
+            or queue_avg > QUEUE_UP_THRESHOLD
+            or latency_ms > LATENCY_UP_THRESHOLD
+        ):
             # Reduce resolution (increase index)
             if current_idx < len(steps) - 1:
                 new_idx = current_idx + 1
-                
+
         # Logic: Increase quality ONLY if ALL metrics are good
-        elif (infer_avg < DOWN_THRESHOLD and 
-              queue_avg < QUEUE_DOWN_THRESHOLD and 
-              latency_ms < LATENCY_DOWN_THRESHOLD):
-              
+        elif (
+            infer_avg < DOWN_THRESHOLD
+            and queue_avg < QUEUE_DOWN_THRESHOLD
+            and latency_ms < LATENCY_DOWN_THRESHOLD
+        ):
             # Increase resolution (decrease index)
             if current_idx > 0:
                 new_idx = current_idx - 1
-                
+
         new_res = steps[new_idx]
-        
+
         if new_res != current_res:
             self.telemetry["quality_process_res"] = float(new_res)
             self._quality_cooldown = 60
             # print(f"Adjusting quality: {current_res} -> {new_res} (infer={infer_avg:.3f}s, rtt={latency_ms:.0f}ms)")
 
-    async def get_cached_depth(self, time_ms: float, tolerance_ms: float = 33.0, drop_on_hit: bool = False) -> Optional[DepthFrame]:
+    async def get_cached_depth(
+        self, time_ms: float, tolerance_ms: float = 33.0, drop_on_hit: bool = False
+    ) -> Optional[DepthFrame]:
         async with self._buffer_lock:
             for idx in range(len(self.depth_buffer) - 1, -1, -1):
                 cached = self.depth_buffer[idx]
@@ -214,10 +221,16 @@ class SessionManager:
         with target.open("wb") as dst:
             while chunk := await upload.read(1024 * 1024):
                 dst.write(chunk)
-        
-        # Use DecoderPool with 16 workers to match MAX_CONCURRENT_TASKS
+
+        # Use DecoderPool with torchcodec for faster decoding and accurate timestamps
+        # Use 16 workers to match MAX_CONCURRENT_TASKS
         # This prevents decoder starvation where tasks wait for a free decoder.
-        decoder = DecoderPool(target, count=16)
+        decoder = DecoderPool(
+            target,
+            count=16,
+            use_torchcodec=self.settings.use_torchcodec,
+            num_ffmpeg_threads=0,  # Let FFmpeg decide optimal thread count
+        )
         metadata = decoder.metadata()
         session = VideoSession(
             session_id=session_id,
