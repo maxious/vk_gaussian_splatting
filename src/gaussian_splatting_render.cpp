@@ -847,15 +847,9 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
         drawSplatPrimitives(cmd, splatCount);
       }
 
-      // Update depth/video textures before rendering VDZ mesh
-      if(prmFrame.visualize == VISUALIZE_VDZ_MESH && m_enableDepthRendering)
+      if(m_enableDepthRendering)
       {
         updateDepthRendering(cmd);
-      }
-
-      // Render VDZ depth mesh if in VDZ mesh visualization mode
-      if(prmFrame.visualize == VISUALIZE_VDZ_MESH)
-      {
         drawVdzMesh(cmd);
       }
 
@@ -884,10 +878,6 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
   {
     postProcess(cmd);
   }
-
-  // Update depth streaming if enabled
-  // This will request new frames from the backend and upload received ones
-  updateDepthRendering(cmd);
 
   readBackIndirectParametersIfNeeded(cmd);
 

@@ -70,6 +70,7 @@ xpu = [
     "torch>=2.7",
     "torchvision>=0.22",
     "pytorch-triton-xpu>=3.2; sys_platform == 'linux' or sys_platform == 'win32'",
+    "torchcodec>=0.1; sys_platform != 'win32'",
 ]
 
 # CPU-only (no GPU acceleration)
@@ -131,9 +132,9 @@ dev = [
 vkgs-backend = "backend.main:run_server"
 vkgs-preprocess = "offline.preprocess:main"
 vkgs-generate-masks = "offline.masking:main"
-vkgs-depth = "offline.video_depth:main"
 vkgs-export-ply = "offline.export_ply:main"
 vkgs-export-gaussian-ply = "offline.export_gaussian_ply:main"
+vkgs-depth = "offline.cli:main"
 
 [build-system]
 requires = ["setuptools>=68"]

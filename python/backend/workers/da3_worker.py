@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import Optional
 
 import numpy as np
@@ -29,14 +28,10 @@ class DA3DeviceWorker(BaseDeviceWorker[np.ndarray, tuple[np.ndarray, float, floa
         device: str,
         worker_id: int,
         model_id: str = "depth-anything/DA3NESTED-GIANT-LARGE-1.1",
-        cache_dir: str | Path | None = None,
         process_res: int = 518,
     ):
-        super().__init__(
-            device, worker_id, model_id=model_id, cache_dir=cache_dir, process_res=process_res
-        )
+        super().__init__(device, worker_id, model_id=model_id, process_res=process_res)
         self.model_id = model_id
-        self.cache_dir = Path(cache_dir) if cache_dir else Path("checkpoints")
         self.process_res = process_res
 
     def load_model(self) -> None:
@@ -46,10 +41,10 @@ class DA3DeviceWorker(BaseDeviceWorker[np.ndarray, tuple[np.ndarray, float, floa
             )
 
         torch.set_float32_matmul_precision("high")
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
 
         logger.info(f"Worker {self.worker_id}: Loading DA3 model {self.model_id} on {self.device}")
-        self.model = DepthAnything3.from_pretrained(self.model_id, cache_dir=str(self.cache_dir))
+        # Use HuggingFace default cache (~/.cache/huggingface/hub/)
+        self.model = DepthAnything3.from_pretrained(self.model_id)
         self.model = self.model.to(self.device).eval()
 
         if torch.cuda.is_available():

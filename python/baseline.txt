@@ -1,5 +1,0 @@
-# Motion Tracking CPU Benchmark Baseline
-# Test data: 5 frames from sharp_sequence (real Gaussian data)
-# Parameters: max_distance=0.05, window_size=3
-# Result: Mean +- std dev: 5.01 sec +- 0.02 sec
-# Matches found: 100467

@@ -113,8 +113,6 @@ void GaussianSplattingUI::onAttach(nvapp::Application* app)
   m_ui.enumAdd(GUI_VISUALIZE, VISUALIZE_CLOCK, "Clock cycles");
   m_ui.enumAdd(GUI_VISUALIZE, VISUALIZE_DEPTH, "Splats depth");
   m_ui.enumAdd(GUI_VISUALIZE, VISUALIZE_RAYHITS, "Ray Hit Count");
-  m_ui.enumAdd(GUI_VISUALIZE, VISUALIZE_VDZ_DEPTH, "VDZ Depth (grayscale)");
-  m_ui.enumAdd(GUI_VISUALIZE, VISUALIZE_VDZ_MESH, "VDZ Depth Mesh (2.5D)");
 
   m_ui.enumAdd(GUI_SORTING, SORTING_GPU_SYNC_RADIX, "GPU radix sort");
   m_ui.enumAdd(GUI_SORTING, SORTING_CPU_ASYNC_MULTI, "CPU async std multi");
@@ -426,11 +424,20 @@ void GaussianSplattingUI::onUIMenu()
         if(!vdzPath.empty())
         {
           enableVideoDepthPlayback(videoPath.string(), vdzPath.string());
-          prmRender.visualize = VISUALIZE_VDZ_MESH;
-          prmFrame.visualize = prmRender.visualize;
           prmFrame.vdzUseVideoTexture = 1;
           m_requestUpdateShaders = true;
         }
+      }
+    }
+    if(ImGui::MenuItem(ICON_MS_MOVIE " Open Depth Video (metadata.json)...", ""))
+    {
+      auto metadataPath = nvgui::windowOpenFileDialog(m_app->getWindowHandle(), "Select metadata.json or Folder",
+                                                      "JSON Files|metadata.json;*.json|All Files|*");
+      if(!metadataPath.empty())
+      {
+        enableDepthVideoPlayback(metadataPath.string());
+        prmFrame.vdzUseVideoTexture = 1;
+        m_requestUpdateShaders = true;
       }
     }
     ImGui::Separator();
@@ -703,7 +710,7 @@ void GaussianSplattingUI::onUIRender()
 #ifdef WITH_DEFAULT_SCENE_FEATURE
   // load a default scene if none was provided by command line
   if(prmScene.enableDefaultScene && m_radianceFields.empty() && prmScene.sceneToLoadFilename.empty()
-     && m_splatLoader.getStatus() == SplatLoaderAsync::State::STATE_READY)
+     && m_splatLoader.getStatus() == SplatLoaderAsync::State::STATE_READY && !isDepthVideoPlaying())
   {
     const std::vector<std::filesystem::path> defaultSearchPaths = getResourcesDirs();
     prmScene.sceneToLoadFilename = nvutils::findFile("flowers_1/flowers_1.ply", defaultSearchPaths).string();
@@ -783,6 +790,11 @@ void GaussianSplattingUI::onUIRender()
       if (std::filesystem::is_directory(prmScene.sceneToLoadFilename))
       {
         enablePlySequencePlayback(prmScene.sceneToLoadFilename);
+        prmScene.sceneToLoadFilename.clear();
+      }
+      else if (prmScene.sceneToLoadFilename.extension() == ".json")
+      {
+        enableDepthVideoPlayback(prmScene.sceneToLoadFilename.string());
         prmScene.sceneToLoadFilename.clear();
       }
       else
@@ -961,11 +973,7 @@ void GaussianSplattingUI::onUIRender()
         m_depthManager->uploadDepthFrame(depthFrame, cmd);
         m_app->submitAndWaitTempCmdBuffer(cmd);
         
-        // Auto-switch to depth visualization mode
-        prmRender.visualize = VISUALIZE_VDZ_MESH;
-
-        // Sync render parameter to frame parameter immediately to ensure renderer picks it up
-        prmFrame.visualize = prmRender.visualize;
+        m_enableDepthRendering = true;
 
         prmFrame.vdzZScale = 1.0f;
         prmFrame.vdzZBias = 0.0f;
@@ -982,11 +990,7 @@ void GaussianSplattingUI::onUIRender()
         m_depthManager->uploadDepthFrame(depthFrame, cmd);
         m_app->submitAndWaitTempCmdBuffer(cmd);
         
-        // Auto-switch to depth visualization mode
-        prmRender.visualize = VISUALIZE_VDZ_MESH;
-
-        // Sync render parameter to frame parameter immediately to ensure renderer picks it up
-        prmFrame.visualize = prmRender.visualize;
+        m_enableDepthRendering = true;
 
         prmFrame.vdzZScale = 1.0f;
         prmFrame.vdzZBias = 0.0f;
@@ -1628,9 +1632,7 @@ void GaussianSplattingUI::guiDrawRendererProperties()
   }
 
   bool allowVisualize = (prmSelectedPipeline == PIPELINE_RTX) || 
-                        (m_depthManager != nullptr) ||
-                        (prmRender.visualize == VISUALIZE_VDZ_DEPTH) || 
-                        (prmRender.visualize == VISUALIZE_VDZ_MESH);
+                        (m_depthManager != nullptr);
 
   ImGui::BeginDisabled(!allowVisualize);
   if(PE::entry(
@@ -1648,145 +1650,6 @@ void GaussianSplattingUI::guiDrawRendererProperties()
   ImGui::EndDisabled();
 
   PE::end();
-
-  // VDZ Depth Mesh controls (shown when VDZ mesh mode is selected)
-  if(prmRender.visualize == VISUALIZE_VDZ_MESH)
-  {
-    PE::begin("## VDZ Depth Mesh");
-    
-    // Video+Depth playback controls
-    if(m_videoDepthPlaybackMode)
-    {
-      bool useVideo = prmFrame.vdzUseVideoTexture != 0;
-      if(PE::Checkbox("Use Video Texture", &useVideo,
-                      "When enabled, uses the video RGB texture.\n"
-                      "When disabled, shows depth as a colormap."))
-      {
-        prmFrame.vdzUseVideoTexture = useVideo ? 1 : 0;
-      }
-      
-      if(m_vdzSequence)
-      {
-        PE::Text("VDZ Frames", "%zu", m_vdzSequence->getFrameCount());
-        PE::Text("Duration", "%.1f s", static_cast<float>(m_vdzSequence->getDurationMs()) / 1000.0f);
-        size_t displayFrameIndex = (m_lastVdzFrameIndex == SIZE_MAX) ? 0 : m_lastVdzFrameIndex;
-        PE::Text("Current Frame", "%zu / %zu", displayFrameIndex, m_vdzSequence->getFrameCount());
-      }
-      
-      // Playback controls
-      PE::entry("Playback", [this]() {
-        bool changed = false;
-        if(m_playbackPaused)
-        {
-          if(ImGui::Button("Play"))
-          {
-            m_playbackPaused = false;
-#ifdef WITH_VIDEO_DECODER
-            if(m_videoDecoder)
-            {
-              m_videoDecoder->resume();
-            }
-#endif
-            m_playbackStartTime = std::chrono::steady_clock::now();
-            changed = true;
-          }
-        }
-        else
-        {
-          if(ImGui::Button("Pause"))
-          {
-            m_playbackPaused = true;
-#ifdef WITH_VIDEO_DECODER
-            if(m_videoDecoder)
-            {
-              m_videoDecoder->pause();
-            }
-#endif
-            changed = true;
-          }
-        }
-        ImGui::SameLine();
-        if(ImGui::Button("Restart"))
-        {
-#ifdef WITH_VIDEO_DECODER
-          if(m_videoDecoder)
-          {
-            // Seek to beginning - seekToTime handles restarting if thread stopped
-            m_videoDecoder->seekToTime(0.0);
-          }
-#endif
-          m_lastVdzFrameIndex = SIZE_MAX;
-          m_playbackStartTime = std::chrono::steady_clock::now();
-          m_playbackPaused = false;
-          changed = true;
-        }
-        return changed;
-      });
-    }
-    else
-    {
-      PE::entry("Load Video+Depth", [this]() {
-        static std::filesystem::path videoPath;
-        static std::filesystem::path vdzPath;
-        
-        if(ImGui::Button("Load Video..."))
-        {
-          videoPath = nvgui::windowOpenFileDialog(m_app->getWindowHandle(), "Select Video File", "Video Files|*.mp4;*.avi;*.mov;*.mkv");
-        }
-        ImGui::SameLine();
-        ImGui::Text("%s", videoPath.empty() ? "(none)" : videoPath.filename().string().c_str());
-        
-        if(ImGui::Button("Load VDZ..."))
-        {
-          vdzPath = nvgui::windowOpenFileDialog(m_app->getWindowHandle(), "Select VDZ Depth Sequence", "VDZ Files|*.vdz");
-        }
-        ImGui::SameLine();
-        ImGui::Text("%s", vdzPath.empty() ? "(none)" : vdzPath.filename().string().c_str());
-        
-        if(!videoPath.empty() && !vdzPath.empty())
-        {
-          if(ImGui::Button("Start Playback"))
-          {
-            enableVideoDepthPlayback(videoPath.string(), vdzPath.string());
-            prmFrame.vdzUseVideoTexture = 1;
-            videoPath.clear();
-            vdzPath.clear();
-          }
-        }
-        
-        return false;
-      });
-    }
-    
-    PE::SliderFloat("Z Scale", &prmFrame.vdzZScale, 0.0f, 10.0f, "%.2f", 0,
-                    "Depth scale multiplier - controls how depth values affect vertex displacement");
-    PE::SliderFloat("Z Bias", &prmFrame.vdzZBias, -5.0f, 5.0f, "%.2f", 0,
-                    "Global Z offset added after scaling");
-    PE::SliderFloat("Z Gamma", &prmFrame.vdzZGamma, 0.1f, 5.0f, "%.2f", 0,
-                    "Gamma correction for depth (depth = pow(depth, gamma))");
-    PE::SliderFloat("Z Max Clip", &prmFrame.vdzZMaxClip, 0.0f, 10.0f, "%.2f", 0,
-                    "Maximum depth clipping threshold");
-    PE::SliderFloat("Plane Scale", &prmFrame.vdzPlaneScale, 0.1f, 10.0f, "%.2f", 0,
-                    "Scale of the view-aligned plane");
-    PE::SliderFloat("Aspect Ratio", &prmFrame.vdzAspect, 0.5f, 3.0f, "%.3f", 0,
-                    "Aspect ratio (width/height) of the depth texture");
-    PE::SliderFloat("Edge Threshold", &prmFrame.vdzEdgeThreshold, 0.0f, 1.0f, "%.3f", 0,
-                    "Depth gradient threshold for edge detection.\n"
-                    "Fragments with depth discontinuities above this threshold are discarded.\n"
-                    "0 = disabled, higher values = more aggressive edge culling");
-
-    bool worldSpace = prmFrame.vdzWorldSpaceMode != 0;
-    if(PE::Checkbox("World Space / VR Mode", &worldSpace,
-                    "Detach mesh from camera and place it in the world.\n"
-                    "Allows 6DOF movement and VR viewing.\n"
-                    "When enabled, the mesh freezes at the current camera position."))
-    {
-      prmFrame.vdzWorldSpaceMode = worldSpace ? 1 : 0;
-      m_requestUpdateShaders = true;
-    }
-
-    PE::end();
-  }
 
   PE::begin("## Common settings");
   if(PE::Checkbox("Wireframe", &prmRender.wireframe, "Show particle bounds in wireframe "))
@@ -2677,8 +2540,8 @@ void GaussianSplattingUI::guiDrawRendererStatisticsWindow()
       ImGui::EndDisabled();
       ImGui::EndTable();
     }
-    ImGui::End();
   }
+  ImGui::End();
 }
 
 
@@ -4329,9 +4192,9 @@ void GaussianSplattingUI::guiDrawDepthStreamProperties()
                 }
                 else
                 {
-                  LOGE("Failed to upload video\n");
-                  uploadFailed = true;
-                  uploadInProgress = false;
+                    LOGE("Failed to upload video\n");
+                    uploadFailed = true;
+                    uploadInProgress = false;
                 }
             }
           }
@@ -4357,6 +4220,132 @@ void GaussianSplattingUI::guiDrawDepthStreamProperties()
       });
     }
 
+    // Playback controls (visible when streaming is active)
+    if(m_enableDepthRendering)
+    {
+      ImGui::SeparatorText("Playback");
+
+      // Get current stats
+      DepthStreamClient::ClientStats stats = m_depthClient ? m_depthClient->getStats() : DepthStreamClient::ClientStats{};
+
+      // Frame counter
+      ImGui::Text("Frames: %zu", static_cast<size_t>(stats.totalFrames));
+
+      // Playback buttons
+      ImGui::PushID("PlaybackControls");
+      if(ImGui::Button(ICON_MS_PLAY_ARROW "##play"))
+      {
+        m_playbackPaused = false;
+      }
+      ImGui::SameLine();
+      if(ImGui::Button(ICON_MS_PAUSE "##pause"))
+      {
+        m_playbackPaused = true;
+      }
+      ImGui::SameLine();
+      if(ImGui::Button(ICON_MS_RESTART_ALT "##restart"))
+      {
+        m_playbackTimeOffset = 0.0;
+        m_playbackStartTime = std::chrono::steady_clock::now();
+        m_playbackPaused = false;
+      }
+      ImGui::PopID();
+
+      // Timeline scrubber
+      float durationSec = currentSession.durationMs / 1000.0f;
+      if(durationSec > 0)
+      {
+        float currentTimeSec = m_playbackTimeOffset / 1000.0f;
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+        if(ImGui::SliderFloat("##timeline", &currentTimeSec, 0.0f, durationSec))
+        {
+          // Seeking - restart playback from this position
+          m_playbackStartTime = std::chrono::steady_clock::now();
+          m_playbackTimeOffset = currentTimeSec * 1000.0f;
+          m_playbackPaused = false;
+        }
+        ImGui::SameLine();
+        ImGui::Text("%.1fs / %.1fs", currentTimeSec, durationSec);
+      }
+
+      ImGui::SeparatorText("Performance");
+
+      // Backend telemetry from depth client
+      if(ImGui::BeginTable("BackendTelemetry", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg))
+      {
+        ImGui::TableSetupColumn("Metric");
+        ImGui::TableSetupColumn("Value");
+        ImGui::TableHeadersRow();
+
+        // Inference time
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::Text("Inference");
+        ImGui::TableNextColumn();
+        ImGui::Text("%.1f ms", stats.inferTimeMs);
+
+        // Decode time
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::Text("Decode");
+        ImGui::TableNextColumn();
+        ImGui::Text("%.1f ms", stats.decodeTimeMs);
+
+        // Pack time
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::Text("Pack");
+        ImGui::TableNextColumn();
+        ImGui::Text("%.1f ms", stats.packTimeMs);
+
+        // Queue wait time
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::Text("Queue Wait");
+        ImGui::TableNextColumn();
+        ImGui::Text("%.1f ms", stats.queueWaitTimeMs);
+
+        // RTT and jitter
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::Text("RTT");
+        ImGui::TableNextColumn();
+        ImGui::Text("%.1f ms", stats.rttMs);
+
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::Text("Jitter");
+        ImGui::TableNextColumn();
+        ImGui::Text("%.1f ms", stats.jitterMs);
+
+        // Depth FPS
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::Text("Depth FPS");
+        ImGui::TableNextColumn();
+        ImGui::Text("%.1f", stats.fps);
+
+        // Dropped frames
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::Text("Dropped");
+        ImGui::TableNextColumn();
+        ImGui::Text("%zu", static_cast<size_t>(stats.droppedFrames));
+
+        ImGui::EndTable();
+      }
+
+      // Video texture toggle for streaming mode
+      ImGui::SeparatorText("Display");
+      bool useVideoTexture = prmFrame.vdzUseVideoTexture != 0;
+      if(ImGui::Checkbox("Use Video Texture", &useVideoTexture))
+      {
+        prmFrame.vdzUseVideoTexture = useVideoTexture ? 1 : 0;
+      }
+      ImGui::SameLine();
+      nvgui::tooltip("Show video RGB when enabled, depth colormap when disabled");
+    }
+
     if(m_enableDepthRendering)
     {
       PE::entry("Depth Scale", [&]() {
@@ -4366,6 +4355,177 @@ void GaussianSplattingUI::guiDrawDepthStreamProperties()
       PE::entry("Depth Bias", [&]() {
         return ImGui::DragFloat("##Bias", &m_depthBias, 0.01f, -5.0f, 5.0f);
       });
+    }
+
+    PE::end();
+  }
+
+  if(ImGui::CollapsingHeader("Offline Video+Depth", ImGuiTreeNodeFlags_DefaultOpen))
+  {
+    PE::begin("##Offline Video+Depth");
+
+    if(!m_videoDepthPlaybackMode)
+    {
+      PE::entry("Load Video+Depth", [this]() {
+        static std::filesystem::path videoPath;
+        static std::filesystem::path vdzPath;
+        
+        if(ImGui::Button("Load Video..."))
+        {
+          videoPath = nvgui::windowOpenFileDialog(m_app->getWindowHandle(), "Select Video File", "Video Files|*.mp4;*.avi;*.mov;*.mkv");
+        }
+        ImGui::SameLine();
+        ImGui::Text("%s", videoPath.empty() ? "(none)" : videoPath.filename().string().c_str());
+        
+        if(ImGui::Button("Load VDZ..."))
+        {
+          vdzPath = nvgui::windowOpenFileDialog(m_app->getWindowHandle(), "Select VDZ Depth Sequence", "VDZ Files|*.vdz");
+        }
+        ImGui::SameLine();
+        ImGui::Text("%s", vdzPath.empty() ? "(none)" : vdzPath.filename().string().c_str());
+        
+        if(!videoPath.empty() && !vdzPath.empty())
+        {
+          if(ImGui::Button("Start Playback"))
+          {
+            enableVideoDepthPlayback(videoPath.string(), vdzPath.string());
+            prmFrame.vdzUseVideoTexture = 1;
+            videoPath.clear();
+            vdzPath.clear();
+          }
+        }
+        
+        return false;
+      });
+    }
+    else
+    {
+      bool useVideo = prmFrame.vdzUseVideoTexture != 0;
+      if(PE::Checkbox("Use Video Texture", &useVideo,
+                      "When enabled, uses the video RGB texture.\n"
+                      "When disabled, shows depth as a colormap."))
+      {
+        prmFrame.vdzUseVideoTexture = useVideo ? 1 : 0;
+      }
+      
+      if(m_vdzSequence)
+      {
+        PE::Text("VDZ Frames", "%zu", m_vdzSequence->getFrameCount());
+        PE::Text("Duration", "%.1f s", static_cast<float>(m_vdzSequence->getDurationMs()) / 1000.0f);
+        size_t displayFrameIndex = (m_lastVdzFrameIndex == SIZE_MAX) ? 0 : m_lastVdzFrameIndex;
+        PE::Text("Current Frame", "%zu / %zu", displayFrameIndex, m_vdzSequence->getFrameCount());
+      }
+      
+      PE::entry("Playback", [this]() {
+        bool changed = false;
+        if(m_playbackPaused)
+        {
+          if(ImGui::Button("Play"))
+          {
+            m_playbackPaused = false;
+#ifdef WITH_VIDEO_DECODER
+            if(m_videoDecoder)
+            {
+              m_videoDecoder->resume();
+            }
+            if(m_videoDepthManager)
+            {
+              m_videoDepthManager->play();
+            }
+#endif
+            m_playbackStartTime = std::chrono::steady_clock::now();
+            changed = true;
+          }
+        }
+        else
+        {
+          if(ImGui::Button("Pause"))
+          {
+            m_playbackPaused = true;
+#ifdef WITH_VIDEO_DECODER
+            if(m_videoDecoder)
+            {
+              m_videoDecoder->pause();
+            }
+            if(m_videoDepthManager)
+            {
+              m_videoDepthManager->pause();
+            }
+#endif
+            changed = true;
+          }
+        }
+        ImGui::SameLine();
+        if(ImGui::Button("Restart"))
+        {
+#ifdef WITH_VIDEO_DECODER
+          if(m_videoDecoder)
+          {
+            m_videoDecoder->seekToTime(0.0);
+          }
+          if(m_videoDepthManager)
+          {
+            m_videoDepthManager->seek(0.0);
+            m_videoDepthManager->play();
+          }
+#endif
+          m_lastVdzFrameIndex = SIZE_MAX;
+          m_playbackStartTime = std::chrono::steady_clock::now();
+          m_playbackPaused = false;
+          changed = true;
+        }
+        return changed;
+      });
+
+      if(ImGui::Button("Stop Playback"))
+      {
+        m_enableDepthRendering = false;
+        m_videoDepthPlaybackMode = false;
+#ifdef WITH_VIDEO_DECODER
+        if(m_videoDecoder)
+        {
+          m_videoDecoder.reset();
+        }
+        if(m_videoDepthManager)
+        {
+          m_videoDepthManager.reset();
+        }
+#endif
+        if(m_vdzSequence)
+        {
+          m_vdzSequence->close();
+        }
+      }
+    }
+
+    PE::end();
+  }
+
+  if(m_enableDepthRendering && ImGui::CollapsingHeader("Depth Mesh Settings", ImGuiTreeNodeFlags_DefaultOpen))
+  {
+    PE::begin("##Depth Mesh Settings");
+
+    PE::SliderFloat("Z Scale", &prmFrame.vdzZScale, 0.0f, 10.0f, "%.2f", 0,
+                    "Depth scale multiplier");
+    PE::SliderFloat("Z Bias", &prmFrame.vdzZBias, -5.0f, 5.0f, "%.2f", 0,
+                    "Global Z offset added after scaling");
+    PE::SliderFloat("Z Gamma", &prmFrame.vdzZGamma, 0.1f, 5.0f, "%.2f", 0,
+                    "Gamma correction for depth");
+    PE::SliderFloat("Z Max Clip", &prmFrame.vdzZMaxClip, 0.0f, 10.0f, "%.2f", 0,
+                    "Maximum depth clipping threshold");
+    PE::SliderFloat("Plane Scale", &prmFrame.vdzPlaneScale, 0.1f, 10.0f, "%.2f", 0,
+                    "Scale of the view-aligned plane");
+    PE::SliderFloat("Aspect Ratio", &prmFrame.vdzAspect, 0.5f, 3.0f, "%.3f", 0,
+                    "Aspect ratio (width/height) of the depth texture");
+    PE::SliderFloat("Edge Threshold", &prmFrame.vdzEdgeThreshold, 0.0f, 1.0f, "%.3f", 0,
+                    "Depth gradient threshold for edge detection");
+
+    bool worldSpace = prmFrame.vdzWorldSpaceMode != 0;
+    if(PE::Checkbox("World Space / VR Mode", &worldSpace,
+                    "Detach mesh from camera and place it in the world."))
+    {
+      prmFrame.vdzWorldSpaceMode = worldSpace ? 1 : 0;
+      m_requestUpdateShaders = true;
     }
 
     PE::end();

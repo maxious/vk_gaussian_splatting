@@ -334,9 +334,7 @@ def benchmark_single_device(
 
     # Load model
     logger.info(f"Loading DA3 model {model_id}...")
-    cache_dir = Path("checkpoints")
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    model = DepthAnything3.from_pretrained(model_id, cache_dir=str(cache_dir))
+    model = DepthAnything3.from_pretrained(model_id)
     model = model.to(device_str).eval()
     logger.info("Model loaded")
 
@@ -441,9 +439,7 @@ def benchmark_single_device_batch(
 
     # Load model
     logger.info(f"Loading DA3 model {model_id}...")
-    cache_dir = Path("checkpoints")
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    model = DepthAnything3.from_pretrained(model_id, cache_dir=str(cache_dir))
+    model = DepthAnything3.from_pretrained(model_id)
     model = model.to(device_str).eval()
     logger.info("Model loaded")
 
@@ -584,15 +580,12 @@ def benchmark_multi_device(
     logger.info(f"Detected {num_devices} device(s)")
 
     # Create multi-device model
-    cache_dir = Path("checkpoints")
-    cache_dir.mkdir(parents=True, exist_ok=True)
 
     multi_model = MultiDeviceDepthModel(
         model_id=model_id,
         device_spec=device_spec,
     )
     multi_model.process_res = process_res
-    multi_model.cache_dir = cache_dir
 
     # Warmup
     logger.info(f"Warming up ({warmup} iterations)...")
@@ -734,15 +727,12 @@ def benchmark_multi_device_torchcodec(
     logger.info(f"  Decoded {len(frames)} frames with timestamps")
 
     # Create multi-device model
-    cache_dir = Path("checkpoints")
-    cache_dir.mkdir(parents=True, exist_ok=True)
 
     multi_model = MultiDeviceDepthModel(
         model_id=model_id,
         device_spec=device_spec,
     )
     multi_model.process_res = process_res
-    multi_model.cache_dir = cache_dir
 
     # Warmup (using cached frames)
     logger.info(f"Warming up ({warmup} iterations)...")
@@ -872,15 +862,12 @@ def benchmark_dataloader_true_batch(
         )
 
         # Create worker pool with single worker for true batch testing
-        cache_dir = Path("checkpoints")
-        cache_dir.mkdir(parents=True, exist_ok=True)
 
         pool = DeviceWorkerPool(
             worker_class=DA3DeviceWorker,
             device_spec=device_spec,
             worker_kwargs={
                 "model_id": model_id,
-                "cache_dir": cache_dir,
                 "process_res": process_res,
             },
         )
@@ -1023,15 +1010,12 @@ def benchmark_parallel_preload(
         logger.info(f"Parallel preload time: {preload_time * 1000:.1f} ms")
 
         # Create worker pool
-        cache_dir = Path("checkpoints")
-        cache_dir.mkdir(parents=True, exist_ok=True)
 
         pool = DeviceWorkerPool(
             worker_class=DA3DeviceWorker,
             device_spec=device_spec,
             worker_kwargs={
                 "model_id": model_id,
-                "cache_dir": cache_dir,
                 "process_res": process_res,
             },
         )
@@ -1156,9 +1140,7 @@ def benchmark_torchcodec_video(
 
     # Load model
     logger.info(f"Loading DA3 model {model_id}...")
-    cache_dir = Path("checkpoints")
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    model = DepthAnything3.from_pretrained(model_id, cache_dir=str(cache_dir))
+    model = DepthAnything3.from_pretrained(model_id)
     model = model.to(device_str).eval()
     logger.info("Model loaded")
 
@@ -1312,9 +1294,7 @@ def benchmark_torchcodec_streaming(
 
     # Load model
     logger.info(f"Loading DA3 model {model_id}...")
-    cache_dir = Path("checkpoints")
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    model = DepthAnything3.from_pretrained(model_id, cache_dir=str(cache_dir))
+    model = DepthAnything3.from_pretrained(model_id)
     model = model.to(device_str).eval()
     logger.info("Model loaded")
 
@@ -1474,9 +1454,7 @@ def benchmark_cv2_video(
 
     # Load model
     logger.info(f"Loading DA3 model {model_id}...")
-    cache_dir = Path("checkpoints")
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    model = DepthAnything3.from_pretrained(model_id, cache_dir=str(cache_dir))
+    model = DepthAnything3.from_pretrained(model_id)
     model = model.to(device_str).eval()
     logger.info("Model loaded")
 

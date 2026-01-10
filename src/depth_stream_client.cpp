@@ -127,15 +127,17 @@ void DepthStreamClient::close() {
 
 bool DepthStreamClient::connectWebSocket(const std::string& sessionId) {
     if (m_connected.load()) {
+        LOGD("Already connected, disconnecting first...\n");
         disconnectWebSocket();
     }
 
     try {
         std::string uri = "ws://" + m_backendHost + ":" + std::to_string(m_backendPort) + "/api/sessions/" + sessionId + "/stream";
-        
-        LOGI("Connecting depth WebSocket: %s\n", uri.c_str());
+
+        LOGI(">>> DEPTH_CLIENT: Connecting WebSocket to: %s\n", uri.c_str());
         m_webSocket.setUrl(uri);
         m_webSocket.start();
+        LOGI(">>> DEPTH_CLIENT: WebSocket connection initiated\n");
         return true;
     } catch (const std::exception& e) {
         LOGE("WebSocket connect exception: %s\n", e.what());
@@ -156,17 +158,17 @@ void DepthStreamClient::disconnectWebSocket() {
 void DepthStreamClient::onDepthFrame(const ix::WebSocketMessagePtr& msg) {
     if (msg->type == ix::WebSocketMessageType::Open) {
         m_connected.store(true);
-        LOGI("Depth WebSocket connected successfully\n");
+        LOGI(">>> DEPTH_CLIENT: WebSocket OPEN - connected successfully!\n");
         if (m_statusCallback) m_statusCallback(true);
     }
     else if (msg->type == ix::WebSocketMessageType::Close) {
         m_connected.store(false);
-        LOGI("Depth WebSocket closed (code: %d, reason: %s)\n", 
+        LOGI(">>> DEPTH_CLIENT: WebSocket CLOSED (code: %d, reason: %s)\n",
                msg->closeInfo.code, msg->closeInfo.reason.c_str());
         if (m_statusCallback) m_statusCallback(false);
     }
     else if (msg->type == ix::WebSocketMessageType::Error) {
-        LOGE("Depth WebSocket error: %s (retries: %d)\n", 
+        LOGE(">>> DEPTH_CLIENT: WebSocket ERROR: %s (retries: %d)\n",
                msg->errorInfo.reason.c_str(), msg->errorInfo.retries);
         if (m_statusCallback) m_statusCallback(false);
     }
@@ -181,25 +183,28 @@ void DepthStreamClient::onDepthFrame(const ix::WebSocketMessagePtr& msg) {
                 if (parseDepthFrame(buffer, frame)) {
                     static int frameCount = 0;
                     frameCount++;
+                    m_stats.totalFrames = frameCount;
 
-                    // Log every 30th frame for debugging
-                    if (frameCount % 30 == 0) {
-LOGI("Depth frame #%d received: %dx%d @ %u ms (scale=%.4f, bias=%.4f)\n",
-                     frameCount, frame.width, frame.height, frame.timestampMs, frame.scale, frame.bias);
-                    }
+                    // Log every frame for debugging (remove after verified)
+                    LOGI(">>> DEPTH_CLIENT: Frame #%d received: %dx%d @ %u ms (scale=%.4f, bias=%.4f)\n",
+                         frameCount, frame.width, frame.height, frame.timestampMs, frame.scale, frame.bias);
 
                     m_depthBuffer.addFrame(frame);
                     if (m_depthCallback) m_depthCallback(frame);
+                } else {
+                    LOGE(">>> DEPTH_CLIENT: Failed to parse depth frame!\n");
                 }
             } else {
                 // Text message - likely JSON error or status
                 auto json = nlohmann::json::parse(msg->str);
                 if (json.contains("type") && json["type"] == "error") {
                     LOGE("Depth stream error: %s\n", json["message"].get<std::string>().c_str());
+                } else {
+                    LOGI(">>> DEPTH_CLIENT: Text message: %s\n", msg->str.c_str());
                 }
             }
         } catch (const std::exception& e) {
-            LOGE("Error parsing depth frame: %s\n", e.what());
+            LOGE(">>> DEPTH_CLIENT: Exception parsing frame: %s\n", e.what());
         }
     }
 }
@@ -236,12 +241,21 @@ void DepthStreamClient::update(double currentTimeMs, float videoFps) {
     const double stepMs = 1000.0 / fps;
     const double bufferWindowMs = 3000.0;
 
-float rtt = m_depthBuffer.getRTT();
+    float rtt = m_depthBuffer.getRTT();
     float jitter = m_depthBuffer.getJitter();
-    // Better lead time calculation with jitter compensation (like web app)
-    double minLeadMs = std::min(3000.0, std::max(100.0, static_cast<double>(rtt + jitter + 100.0)));
 
-    double startMs = std::max(0.0, currentTimeMs + minLeadMs);
+    // Calculate lead time - start at 0 for initial fill, then add lookahead
+    double startMs;
+    if (m_stats.totalFrames < 10) {
+        // Initial fill phase: request from beginning
+        startMs = 0.0;
+    } else {
+        // Playback phase: request ahead of current time
+        // Use smaller lead time once we have initial buffer
+        double minLeadMs = std::min(1500.0, std::max(100.0, static_cast<double>(rtt + jitter + 100.0)));
+        startMs = currentTimeMs + minLeadMs;
+    }
+
     uint64_t alignedStartMs = static_cast<uint64_t>(std::ceil(startMs / stepMs) * stepMs);
     uint64_t endMs = static_cast<uint64_t>(alignedStartMs + bufferWindowMs);
 
@@ -250,9 +264,9 @@ float rtt = m_depthBuffer.getRTT();
         m_depthBuffer.prefetch(t);
     }
 
-// Cleanup old frames (keep 2 seconds history)
+    // Cleanup old frames (keep 2 seconds history)
     m_depthBuffer.cleanup(static_cast<uint64_t>(std::max(0.0, currentTimeMs - 2000.0)));
-    
+
     // Periodically fetch backend telemetry (every 2 seconds)
     static double lastTelemetryFetch = 0.0;
     if (currentTimeMs - lastTelemetryFetch > 2000.0) {
@@ -408,17 +422,19 @@ DepthStreamClient::ClientStats DepthStreamClient::getStats() const {
     stats.rttMs = m_depthBuffer.getRTT();
     stats.jitterMs = m_depthBuffer.getJitter();
     stats.pendingRequests = m_depthBuffer.getPendingCount();
-    // Simple FPS calculation could be added here or in DepthBuffer
-    stats.fps = 0.0f; 
-    stats.totalFrames = 0; 
-    stats.droppedFrames = 0; 
-    
+    stats.fps = 0.0f;
+    stats.totalFrames = m_stats.totalFrames;
+    stats.droppedFrames = m_stats.droppedFrames;
+
     // Include telemetry data if available
     stats.inferTimeMs = m_stats.inferTimeMs;
     stats.decodeTimeMs = m_stats.decodeTimeMs;
     stats.packTimeMs = m_stats.packTimeMs;
     stats.queueWaitTimeMs = m_stats.queueWaitTimeMs;
-    
+
+    LOGD(">>> DEPTH_CLIENT: getStats: totalFrames=%zu, rtt=%.1f, jitter=%.1f\n",
+         stats.totalFrames, stats.rttMs, stats.jitterMs);
+
     return stats;
 }
 

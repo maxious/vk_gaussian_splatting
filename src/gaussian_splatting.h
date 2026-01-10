@@ -25,6 +25,7 @@
 #include "vdz_sequence_loader.h"
 #ifdef WITH_VIDEO_DECODER
 #include "video_decoder.h"
+#include "depth_video_loader.h"
 #endif
 
 #include <iostream>
@@ -137,7 +138,9 @@ public:
 
     void enableDepthRendering(const std::string& host, int port, const std::string& videoPath);
     void enableVideoDepthPlayback(const std::string& videoPath, const std::string& vdzPath);
+    void enableDepthVideoPlayback(const std::string& metadataPath);
     void updateDepthRendering(VkCommandBuffer cmd);
+    bool isDepthVideoPlaying() const;
 
   public:
     // Camera manipulator
@@ -637,6 +640,7 @@ protected:
 
 #ifdef WITH_VIDEO_DECODER
   std::unique_ptr<VideoDecoder> m_videoDecoder;
+  std::unique_ptr<VideoDepthPlaybackManager> m_videoDepthManager;
 
   struct VideoTexture {
     nvvk::Image image;

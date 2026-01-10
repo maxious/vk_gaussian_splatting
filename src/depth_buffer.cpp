@@ -75,10 +75,39 @@ void DepthBuffer::cleanup(uint64_t oldThresholdMs) {
 bool DepthBuffer::getFrame(uint64_t targetMs, DepthFrame& outFrame) {
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
 
+    // Try exact match first
     auto cacheIt = m_receivedFrames.find(targetMs);
     if (cacheIt != m_receivedFrames.end()) {
         outFrame = cacheIt->second;
         return true;
+    }
+
+    // No exact match - find the closest frame (nearest neighbor interpolation)
+    // This handles cases where the exact timestamp doesn't exist
+    if (!m_receivedFrames.empty()) {
+        // Find the frame with the closest timestamp
+        auto closestIt = m_receivedFrames.begin();
+        int64_t minDiff = INT64_MAX;
+
+        for (auto it = m_receivedFrames.begin(); it != m_receivedFrames.end(); ++it) {
+            int64_t diff = static_cast<int64_t>(it->first) - static_cast<int64_t>(targetMs);
+            int64_t absDiff = std::abs(diff);
+            if (absDiff < minDiff) {
+                minDiff = absDiff;
+                closestIt = it;
+            }
+
+            // Early exit if we found an exact match
+            if (absDiff == 0) break;
+        }
+
+        // Only use the closest frame if it's within a reasonable threshold (100ms)
+        if (minDiff < 100) {
+            LOGD(">>> BUFFER: Using nearest frame: requested=%llu, found=%llu, diff=%lld ms\n",
+                 targetMs, closestIt->first, minDiff);
+            outFrame = closestIt->second;
+            return true;
+        }
     }
 
     // Note: prefetch() will acquire its own lock, but that's OK since it's recursive

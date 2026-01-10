@@ -307,7 +307,19 @@ void GaussianSplatting::drawVdzMesh(VkCommandBuffer cmd)
   NVVK_DBG_SCOPE(cmd);
 
   if(m_vdzMesh.getIndexCount() == 0 || m_graphicsPipelineVdzMesh == VK_NULL_HANDLE)
-    return;
+  {
+      static int logCounter = 0;
+      if(logCounter++ % 60 == 0) {
+          LOGW("drawVdzMesh skipped: indexCount=%u, pipeline=%p\n", 
+               m_vdzMesh.getIndexCount(), (void*)m_graphicsPipelineVdzMesh);
+      }
+      return;
+  }
+
+  static int drawCounter = 0;
+  if(drawCounter++ % 60 == 0) {
+      LOGI("drawVdzMesh drawing: indexCount=%u\n", m_vdzMesh.getIndexCount());
+  }
 
   VkDeviceSize offset{0};
 

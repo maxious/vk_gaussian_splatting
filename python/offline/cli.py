@@ -22,6 +22,83 @@ def main():
     )
     subparsers = parser.add_subparsers(dest="command", help="Commands")
 
+    # Depth extraction subcommand
+    depth_parser = subparsers.add_parser(
+        "depth", help="Extract depth maps from video using DA3 (multi-XPU optimized)"
+    )
+    depth_parser.add_argument("--input", "-i", type=Path, required=True, help="Input video file")
+    depth_parser.add_argument("--output", "-o", type=Path, required=True, help="Output directory")
+    depth_parser.add_argument(
+        "--model",
+        type=str,
+        default="depth-anything/DA3METRIC-LARGE",
+        help="DA3 model ID (default: depth-anything/DA3METRIC-LARGE)",
+    )
+    depth_parser.add_argument(
+        "--device-spec",
+        type=str,
+        default="auto",
+        help="Device specification: 'auto', 'xpu', 'xpu:0', 'xpu:0,1', 'cuda', 'cuda:0'",
+    )
+    depth_parser.add_argument(
+        "--process-res",
+        type=int,
+        default=518,
+        help="Processing resolution for DA3 (default: 518)",
+    )
+    depth_parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=4,
+        help="Batch size per device for inference (default: 4)",
+    )
+    depth_parser.add_argument(
+        "--format",
+        type=str,
+        default="vdz",
+        choices=["vdz", "video"],
+        help="Output format: 'vdz' for compressed depth sequence, 'video' for H.265 lossless",
+    )
+    depth_parser.add_argument("-v", "--verbose", action="store_true")
+
+    # Depth extraction subcommand
+    extract_parser = subparsers.add_parser(
+        "extract-depth", help="Extract depth frames from VDZ file as images"
+    )
+    extract_parser.add_argument(
+        "--input", "-i", type=Path, required=True, help="Input VDZ depth sequence file"
+    )
+    extract_parser.add_argument(
+        "--output", "-o", type=Path, required=True, help="Output directory for depth images"
+    )
+    extract_parser.add_argument(
+        "--format",
+        type=str,
+        default="png",
+        choices=["png", "jpg", "exr"],
+        help="Output image format (default: png)",
+    )
+    extract_parser.add_argument(
+        "--colormap",
+        type=str,
+        default="viridis",
+        choices=["viridis", "magma", "plasma", "inferno", "gray", "raw"],
+        help="Colormap for depth visualization (default: viridis). Use 'raw' for metric depth.",
+    )
+    extract_parser.add_argument(
+        "--frame-range",
+        type=str,
+        default=None,
+        help="Frame range to extract (e.g., '0-100' or '50,60,70')",
+    )
+    extract_parser.add_argument(
+        "--max-width",
+        type=int,
+        default=None,
+        help="Resize output images to max width (maintains aspect ratio)",
+    )
+    extract_parser.add_argument("-v", "--verbose", action="store_true")
+
     export_parser = subparsers.add_parser("export", help="Export video to Gaussian PLYs")
     export_parser.add_argument("--input", "-i", type=Path, required=True, help="Input video file")
     export_parser.add_argument(
@@ -230,101 +307,6 @@ def main():
     )
     legacy_parser.add_argument("-v", "--verbose", action="store_true")
 
-    trellis2_xpu_parser = subparsers.add_parser(
-        "trellis2-xpu", help="Stage 1: Run TRELLIS.2 on XPU and save mesh data to disk"
-    )
-    trellis2_xpu_parser.add_argument(
-        "--input", "-i", type=Path, required=True, help="Input image or directory of images"
-    )
-    trellis2_xpu_parser.add_argument(
-        "--output", "-o", type=Path, required=True, help="Output directory for .pt mesh files"
-    )
-    trellis2_xpu_parser.add_argument(
-        "--model",
-        type=str,
-        default="microsoft/TRELLIS.2-4B",
-        help="TRELLIS.2 model ID (e.g., 'microsoft/TRELLIS.2-4B')",
-    )
-    trellis2_xpu_parser.add_argument(
-        "--xpu-device", type=str, default="xpu:0", help="XPU device (e.g., 'xpu:0', 'xpu:1')"
-    )
-    trellis2_xpu_parser.add_argument(
-        "--pattern", type=str, default="*.{jpg,jpeg,png,webp}", help="Glob pattern for image files"
-    )
-    trellis2_xpu_parser.add_argument(
-        "--pipeline-type",
-        choices=["512", "1024", "1024_cascade", "1536_cascade"],
-        default="1024_cascade",
-        help="TRELLIS.2 pipeline type",
-    )
-    trellis2_xpu_parser.add_argument(
-        "--max-num-tokens", type=int, default=49152, help="Maximum tokens for cascade pipeline"
-    )
-    trellis2_xpu_parser.add_argument(
-        "--num-samples", type=int, default=1, help="Number of samples per image"
-    )
-    trellis2_xpu_parser.add_argument(
-        "--multi-xpu",
-        action="store_true",
-        help="Enable Multi-XPU inference using MultiXPUSpconv (requires >1 XPU)",
-    )
-    trellis2_xpu_parser.add_argument("--seed", type=int, default=42, help="Random seed")
-    trellis2_xpu_parser.add_argument("-v", "--verbose", action="store_true")
-
-    trellis2_cuda_parser = subparsers.add_parser(
-        "trellis2-cuda", help="Stage 2: Load saved mesh data and export to GLB/VXZ using CUDA"
-    )
-    trellis2_cuda_parser.add_argument(
-        "--input",
-        "-i",
-        type=Path,
-        required=True,
-        help="Input directory or file containing .pt mesh files",
-    )
-    trellis2_cuda_parser.add_argument(
-        "--output", "-o", type=Path, required=True, help="Output directory for GLB/VXZ files"
-    )
-    trellis2_cuda_parser.add_argument(
-        "--format",
-        choices=["glb", "vxz"],
-        default="glb",
-        help="Output format: 'glb' (mesh with texture), 'vxz' (o-voxel format)",
-    )
-    trellis2_cuda_parser.add_argument(
-        "--cuda-device", type=str, default="cuda:0", help="CUDA device (e.g., 'cuda:0')"
-    )
-    trellis2_cuda_parser.add_argument(
-        "--model",
-        type=str,
-        default="microsoft/TRELLIS.2-4B",
-        help="TRELLIS.2 model ID (for decoding latent data)",
-    )
-    trellis2_cuda_parser.add_argument(
-        "--pattern", type=str, default="*.pt", help="Glob pattern for .pt mesh files"
-    )
-    trellis2_cuda_parser.add_argument(
-        "--decimation-target",
-        type=int,
-        default=1000000,
-        help="Target face count for mesh simplification",
-    )
-    trellis2_cuda_parser.add_argument(
-        "--texture-size", type=int, default=4096, help="Texture resolution for GLB export"
-    )
-    trellis2_cuda_parser.add_argument(
-        "--chunk-size", type=int, default=256, help="Chunk size for VXZ export"
-    )
-    trellis2_cuda_parser.add_argument(
-        "--compression",
-        choices=["lzma", "zlib", "none"],
-        default="lzma",
-        help="Compression for VXZ export",
-    )
-    trellis2_cuda_parser.add_argument(
-        "--compression-level", type=int, default=9, help="Compression level for VXZ export (0-9)"
-    )
-    trellis2_cuda_parser.add_argument("-v", "--verbose", action="store_true")
-
     args = parser.parse_args()
 
     if args.command is None:
@@ -340,11 +322,20 @@ def main():
     )
 
     if args.verbose:
-        # Silence noisy libraries even in verbose mode
         for lib in ["matplotlib", "PIL", "urllib3", "timm", "huggingface_hub", "torch"]:
             logging.getLogger(lib).setLevel(logging.INFO)
 
-    if args.command == "export" or args.command == "legacy":
+    if args.command == "depth":
+        from .depth import run_depth
+
+        run_depth(args)
+
+    elif args.command == "extract-depth":
+        from .extract_depth import run_extract_depth
+
+        run_extract_depth(args)
+
+    elif args.command == "export" or args.command == "legacy":
         export_video_to_gaussian_plys(
             args.input,
             args.output,
@@ -364,6 +355,7 @@ def main():
             extract_audio=getattr(args, "extract_audio", False),
             resume_processing=getattr(args, "resume_processing", True),
         )
+
     elif args.command == "postprocess":
         postprocess_plys_to_freetimegs(
             args.input,
@@ -374,6 +366,7 @@ def main():
             flip_y=getattr(args, "flip_y", False),
             format=args.format,
         )
+
     elif args.command == "images":
         export_images_to_gaussian_plys(
             args.input,
@@ -391,96 +384,6 @@ def main():
             remove_black_splats=not getattr(args, "no_remove_black_splats", False),
             flip_y=getattr(args, "flip_y", False),
         )
-    elif args.command == "trellis2-xpu":
-        from .processors.trellis2_xpu import Trellis2XPUProcessor
-        from .vkgs_trellis2.modules.sparse.conv import config as conv_config
-
-        if args.multi_xpu:
-            logger.info("Enabling Multi-XPU inference")
-            conv_config.FLEX_GEMM_USE_MULTI_XPU = True
-
-        processor = Trellis2XPUProcessor(
-            model_id=args.model,
-            xpu_device=args.xpu_device,
-        )
-
-        if args.input.is_file():
-            mesh_path = args.output / f"{args.input.stem}.pt"
-            processor.infer_and_save(
-                args.input,
-                mesh_path,
-                pipeline_type=args.pipeline_type,
-                num_samples=args.num_samples,
-                seed=args.seed,
-                max_num_tokens=args.max_num_tokens,
-            )
-        else:
-            image_paths = sorted(args.input.glob(args.pattern))
-            args.output.mkdir(parents=True, exist_ok=True)
-
-            for i, image_path in enumerate(image_paths, 1):
-                logger.info(f"Processing {i}/{len(image_paths)}: {image_path}")
-                mesh_path = args.output / f"{image_path.stem}.pt"
-                processor.infer_and_save(
-                    image_path,
-                    mesh_path,
-                    pipeline_type=args.pipeline_type,
-                    num_samples=args.num_samples,
-                    seed=args.seed,
-                    max_num_tokens=args.max_num_tokens,
-                )
-    elif args.command == "trellis2-cuda":
-        from .processors.trellis2_cuda import Trellis2CUDAProcessor
-
-        processor = Trellis2CUDAProcessor(
-            cuda_device=args.cuda_device,
-            model_id=args.model,
-        )
-
-        if args.input.is_file():
-            output_path = (
-                args.output
-                if args.output.suffix == f".{args.format}"
-                else args.output / args.input.with_suffix(f".{args.format}").name
-            )
-            if args.format == "glb":
-                processor.load_and_export_glb(
-                    args.input,
-                    output_path,
-                    decimation_target=args.decimation_target,
-                    texture_size=args.texture_size,
-                )
-            else:
-                processor.load_and_export_vxz(
-                    args.input,
-                    output_path,
-                    chunk_size=args.chunk_size,
-                    compression=args.compression,
-                    compression_level=args.compression_level,
-                )
-        else:
-            mesh_paths = sorted(args.input.glob(args.pattern))
-            args.output.mkdir(parents=True, exist_ok=True)
-
-            for i, mesh_path in enumerate(mesh_paths, 1):
-                logger.info(f"Exporting {i}/{len(mesh_paths)}: {mesh_path}")
-                output_path = args.output / f"{mesh_path.stem}.{args.format}"
-
-                if args.format == "glb":
-                    processor.load_and_export_glb(
-                        mesh_path,
-                        output_path,
-                        decimation_target=args.decimation_target,
-                        texture_size=args.texture_size,
-                    )
-                else:
-                    processor.load_and_export_vxz(
-                        mesh_path,
-                        output_path,
-                        chunk_size=args.chunk_size,
-                        compression=args.compression,
-                        compression_level=args.compression_level,
-                    )
 
 
 if __name__ == "__main__":

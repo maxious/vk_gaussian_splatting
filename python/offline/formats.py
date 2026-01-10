@@ -57,7 +57,7 @@ def write_vdz_frame(f: BinaryIO, frame: VdzFrame, compress: bool = True) -> int:
 
     # Clamp timestamp to valid uint32 range
     timestamp_uint = max(0, min(int(frame.timestamp_ms), 0xFFFFFFFF))
-    
+
     header = VDZ_HEADER_STRUCT.pack(
         magic,
         1,  # version
@@ -73,6 +73,78 @@ def write_vdz_frame(f: BinaryIO, frame: VdzFrame, compress: bool = True) -> int:
     f.write(header)
     f.write(payload)
     return VDZ_HEADER_SIZE + len(payload)
+
+
+def read_vdz_frame(f: BinaryIO) -> VdzFrame | None:
+    """Read a single VDZ frame from file. Returns None on EOF."""
+    header_bytes = f.read(VDZ_HEADER_SIZE)
+    if not header_bytes:
+        return None
+
+    magic, version, data_type, timestamp_uint, width, height, scale, z_min, z_max = (
+        VDZ_HEADER_STRUCT.unpack(header_bytes)
+    )
+
+    # Calculate expected uncompressed size (width * height * 2 bytes for uint16)
+    expected_size = width * height * 2
+
+    # Read compressed payload - read until we can decompress
+    if magic == b"VDZ2":
+        # For compressed data, read chunks until we can decompress
+        chunks = []
+        current_size = 0
+        while current_size < expected_size:
+            chunk = f.read(8192)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            current_size += len(chunk)
+            # Try to decompress to see if we have enough
+            try:
+                test_decompress = zlib.decompress(b"".join(chunks))
+                if len(test_decompress) >= expected_size:
+                    break
+            except zlib.error:
+                continue
+        payload = b"".join(chunks)
+    else:
+        # For uncompressed, read exactly expected_size
+        payload = f.read(expected_size)
+        if len(payload) < expected_size:
+            return None
+
+    # Decompress if needed
+    if magic == b"VDZ2":
+        payload = zlib.decompress(payload)
+
+    # Ensure we have enough data
+    if len(payload) < expected_size:
+        return None
+
+    # Decode depth
+    encoded = np.frombuffer(payload[:expected_size], dtype="<u2")
+    depth = (encoded.astype(np.float32) * scale + z_min).reshape(height, width)
+
+    return VdzFrame(
+        timestamp_ms=timestamp_uint,
+        width=width,
+        height=height,
+        depth=depth,
+        z_min=z_min,
+        z_max=z_max,
+    )
+
+
+def read_all_vdz_frames(path: Path) -> list[VdzFrame]:
+    """Read all VDZ frames from file."""
+    frames = []
+    with open(path, "rb") as f:
+        while True:
+            frame = read_vdz_frame(f)
+            if frame is None:
+                break
+            frames.append(frame)
+    return frames
 
 
 # =============================================================================

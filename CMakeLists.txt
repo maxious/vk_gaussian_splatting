@@ -32,7 +32,7 @@ endif()
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 # Override Slang version before NvproCore2 loads it
-set(Slang_VERSION "2025.24.2" CACHE STRING "Slang version" FORCE)
+set(Slang_VERSION "2025.24.3" CACHE STRING "Slang version" FORCE)
 
 find_package(NvproCore2 REQUIRED)
 
@@ -324,8 +324,13 @@ endif()
 
 # FFmpeg linkage for video decoder
 if(ENABLE_VIDEO_DECODER AND FFmpeg_FOUND)
-  target_include_directories(${PROJECT_NAME} PRIVATE ${FFmpeg_INCLUDE_DIRS})
-  target_link_libraries(${PROJECT_NAME} PRIVATE ${FFmpeg_LIBRARIES})
+  # Create an interface library to properly link FFmpeg with correct order
+  add_library(ffmpeg_lib INTERFACE IMPORTED)
+  set_target_properties(ffmpeg_lib PROPERTIES
+    INTERFACE_INCLUDE_DIRECTORIES "${AVCODEC_INCLUDE_DIR};${AVFORMAT_INCLUDE_DIR};${AVUTIL_INCLUDE_DIR};${SWSCALE_INCLUDE_DIR}"
+    INTERFACE_LINK_LIBRARIES "${AVCODEC_LIBRARY};${AVFORMAT_LIBRARY};${AVUTIL_LIBRARY};${SWSCALE_LIBRARY}"
+  )
+  target_link_libraries(${PROJECT_NAME} PRIVATE ffmpeg_lib)
 endif()
 
 # OpenXR linkage

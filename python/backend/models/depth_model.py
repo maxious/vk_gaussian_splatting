@@ -38,8 +38,6 @@ class DepthModel:
         self.model_id = model_id or settings.depth_model_id
         self.device = torch.device(device or settings.device)
         self.process_res = settings.depth_process_res
-        self.cache_dir = settings.data_root.parent / "checkpoints"
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._model: Any = None
         self._semaphore: asyncio.Semaphore | None = None
         self._max_workers = settings.inference_worker_count
@@ -51,7 +49,8 @@ class DepthModel:
             raise RuntimeError(
                 'depth-anything-3 package is not installed; run `uv pip install "videodepthviewer3d[inference]"`.'
             )
-        model = DepthAnything3.from_pretrained(self.model_id, cache_dir=str(self.cache_dir))
+        # Use HuggingFace default cache (~/.cache/huggingface/hub/)
+        model = DepthAnything3.from_pretrained(self.model_id)
         self._model = model.to(self.device).eval()
         return self._model
 
@@ -160,43 +159,9 @@ class MultiDeviceDepthModel:
         self.model_id = model_id or settings.depth_model_id
         self.device_spec = device_spec
         self.process_res = settings.depth_process_res
-        self.cache_dir = settings.data_root.parent / "checkpoints"
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._worker_pool: DeviceWorkerPool | None = None
         self._max_workers = settings.inference_worker_count
         self._executor: ThreadPoolExecutor | None = None
-
-    def _get_executor(self) -> ThreadPoolExecutor:
-        """Get or create ThreadPoolExecutor sized to match GPU count.
-
-        Using more threads than GPUs causes unnecessary contention since
-        each thread blocks waiting for a GPU worker. Thread count should
-        match the number of available GPU workers.
-        """
-        if self._executor is not None:
-            return self._executor
-
-        import torch
-
-        # Count available GPU devices
-        num_gpus = 0
-        if torch.cuda.is_available():
-            num_gpus = torch.cuda.device_count()
-        elif hasattr(torch, "xpu") and torch.xpu.is_available():
-            num_gpus = torch.xpu.device_count()
-
-        # If no GPUs, fall back to CPU count (clamped to avoid excessive threads)
-        if num_gpus == 0:
-            import os
-
-            num_gpus = min(os.cpu_count() or 4, 8)
-
-        # Thread count should match GPU count for optimal throughput
-        # Additional threads just queue up and waste memory
-        max_workers = max(1, num_gpus)
-
-        self._executor = ThreadPoolExecutor(max_workers=max_workers)
-        return self._executor
 
     def _ensure_worker_pool(self) -> DeviceWorkerPool:
         if self._worker_pool is not None:
@@ -209,7 +174,6 @@ class MultiDeviceDepthModel:
             device_spec=self.device_spec,
             worker_kwargs={
                 "model_id": self.model_id,
-                "cache_dir": self.cache_dir,
                 "process_res": self.process_res,
             },
         )

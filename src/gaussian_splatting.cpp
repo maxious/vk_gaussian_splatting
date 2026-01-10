@@ -30,6 +30,7 @@
 #include "utilities.h"
 #include "animation_controller.h"
 #include "animation_ui.h"
+#include "depth_video_loader.h"
 
 #include <nvutils/logger.hpp>
 #include <nvvk/barriers.hpp>
@@ -401,6 +402,7 @@ void GaussianSplatting::enableDepthRendering(const std::string& host, int port, 
       // Frame is already added to buffer by client
       // We will pick it up in updateDepthRendering on the main thread
     });
+
   }
   else
   {
@@ -414,34 +416,25 @@ void GaussianSplatting::enableDepthRendering(const std::string& host, int port, 
     m_depthManager->initialize(m_device, m_app->getPhysicalDevice(), m_app->getQueue(0).queue, &m_alloc);
   }
 
-#ifdef WITH_VIDEO_DECODER
-  // Initialize video decoder for local VDZ+video playback
-  m_videoDecoder = std::make_unique<VideoDecoder>();
-  if(!m_videoDecoder->open(videoPath))
-  {
-    LOGE("Failed to open video file for decoding: %s\n", videoPath.c_str());
-    m_videoDecoder.reset();
-  }
-  else
-  {
-    m_videoDecoder->startDecoding();
-    LOGI("Video decoder initialized for file: %s\n", videoPath.c_str());
-  }
-#else
-  // Upload video
+  // Upload video and connect WebSocket for depth streaming
   DepthStreamClient::SessionInfo session;
   if(!m_depthClient->uploadVideo(videoPath, session))
   {
-    LOGE("Failed to upload video\n");
+    LOGE("Failed to upload video to backend\n");
     return;
   }
 
-  // Connect WebSocket
+  // Connect WebSocket for depth stream
   if(!m_depthClient->connectWebSocket(session.sessionId))
   {
-    LOGE("Failed to connect depth stream\n");
+    LOGE("Failed to connect depth stream WebSocket\n");
     return;
   }
+
+#ifdef WITH_VIDEO_DECODER
+  // Optionally initialize video decoder for local video overlay
+  // (not required for depth-only streaming)
+  LOGI("Depth streaming active - video decoder optional for overlay\n");
 #endif
 
   m_enableDepthRendering = true;
@@ -520,207 +513,118 @@ void GaussianSplatting::enableVideoDepthPlayback(const std::string& videoPath, c
          firstFrame.width, firstFrame.height, firstFrame.zMax, prmFrame.vdzAspect);
   }
 
-  LOGI("Video+Depth playback enabled: %s + %s (%zu depth frames)\n",
-       videoPath.c_str(), vdzPath.c_str(), m_vdzSequence->getFrameCount());
+   LOGI("Video+Depth playback enabled: %s + %s (%zu depth frames)\n",
+        videoPath.c_str(), vdzPath.c_str(), m_vdzSequence->getFrameCount());
 }
 
-void GaussianSplatting::updateDepthRendering(VkCommandBuffer cmd)
+void GaussianSplatting::enableDepthVideoPlayback(const std::string& metadataPath)
 {
-  if(!m_enableDepthRendering)
+  LOGI("enableDepthVideoPlayback called with: %s\n", metadataPath.c_str());
+#ifdef WITH_VIDEO_DECODER
+  if(!m_depthManager)
   {
+    m_depthManager = std::make_unique<DepthTextureManager>();
+    m_depthManager->initialize(m_device, m_app->getPhysicalDevice(), m_app->getQueue(0).queue, &m_alloc);
+  }
+
+  m_videoDepthManager = std::make_unique<VideoDepthPlaybackManager>();
+  if(!m_videoDepthManager->openFromMetadata(metadataPath))
+  {
+    LOGE("Failed to open depth video from: %s\n", metadataPath.c_str());
+    m_videoDepthManager.reset();
     return;
   }
 
-#ifdef WITH_VIDEO_DECODER
-  // Handle video decoder case
-  if(m_videoDecoder)
+  // Get video decoder and start decoding
+  VideoDecoder* videoDecoder = m_videoDepthManager->getVideoDecoder();
+  if(videoDecoder)
   {
-    // Skip frame updates when paused
-    if(m_playbackPaused)
+    // Setup video texture if needed
+    int vidWidth, vidHeight;
+    videoDecoder->getDimensions(vidWidth, vidHeight);
+
+    m_videoTexture.width = vidWidth;
+    m_videoTexture.height = vidHeight;
+  }
+
+  // Get first depth frame for initialization
+  DepthVideoLoader* depthLoader = m_videoDepthManager->getDepthLoader();
+  if(depthLoader && depthLoader->isOpen())
+  {
+    DepthVideoFrame firstFrame;
+    if(depthLoader->getFrame(0, firstFrame))
     {
-      return;
-    }
-    
-    // Get next available frame from decoder
-    DecodedFrame videoFrame;
-    if(m_videoDecoder->getNextFrame(videoFrame))
-    {
-      if (videoFrame.width > 0 && videoFrame.height > 0)
-      {
-          bool updateDescriptor = false;
+      VkCommandBuffer cmd = m_app->createTempCmdBuffer();
 
-          // Check if texture needs (re)creation
-          if(m_videoTexture.width != videoFrame.width || m_videoTexture.height != videoFrame.height)
-          {
-              // Destroy old - wait for GPU to finish using resources
-              vkDeviceWaitIdle(m_device);
-              if(m_videoTexture.view != VK_NULL_HANDLE) { vkDestroyImageView(m_device, m_videoTexture.view, nullptr); m_videoTexture.view = VK_NULL_HANDLE; }
-              if(m_videoTexture.image.image != VK_NULL_HANDLE) { m_alloc.destroyImage(m_videoTexture.image); m_videoTexture.image = {}; }
+      // Convert DepthVideoFrame to DepthFrame for upload
+      DepthFrame uploadFrame;
+      uploadFrame.timestampMs = firstFrame.timestampMs;
+      uploadFrame.width = firstFrame.width;
+      uploadFrame.height = firstFrame.height;
+      uploadFrame.data = std::move(firstFrame.data);
+      uploadFrame.scale = 1.0f;
+      uploadFrame.bias = 0.0f;
+      uploadFrame.zMax = firstFrame.zMax;
 
-              // Create new
-              VkImageCreateInfo info = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
-              info.imageType = VK_IMAGE_TYPE_2D;
-              info.format = VK_FORMAT_R8G8B8A8_UNORM;
-              info.extent = {static_cast<uint32_t>(videoFrame.width), static_cast<uint32_t>(videoFrame.height), 1};
-              info.mipLevels = 1;
-              info.arrayLayers = 1;
-              info.samples = VK_SAMPLE_COUNT_1_BIT;
-              info.tiling = VK_IMAGE_TILING_OPTIMAL;
-              info.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-              info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-              info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-              
-              m_alloc.createImage(m_videoTexture.image, info);
+      m_depthManager->uploadDepthFrame(uploadFrame, cmd);
+      m_app->submitAndWaitTempCmdBuffer(cmd);
 
-              VkImageViewCreateInfo viewInfo = {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-              viewInfo.image = m_videoTexture.image.image;
-              viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-              viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
-              viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-              viewInfo.subresourceRange.baseMipLevel = 0;
-              viewInfo.subresourceRange.levelCount = 1;
-              viewInfo.subresourceRange.baseArrayLayer = 0;
-              viewInfo.subresourceRange.layerCount = 1;
-              
-              vkCreateImageView(m_device, &viewInfo, nullptr, &m_videoTexture.view);
-              
-              m_videoTexture.width = videoFrame.width;
-              m_videoTexture.height = videoFrame.height;
-              
-              updateDescriptor = true;
+      // Set VDZ rendering parameters
+      prmFrame.vdzZMaxClip = firstFrame.zMax > 0.0f ? firstFrame.zMax : 2.0f;
+      prmFrame.vdzAspect = static_cast<float>(firstFrame.width) / static_cast<float>(firstFrame.height);
+      prmFrame.vdzZScale = 10.0f;
+      prmFrame.vdzZBias = 2.0f;
+      prmFrame.vdzZGamma = 5.0f;
+      prmFrame.vdzZMaxClip = 0.2f;
+      prmFrame.vdzPlaneScale = 1.4f;
+      prmFrame.vdzEdgeThreshold = 1.0f;
 
-              // Transition to TRANSFER_DST
-              VkImageMemoryBarrier barrier = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-              barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-              barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-              barrier.srcAccessMask = 0;
-              barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-              barrier.image = m_videoTexture.image.image;
-              barrier.subresourceRange = viewInfo.subresourceRange;
-              
-              vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 
-                  0, 0, nullptr, 0, nullptr, 1, &barrier);
-          }
-          else
-          {
-             // Transition to TRANSFER_DST for update
-              VkImageMemoryBarrier barrier = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-              barrier.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-              barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-              barrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
-              barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-              barrier.image = m_videoTexture.image.image;
-              barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-              
-              vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 
-                  0, 0, nullptr, 0, nullptr, 1, &barrier);
-          }
-
-          // Upload using StagingUploader
-          size_t bufferSize = videoFrame.data.size();
-          m_uploader.appendImage(m_videoTexture.image, bufferSize, videoFrame.data.data(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-          m_uploader.cmdUploadAppended(cmd);
-               
-          // Transition to SHADER_READ_ONLY
-          {
-              VkImageMemoryBarrier barrier = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-              barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-              barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-              barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-              barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-              barrier.image = m_videoTexture.image.image;
-              barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-              
-              vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 
-                  0, 0, nullptr, 0, nullptr, 1, &barrier);
-          }
-          
-          if(updateDescriptor && m_descriptorSet != VK_NULL_HANDLE)
-          {
-              // Update descriptor set
-              VkDescriptorImageInfo imageInfo{};
-              imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-              imageInfo.imageView = m_videoTexture.view;
-              imageInfo.sampler = m_sampler;
-
-              VkWriteDescriptorSet write{};
-              write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-              write.dstSet = m_descriptorSet;
-              write.dstBinding = BINDING_VDZ_VIDEO_TEXTURE;
-              write.dstArrayElement = 0;
-              write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-              write.descriptorCount = 1;
-              write.pImageInfo = &imageInfo;
-
-              vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
-          }
-      }
-      
-      LOGD("Got video frame: %dx%d @ %.3f s\n", videoFrame.width, videoFrame.height, videoFrame.timestamp);
-      
-      if(m_videoDepthPlaybackMode && m_vdzSequence && m_vdzSequence->isOpen())
-      {
-        uint32_t videoTimestampMs = static_cast<uint32_t>(videoFrame.timestamp * 1000.0);
-        size_t depthFrameIdx = m_vdzSequence->getFrameIndexForTimestamp(videoTimestampMs);
-        
-        if(depthFrameIdx != m_lastVdzFrameIndex)
-        {
-          DepthFrame depthFrame;
-          if(m_vdzSequence->getFrame(depthFrameIdx, depthFrame))
-          {
-            if(m_depthManager)
-            {
-              m_depthManager->uploadDepthFrame(depthFrame, cmd);
-              m_lastVdzFrameIndex = depthFrameIdx;
-              m_depthFrameCounter++;
-              
-              if(m_depthFrameCounter % 30 == 0)
-              {
-                LOGI("Synced depth frame #%zu: %ux%u @ %u ms (video: %u ms)\n",
-                     depthFrameIdx, depthFrame.width, depthFrame.height,
-                     depthFrame.timestampMs, videoTimestampMs);
-              }
-            }
-          }
-        }
-      }
+      LOGI("First depth frame uploaded: %ux%u, zMax=%.2f, aspect=%.3f\n",
+           firstFrame.width, firstFrame.height, firstFrame.zMax, prmFrame.vdzAspect);
     }
   }
-  else
+
+  // Ensure shaders and pipelines are initialized
+  if(!m_shaders.valid)
+  {
+    m_lightSet.init(m_app, &m_alloc, &m_uploader);
+    initShaders();
+    initRendererBuffers();
+    initPipelines();
+  }
+
+  m_videoDepthPlaybackMode = true;
+  m_enableDepthRendering = true;
+  m_playbackStartTime = std::chrono::steady_clock::now();
+  m_playbackTimeOffset = 0.0;
+  m_playbackPaused = false;
+  m_lastVdzFrameIndex = SIZE_MAX;
+
+  m_videoDepthManager->play();
+
+  prmFrame.vdzUseVideoTexture = 1;
+
+  const auto& metadata = m_videoDepthManager->getMetadata();
+  LOGI("Depth video playback enabled from metadata: %s\n", metadataPath.c_str());
+  LOGI("  Video: %s\n", metadata.videoPath.c_str());
+  LOGI("  Depth: %s\n", metadata.depthVideoPath.c_str());
+  LOGI("  Frames: %d, FPS: %.2f\n", metadata.frameCount, metadata.fps);
+#else
+  LOGE("Video decoder not available - rebuild with ENABLE_VIDEO_DECODER=ON\n");
 #endif
-  {
-    // Handle streaming case
-    if(!m_depthClient)
-    {
-      return;
-    }
+}
 
-    // Request depth for current time
-    uint64_t timestampMs = static_cast<uint64_t>(prmFrame.currentTime * 1000.0f);
-
-    m_depthClient->update(prmFrame.currentTime * 1000.0f, m_depthClient->getFps());
-
-    static int frameCounter = 0;  // For selective debug logging
-    DepthFrame frame;
-    if(m_depthClient->getFrame(timestampMs, frame)) {
-        if(m_depthManager) {
-            m_depthManager->uploadDepthFrame(frame, cmd);
-            frameCounter++;
-
-            // Log every 30th frame for debugging
-            if(frameCounter % 30 == 0) {
-                LOGI("Depth frame #%d uploaded: %dx%d @ %u ms (req: %llu ms)\n",
-                     frameCounter, frame.width, frame.height,
-                     frame.timestampMs, timestampMs);
-            }
-        }
-    }
-
-    m_depthStats = m_depthClient->getStats();
-  }
+bool GaussianSplatting::isDepthVideoPlaying() const
+{
+#ifdef WITH_VIDEO_DECODER
+    return m_videoDepthManager && m_videoDepthManager->isPlaying();
+#else
+    return false;
+#endif
 }
 
 void GaussianSplatting::deinitScene()
+
 {
   m_splatSet.clear();
   m_splatSetPending.clear();
@@ -1273,3 +1177,4 @@ void GaussianSplatting::updateAnimation(float deltaTime)
 #include "gaussian_splatting_multiview.cpp"
 
 #include "gaussian_splatting_dlss_rr.cpp"
+#include "gaussian_splatting_video.cpp"
