@@ -25,7 +25,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Sequence, cast
 
 import cv2
 import numpy as np
@@ -147,21 +147,31 @@ def create_test_frame(width: int = 640, height: int = 360, seed: int = 42) -> np
 
 
 def load_test_frames(
-    num_frames: int, width: int = 640, height: int = 360, data_dir: Path | None = None
+    num_frames: int,
+    width: int = 640,
+    height: int = 360,
+    data_dir: Path | None = None,
+    video_path: Path | None = None,
 ) -> list[np.ndarray]:
-    """Load or create test frames.
+    """Load or create test frames from video, directory, or synthetic data.
 
     Args:
         num_frames: Number of frames to load
-        width: Frame width
+        width: Frame width for resizing/synthetic frames
         height: Frame height
         data_dir: Optional directory containing image files (frame_XXXXX.png, etc.)
+        video_path: Optional video file to decode frames from
 
     Returns:
         List of RGB frames as numpy arrays
     """
+    # Priority: video_path > data_dir > synthetic
+    if video_path and video_path.exists():
+        logger.info(f"Loading frames from video: {video_path}")
+        return load_frames_from_video(video_path, num_frames, width, height)
+
     if data_dir and data_dir.exists():
-        logger.info(f"Loading frames from {data_dir}...")
+        logger.info(f"Loading frames from directory: {data_dir}")
         frames = []
 
         # Try multiple filename formats: 6-digit (frame_000000.png), 5-digit (frame_00000.png), 4-digit (frame_0000.png)
@@ -200,6 +210,84 @@ def load_test_frames(
 
     logger.info(f"Creating {num_frames} synthetic test frames...")
     return [create_test_frame(width, height, seed=i) for i in range(num_frames)]
+
+
+def load_frames_from_video(
+    video_path: Path, num_frames: int, target_width: int, target_height: int
+) -> list[np.ndarray]:
+    """Decode frames directly from video file using OpenCV.
+
+    This is the standard approach. For better performance with torchcodec,
+    use the VideoDataset class directly.
+
+    Args:
+        video_path: Path to video file
+        num_frames: Number of frames to decode
+        target_width: Target frame width
+        target_height: Target frame height
+
+    Returns:
+        List of RGB frames as numpy arrays
+    """
+    import cv2
+
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        raise RuntimeError(f"Cannot open video: {video_path}")
+
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    original_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    original_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    logger.info(f"Video: {video_path.name}")
+    logger.info(f"  Resolution: {original_width}x{original_height}")
+    logger.info(f"  FPS: {fps:.2f}")
+    logger.info(f"  Total frames: {total_frames}")
+    logger.info(f"  Target: {num_frames} frames at {target_width}x{target_height}")
+
+    # Calculate frame skip to get approximately num_frames
+    if total_frames >= num_frames:
+        # Decode every Nth frame
+        frame_skip = max(1, total_frames // num_frames)
+    else:
+        # Decode all frames and pad with duplicates if needed
+        frame_skip = 1
+
+    frames = []
+    decoded = 0
+    frame_idx = 0
+
+    while decoded < num_frames and frame_idx < total_frames:
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        if frame_idx % frame_skip == 0:
+            # Resize to target resolution
+            if frame.shape[1] != target_width or frame.shape[0] != target_height:
+                frame = cv2.resize(
+                    frame, (target_width, target_height), interpolation=cv2.INTER_LINEAR
+                )
+
+            # Convert BGR to RGB
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            frames.append(frame_rgb)
+            decoded += 1
+
+            if decoded % 20 == 0:
+                logger.info(f"  Decoded {decoded}/{num_frames} frames...")
+
+        frame_idx += 1
+
+    cap.release()
+
+    # Pad with last frame if we didn't get enough
+    while len(frames) < num_frames:
+        frames.append(frames[-1].copy())
+
+    logger.info(f"Decoded {len(frames)} frames from video")
+    return frames
 
 
 def benchmark_single_device(
@@ -878,6 +966,474 @@ def print_system_info() -> None:
     print("=" * 80)
 
 
+def benchmark_torchcodec_video(
+    video_path: Path,
+    model_id: str,
+    process_res: int,
+    device_spec: str,
+    batch_size: int = 4,
+    warmup: int = 1,
+    iterations: int = 3,
+) -> BenchmarkResult | None:
+    """Benchmark using torchcodec for direct video decoding (no PNG intermediate)."""
+    from pathlib import Path
+
+    logger.info("=" * 60)
+    logger.info(f"TORCHCODEC VIDEO BENCHMARK: {video_path.name}")
+    logger.info("=" * 60)
+
+    try:
+        from common.datasets import VideoDataset
+    except ImportError:
+        logger.warning("torchcodec not available, skipping torchcodec benchmark")
+        return None
+
+    # Determine device string
+    if "xpu" in device_spec.lower():
+        device_str = "xpu"
+    elif "cuda" in device_spec.lower() or device_spec.lower() == "auto":
+        device_str = "cuda" if torch.cuda.is_available() else "cpu"
+    else:
+        device_str = device_spec
+
+    from depth_anything_3.api import DepthAnything3
+    from torchcodec.decoders import VideoDecoder
+
+    logger.info(f"Using device: {device_str}")
+
+    # Load model
+    logger.info(f"Loading DA3 model {model_id}...")
+    cache_dir = Path("checkpoints")
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    model = DepthAnything3.from_pretrained(model_id, cache_dir=str(cache_dir))
+    model = model.to(device_str).eval()
+    logger.info("Model loaded")
+
+    # Get video info
+    temp_decoder = VideoDecoder(str(video_path))
+    total_frames = temp_decoder.metadata.num_frames
+    if total_frames is None:
+        raise ValueError(f"Cannot determine frame count for video: {video_path}")
+    num_frames: int = total_frames
+    fps = temp_decoder.metadata.average_fps
+    del temp_decoder
+
+    logger.info(f"Video: {video_path.name}")
+    logger.info(f"  Frames: {num_frames}")
+    logger.info(f"  FPS: {fps:.2f}")
+
+    # Warmup
+    logger.info(f"Warming up ({warmup} iterations)...")
+    for _ in range(warmup):
+        # Create fresh decoder for warmup
+        decoder = VideoDecoder(str(video_path))
+        warmup_batch = decoder.get_frames_in_range(0, min(batch_size, num_frames))
+        warmup_frames = [frame.permute(1, 2, 0).cpu().numpy() for frame in warmup_batch.data]
+        del decoder
+
+        _ = model.inference(
+            warmup_frames,
+            process_res=process_res,
+            process_res_method="upper_bound_resize",
+            export_dir=None,
+        )
+        # Sync
+        if hasattr(torch, "xpu") and torch.xpu.is_available():
+            torch.xpu.synchronize()
+        elif torch.cuda.is_available():
+            torch.cuda.synchronize()
+
+    # Benchmark iterations
+    logger.info(f"Running benchmark ({iterations} iterations)...")
+    times = []
+
+    for iteration in range(iterations):
+        start = time.perf_counter()
+
+        # Process all frames - create fresh decoder for each batch to avoid state issues
+        for batch_start in range(0, num_frames, batch_size):
+            batch_end = min(batch_start + batch_size, num_frames)
+
+            # Create fresh decoder for each batch (torchcodec has state issues with reuse)
+            decoder = VideoDecoder(str(video_path))
+            frame_batch = decoder.get_frames_in_range(batch_start, batch_end)
+            frame_tensors = frame_batch.data  # (B, C, H, W) uint8
+
+            # Convert to numpy arrays for DA3
+            frames_np = [frame.permute(1, 2, 0).cpu().numpy() for frame in frame_tensors]
+
+            _ = model.inference(
+                frames_np,
+                process_res=process_res,
+                process_res_method="upper_bound_resize",
+                export_dir=None,
+            )
+
+            del decoder
+
+        # Sync
+        if hasattr(torch, "xpu") and torch.xpu.is_available():
+            torch.xpu.synchronize()
+        elif torch.cuda.is_available():
+            torch.cuda.synchronize()
+
+        elapsed = time.perf_counter() - start
+        times.append(elapsed)
+        logger.info(f"  Iteration {iteration + 1}: {elapsed * 1000:.1f} ms ({num_frames} frames)")
+
+    # Calculate statistics
+    avg_time = sum(times) / len(times)
+    total_time_ms = avg_time * 1000
+    per_frame_ms = total_time_ms / num_frames
+    fps = 1000 / per_frame_ms
+
+    num_devices = len([d for d in device_spec.split(",") if d]) if "," in device_spec else 1
+
+    result = BenchmarkResult(
+        device_spec=f"torchcodec+{device_str}",
+        num_frames=num_frames,
+        total_time_ms=total_time_ms,
+        per_frame_time_ms=per_frame_ms,
+        fps=fps,
+        num_devices=num_devices,
+        iterations=iterations,
+    )
+
+    logger.info(f"Torchcodec Result: {per_frame_ms:.1f} ms/frame ({fps:.2f} fps)")
+
+    return result
+
+
+def benchmark_torchcodec_streaming(
+    video_path: Path,
+    model_id: str,
+    process_res: int,
+    device_spec: str,
+    batch_size: int = 4,
+    warmup: int = 1,
+    iterations: int = 3,
+    max_frames: int | None = None,
+) -> BenchmarkResult | None:
+    """Benchmark torchcodec with forward-only streaming (optimal for real-time backend).
+
+    This benchmark tests the optimal path for the real backend:
+    - Opens decoder ONCE and streams forward sequentially
+    - Uses get_frames_in_range() for efficient forward-only decoding
+    - Captures precise timestamps from FrameBatch.pts_seconds
+    - NO decoder recreation overhead (major performance improvement)
+
+    Args:
+        video_path: Path to video file
+        model_id: DA3 model identifier
+        process_res: Processing resolution
+        device_spec: Device specification
+        batch_size: Number of frames per batch
+        warmup: Number of warmup iterations
+        iterations: Number of timed iterations
+        max_frames: Maximum frames to process (None = all frames)
+
+    Returns:
+        BenchmarkResult with timing statistics, or None if torchcodec unavailable
+    """
+    logger.info("=" * 60)
+    logger.info(f"TORCHCODEC STREAMING BENCHMARK: {video_path.name}")
+    logger.info("=" * 60)
+
+    try:
+        from torchcodec.decoders import VideoDecoder
+    except ImportError:
+        logger.warning("torchcodec not available, skipping streaming benchmark")
+        return None
+
+    # Determine device string
+    if "xpu" in device_spec.lower():
+        device_str = "xpu"
+    elif "cuda" in device_spec.lower() or device_spec.lower() == "auto":
+        device_str = "cuda" if torch.cuda.is_available() else "cpu"
+    else:
+        device_str = device_spec
+
+    from depth_anything_3.api import DepthAnything3
+
+    logger.info(f"Using device: {device_str}")
+
+    # Load model
+    logger.info(f"Loading DA3 model {model_id}...")
+    cache_dir = Path("checkpoints")
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    model = DepthAnything3.from_pretrained(model_id, cache_dir=str(cache_dir))
+    model = model.to(device_str).eval()
+    logger.info("Model loaded")
+
+    # Get video info
+    temp_decoder = VideoDecoder(str(video_path))
+    total_frames = temp_decoder.metadata.num_frames
+    if total_frames is None:
+        raise ValueError(f"Cannot determine frame count for video: {video_path}")
+    num_frames: int = min(total_frames, max_frames) if max_frames else total_frames
+    fps = temp_decoder.metadata.average_fps
+    del temp_decoder
+
+    logger.info(f"Video: {video_path.name}")
+    logger.info(f"  Total frames: {total_frames}, processing: {num_frames}")
+    logger.info(f"  FPS: {fps:.2f}")
+    logger.info(f"  Batch size: {batch_size}")
+
+    # Warmup - create decoder, decode batch_size frames, close
+    logger.info(f"Warming up ({warmup} iterations)...")
+    for _ in range(warmup):
+        decoder = VideoDecoder(str(video_path))
+        warmup_batch = decoder.get_frames_in_range(0, min(batch_size, num_frames))
+        warmup_frames = [frame.permute(1, 2, 0).cpu().numpy() for frame in warmup_batch.data]
+        del decoder
+
+        _ = model.inference(
+            warmup_frames,
+            process_res=process_res,
+            process_res_method="upper_bound_resize",
+            export_dir=None,
+        )
+        # Sync
+        if hasattr(torch, "xpu") and torch.xpu.is_available():
+            torch.xpu.synchronize()
+        elif torch.cuda.is_available():
+            torch.cuda.synchronize()
+
+    # Benchmark iterations
+    logger.info(f"Running benchmark ({iterations} iterations)...")
+    times: list[float] = []
+    all_timestamps: list[float] = []
+
+    for iteration in range(iterations):
+        start = time.perf_counter()
+
+        # Open decoder ONCE for the entire video
+        decoder = VideoDecoder(str(video_path))
+        frame_idx = 0
+
+        while frame_idx < num_frames:
+            end_idx = min(frame_idx + batch_size, num_frames)
+            frame_batch = decoder.get_frames_in_range(frame_idx, end_idx)
+            frame_tensors = frame_batch.data  # (B, C, H, W) uint8
+
+            # Capture precise timestamps from FrameBatch (this is the key!)
+            batch_ts = [ts * 1000.0 for ts in frame_batch.pts_seconds.tolist()]
+            all_timestamps.extend(batch_ts)
+
+            # Convert to numpy arrays for DA3
+            frames_np = [frame.permute(1, 2, 0).cpu().numpy() for frame in frame_tensors]
+
+            _ = model.inference(
+                frames_np,
+                process_res=process_res,
+                process_res_method="upper_bound_resize",
+                export_dir=None,
+            )
+
+            frame_idx += len(frames_np)
+
+        del decoder
+
+        # Sync
+        if hasattr(torch, "xpu") and torch.xpu.is_available():
+            torch.xpu.synchronize()
+        elif torch.cuda.is_available():
+            torch.cuda.synchronize()
+
+        elapsed = time.perf_counter() - start
+        times.append(elapsed)
+        logger.info(f"  Iteration {iteration + 1}: {elapsed * 1000:.1f} ms ({num_frames} frames)")
+
+    # Verify timestamp precision
+    if all_timestamps:
+        # Check that timestamps are monotonically increasing and precise
+        sorted_ts = sorted(all_timestamps)
+        max_deviation = max(float(abs(ts - sorted_ts[i])) for i, ts in enumerate(all_timestamps))
+        logger.info(
+            f"  Timestamp precision: max deviation from expected order: {max_deviation:.3f} ms"
+        )
+
+    # Calculate statistics
+    avg_time = sum(times) / len(times)
+    total_time_ms = avg_time * 1000
+    per_frame_ms = total_time_ms / num_frames
+    fps = 1000 / per_frame_ms
+
+    num_devices = len([d for d in device_spec.split(",") if d]) if "," in device_spec else 1
+
+    result = BenchmarkResult(
+        device_spec=f"torchcodec+stream+{device_str}",
+        num_frames=num_frames,
+        total_time_ms=total_time_ms,
+        per_frame_time_ms=per_frame_ms,
+        fps=fps,
+        num_devices=num_devices,
+        iterations=iterations,
+    )
+
+    logger.info(f"Torchcodec Streaming Result: {per_frame_ms:.1f} ms/frame ({fps:.2f} fps)")
+
+    return result
+
+
+def benchmark_cv2_video(
+    video_path: Path,
+    model_id: str,
+    process_res: int,
+    device_spec: str,
+    batch_size: int = 4,
+    warmup: int = 1,
+    iterations: int = 3,
+) -> BenchmarkResult:
+    """Benchmark using OpenCV for video decoding (baseline for comparison).
+
+    This benchmark provides a baseline comparison for the torchcodec approach:
+    - OpenCV video decoding (standard approach)
+    - No intermediate PNG storage (just decode on-the-fly)
+
+    Args:
+        video_path: Path to video file
+        model_id: DA3 model identifier
+        process_res: Processing resolution
+        device_spec: Device specification
+        batch_size: Batch size for DA3 inference
+        warmup: Number of warmup iterations
+        iterations: Number of timed iterations
+
+    Returns:
+        BenchmarkResult with timing statistics
+    """
+    logger.info("=" * 60)
+    logger.info(f"CV2 VIDEO BENCHMARK: {video_path.name}")
+    logger.info("=" * 60)
+
+    # Determine device string
+    if "xpu" in device_spec.lower():
+        device_str = "xpu"
+    elif "cuda" in device_spec.lower() or device_spec.lower() == "auto":
+        device_str = "cuda" if torch.cuda.is_available() else "cpu"
+    else:
+        device_str = device_spec
+
+    from depth_anything_3.api import DepthAnything3
+
+    logger.info(f"Using device: {device_str}")
+
+    # Load model
+    logger.info(f"Loading DA3 model {model_id}...")
+    cache_dir = Path("checkpoints")
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    model = DepthAnything3.from_pretrained(model_id, cache_dir=str(cache_dir))
+    model = model.to(device_str).eval()
+    logger.info("Model loaded")
+
+    # Open video
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        raise RuntimeError(f"Cannot open video: {video_path}")
+
+    num_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+
+    logger.info(f"Video: {video_path.name}")
+    logger.info(f"  Frames: {num_frames}")
+    logger.info(f"  FPS: {fps:.2f}")
+
+    # Warmup
+    logger.info(f"Warming up ({warmup} iterations)...")
+    for _ in range(warmup):
+        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+        warmup_frames = []
+        for _ in range(min(batch_size, num_frames)):
+            ret, frame = cap.read()
+            if not ret:
+                break
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            warmup_frames.append(frame_rgb)
+        _ = model.inference(
+            warmup_frames,
+            process_res=process_res,
+            process_res_method="upper_bound_resize",
+            export_dir=None,
+        )
+        # Sync
+        if hasattr(torch, "xpu") and torch.xpu.is_available():
+            torch.xpu.synchronize()
+        elif torch.cuda.is_available():
+            torch.cuda.synchronize()
+
+    # Benchmark iterations
+    logger.info(f"Running benchmark ({iterations} iterations)...")
+    times = []
+
+    for iteration in range(iterations):
+        start = time.perf_counter()
+
+        # Process all frames in batches
+        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+        batch_frames = []
+
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            batch_frames.append(frame_rgb)
+
+            if len(batch_frames) == batch_size:
+                _ = model.inference(
+                    batch_frames,
+                    process_res=process_res,
+                    process_res_method="upper_bound_resize",
+                    export_dir=None,
+                )
+                batch_frames = []
+
+        # Process remaining frames
+        if batch_frames:
+            _ = model.inference(
+                batch_frames,
+                process_res=process_res,
+                process_res_method="upper_bound_resize",
+                export_dir=None,
+            )
+
+        # Sync
+        if hasattr(torch, "xpu") and torch.xpu.is_available():
+            torch.xpu.synchronize()
+        elif torch.cuda.is_available():
+            torch.cuda.synchronize()
+
+        elapsed = time.perf_counter() - start
+        times.append(elapsed)
+        logger.info(f"  Iteration {iteration + 1}: {elapsed * 1000:.1f} ms ({num_frames} frames)")
+
+    # Calculate statistics
+    avg_time = sum(times) / len(times)
+    total_time_ms = avg_time * 1000
+    per_frame_ms = total_time_ms / num_frames
+    fps = 1000 / per_frame_ms
+
+    num_devices = len([d for d in device_spec.split(",") if d]) if "," in device_spec else 1
+
+    result = BenchmarkResult(
+        device_spec=f"cv2+{device_spec}",
+        num_frames=num_frames,
+        total_time_ms=total_time_ms,
+        per_frame_time_ms=per_frame_ms,
+        fps=fps,
+        num_devices=num_devices,
+        iterations=iterations,
+    )
+
+    logger.info(f"CV2 Result: {per_frame_ms:.1f} ms/frame ({fps:.2f} fps)")
+
+    cap.release()
+
+    return result
+
+
 def main() -> None:
     """Run the multi-XPU DA3 benchmark."""
     parser = argparse.ArgumentParser(
@@ -899,6 +1455,12 @@ Examples:
 
   # Use DataLoader batch processing
   python benchmark_da3_multi_xpu.py --batch-size 8 --num-workers 8
+
+  # Load frames from video file
+  python benchmark_da3_multi_xpu.py --video ~/Downloads/lake.mp4
+
+  # Load frames from PNG directory
+  python benchmark_da3_multi_xpu.py --input-dir ~/Downloads/lake/temp_frames
         """,
     )
 
@@ -942,9 +1504,29 @@ Examples:
         help="Skip parallel preload benchmark",
     )
     parser.add_argument(
+        "--skip-cv2-video",
+        action="store_true",
+        help="Skip CV2 video decoding benchmark",
+    )
+    parser.add_argument(
+        "--skip-torchcodec",
+        action="store_true",
+        help="Skip torchcodec video benchmark (batched with decoder recreation)",
+    )
+    parser.add_argument(
+        "--skip-torchcodec-streaming",
+        action="store_true",
+        help="Skip torchcodec streaming benchmark (forward-only, optimal for real backend)",
+    )
+    parser.add_argument(
         "--input-dir",
         type=Path,
         help="Directory containing input frames (frame_0000.png, etc.)",
+    )
+    parser.add_argument(
+        "--video",
+        type=Path,
+        help="Video file to decode frames from (use instead of --input-dir)",
     )
     parser.add_argument(
         "--output",
@@ -965,12 +1547,13 @@ Examples:
     # Print system info
     print_system_info()
 
-    # Load test frames
+    # Load test frames (video > input-dir > synthetic)
     frames = load_test_frames(
         num_frames=args.num_frames,
         width=args.width,
         height=args.height,
         data_dir=args.input_dir,
+        video_path=args.video,
     )
 
     logger.info(f"Loaded {len(frames)} frames of size {args.width}x{args.height}")
@@ -1075,6 +1658,63 @@ Examples:
             results.add_result(result)
         except Exception as e:
             logger.error(f"Parallel preload benchmark failed: {e}")
+
+    # Video benchmarks (if video file provided)
+    if args.video and args.video.exists():
+        logger.info("\n" + "=" * 60)
+        logger.info("VIDEO BENCHMARKS")
+        logger.info("=" * 60)
+
+        # CV2 baseline benchmark
+        if not args.skip_cv2_video:
+            try:
+                result = benchmark_cv2_video(
+                    video_path=args.video,
+                    model_id=args.model_id,
+                    process_res=args.process_res,
+                    device_spec=device_spec,
+                    batch_size=args.batch_size,
+                    warmup=args.warmup,
+                    iterations=args.iterations,
+                )
+                results.add_result(result)
+            except Exception as e:
+                logger.error(f"CV2 video benchmark failed: {e}")
+
+        # Torchcodec benchmark
+        if not args.skip_torchcodec:
+            try:
+                result = benchmark_torchcodec_video(
+                    video_path=args.video,
+                    model_id=args.model_id,
+                    process_res=args.process_res,
+                    device_spec=device_spec,
+                    batch_size=args.batch_size,
+                    warmup=args.warmup,
+                    iterations=args.iterations,
+                )
+                if result:
+                    results.add_result(result)
+            except Exception as e:
+                logger.error(f"Torchcodec video benchmark failed: {e}")
+
+        # Torchcodec streaming benchmark (optimal for real backend)
+        if not args.skip_torchcodec_streaming:
+            try:
+                result = benchmark_torchcodec_streaming(
+                    video_path=args.video,
+                    model_id=args.model_id,
+                    process_res=args.process_res,
+                    device_spec=device_spec,
+                    batch_size=args.batch_size,
+                    warmup=args.warmup,
+                    iterations=args.iterations,
+                    max_frames=args.num_frames,
+                )
+                if result:
+                    results.add_result(result)
+            except Exception as e:
+                logger.error(f"Torchcodec streaming benchmark failed: {e}")
 
     # Print summary
     results.print_summary()

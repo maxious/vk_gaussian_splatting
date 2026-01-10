@@ -217,7 +217,7 @@ class DepthAnything3(nn.Module, PyTorchModelHubMixin):
 
     def inference(
         self,
-        image: list[np.ndarray | Image.Image | str],
+        image: Sequence[np.ndarray | Image.Image | str],
         extrinsics: np.ndarray | None = None,
         intrinsics: np.ndarray | None = None,
         align_to_input_ext_scale: bool = True,
