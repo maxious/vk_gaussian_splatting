@@ -24,7 +24,9 @@ from typing import Iterator, Optional
 
 import cv2
 import numpy as np
+import torch
 
+from common.datasets import VideoDataset
 from numba import jit
 
 
@@ -173,13 +175,13 @@ class DA3StreamingProcessor:
         self.model = self.model.to(self.config.device).eval()
         self.dtype = torch.float16
 
-    def process_chunk(
+    def process_chunk_from_paths(
         self,
         frame_paths: list[Path],
         chunk_idx: int,
         timestamps_ms: list[float],
     ) -> ChunkResult:
-        """Process a chunk of frames through DA3."""
+        """Process a chunk of frames from file paths (original method)."""
         import torch
         from PIL import Image
 
@@ -197,6 +199,57 @@ class DA3StreamingProcessor:
                     process_res=self.config.process_res,
                     ref_view_strategy="saddle_balanced",
                 )
+
+        return self._extract_predictions(predictions, chunk_idx, timestamps_ms, len(frame_paths))
+
+    def process_chunk_from_tensors(
+        self,
+        frame_tensors,
+        chunk_idx: int,
+        timestamps_ms: list[float],
+    ) -> ChunkResult:
+        """Process a chunk of frames from torch tensors (torchcodec optimization).
+
+        This method avoids the inefficient PNG extraction -> re-decoding pipeline
+        by accepting torch tensors directly from torchcodec.FrameBatch.
+
+        Args:
+            frame_tensors: (B, C, H, W) uint8 tensor from torchcodec
+            chunk_idx: Chunk index for logging
+            timestamps_ms: List of timestamps for each frame
+
+        Returns:
+            ChunkResult with depth, confidence, intrinsics, extrinsics
+        """
+        logger.info(f"Processing chunk {chunk_idx}: {frame_tensors.shape[0]} frames (torchcodec)")
+
+        # Convert torch tensors to numpy arrays for DA3
+        # FrameBatch.data is (B, C, H, W) uint8, need (B, H, W, C) for DA3
+        frame_np_list = [
+            frame.permute(1, 2, 0).cpu().numpy()  # (H, W, C)
+            for frame in frame_tensors
+        ]
+
+        with torch.no_grad():
+            with torch.autocast("cuda", dtype=self.dtype):
+                # Use ref_view_strategy for temporal consistency
+                predictions = self.model.inference(  # type: ignore[attr-defined]
+                    frame_np_list,
+                    process_res=self.config.process_res,
+                    ref_view_strategy="saddle_balanced",
+                )
+
+        return self._extract_predictions(predictions, chunk_idx, timestamps_ms, len(frame_np_list))
+
+    def _extract_predictions(
+        self,
+        predictions,
+        chunk_idx: int,
+        timestamps_ms: list[float],
+        num_frames: int,
+    ) -> ChunkResult:
+        """Extract and format predictions from DA3 model output."""
+        import numpy as np
 
         # Extract results - depth is (N, H, W)
         depths = predictions.depth
@@ -232,13 +285,16 @@ class DA3StreamingProcessor:
 
         return ChunkResult(
             chunk_idx=chunk_idx,
-            frame_indices=list(range(len(frame_paths))),
+            frame_indices=list(range(num_frames)),
             depths=depths,
             confidences=confs,
             intrinsics=intrinsics,
             extrinsics=extrinsics,
             timestamps_ms=timestamps_ms,
         )
+
+    # Backward compatibility alias
+    process_chunk = process_chunk_from_paths
 
 
 @jit(nopython=True)
@@ -377,7 +433,7 @@ class OfflinePreprocessor:
         output_dir: Path,
         temp_dir: Optional[Path] = None,
     ) -> None:
-        """Process entire video with chunk-based alignment."""
+        """Process entire video with chunk-based alignment (original PNG extraction method)."""
         from .formats import (
             VdzFrame,
             write_vdz_frame,
@@ -400,14 +456,90 @@ class OfflinePreprocessor:
         # Get timestamps
         timestamps = [i * 1000.0 / extractor.fps for i in range(len(frame_paths))]
 
-        # Calculate chunks
+        # Process chunks
+        chunk_results, transforms = self._process_chunks_from_paths(
+            frame_paths, timestamps, extractor.fps
+        )
+
+        # Write output
+        logger.info("Writing output files")
+        self._write_output(
+            output_dir,
+            extractor,
+            chunk_results,
+            transforms,
+        )
+
+        extractor.close()
+        logger.info(f"Preprocessing complete: {output_dir}")
+
+    def process_video_torchcodec(
+        self,
+        video_path: Path,
+        output_dir: Path,
+        temp_dir: Optional[Path] = None,
+    ) -> None:
+        """Process entire video with torchcodec (direct video decoding, no PNG intermediate).
+
+        This method is more efficient than process_video() because it:
+        - Avoids PNG encoding/decoding overhead
+        - Uses direct memory-to-memory video decoding
+        - Eliminates disk I/O for intermediate files
+
+        Requires torchcodec to be installed: pip install torchcodec
+        """
+        from common.datasets import VideoDataset
+
+        from .formats import (
+            VdzFrame,
+            write_vdz_frame,
+            write_camera_poses,
+            CameraPose,
+        )
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+        temp_dir = temp_dir or output_dir / "temp"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create VideoDataset for direct video decoding
+        logger.info(f"Opening video with torchcodec: {video_path}")
+        dataset = VideoDataset(video_path)
+
+        # Get video metadata
+        fps = dataset._metadata.average_fps
+        num_frames = len(dataset)
+
+        # Get timestamps from VideoDataset
+        timestamps = dataset._timestamps_ms
+
+        # Process chunks using torch tensors
+        chunk_results, transforms = self._process_chunks_from_tensors(dataset, timestamps, fps)
+
+        # Write output
+        logger.info("Writing output files")
+        self._write_output(
+            output_dir,
+            None,  # No VideoFrameExtractor in torchcodec mode
+            chunk_results,
+            transforms,
+        )
+
+        dataset.close()
+        logger.info(f"Preprocessing complete (torchcodec): {output_dir}")
+
+    def _process_chunks_from_paths(
+        self,
+        frame_paths: list[Path],
+        timestamps: list[float],
+        fps: float,
+    ) -> tuple[list[ChunkResult], list[AlignmentTransform]]:
+        """Process video frames from file paths (original method)."""
         chunk_size = self.config.chunk_size
         overlap = self.config.overlap
         chunks = self._get_chunk_indices(len(frame_paths), chunk_size, overlap)
 
         logger.info(f"Processing {len(frame_paths)} frames in {len(chunks)} chunks")
 
-        # Process chunks
         chunk_results: list[ChunkResult] = []
         transforms: list[AlignmentTransform] = []
 
@@ -415,7 +547,7 @@ class OfflinePreprocessor:
             chunk_frames = frame_paths[start:end]
             chunk_timestamps = timestamps[start:end]
 
-            result = self.processor.process_chunk(chunk_frames, i, chunk_timestamps)
+            result = self.processor.process_chunk_from_paths(chunk_frames, i, chunk_timestamps)
             chunk_results.append(result)
 
             # Align with previous chunk
@@ -433,18 +565,55 @@ class OfflinePreprocessor:
         # Accumulate transforms
         cumulative_transforms = self._accumulate_transforms(transforms)
 
-        # Write output
-        logger.info("Writing output files")
-        self._write_output(
-            output_dir,
-            extractor,
-            chunk_results,
-            chunks,
-            cumulative_transforms,
-        )
+        return chunk_results, cumulative_transforms
 
-        extractor.close()
-        logger.info(f"Preprocessing complete: {output_dir}")
+    def _process_chunks_from_tensors(
+        self,
+        dataset: VideoDataset,
+        timestamps: list[float],
+        fps: float,
+    ) -> tuple[list[ChunkResult], list[AlignmentTransform]]:
+        """Process video frames using torchcodec tensors (optimized method)."""
+        chunk_size = self.config.chunk_size
+        overlap = self.config.overlap
+        num_frames = len(dataset)
+        chunks = self._get_chunk_indices(num_frames, chunk_size, overlap)
+
+        logger.info(f"Processing {num_frames} frames in {len(chunks)} chunks (torchcodec)")
+
+        chunk_results: list[ChunkResult] = []
+        transforms: list[AlignmentTransform] = []
+
+        for i, (start, end) in enumerate(chunks):
+            # Get frame indices for this chunk
+            chunk_indices = list(range(start, end))
+            chunk_timestamps = timestamps[start:end]
+
+            # Decode batch of frames using torchcodec
+            frame_batch = dataset._decoder.get_frames_at(chunk_indices)
+            frame_tensors = frame_batch.data  # (B, C, H, W) uint8
+
+            result = self.processor.process_chunk_from_tensors(frame_tensors, i, chunk_timestamps)
+            chunk_results.append(result)
+
+            # Align with previous chunk
+            if i > 0:
+                conf_threshold = (
+                    float(np.mean(result.confidences)) * self.config.conf_threshold_coef
+                )
+                transform = align_chunks(
+                    chunk_results[i - 1],
+                    result,
+                    overlap,
+                    conf_threshold,
+                )
+                transforms.append(transform)
+                logger.info(f"Chunk {i} aligned: scale={transform.scale:.4f}")
+
+        # Accumulate transforms
+        cumulative_transforms = self._accumulate_transforms(transforms)
+
+        return chunk_results, cumulative_transforms
 
     def _get_chunk_indices(
         self,
@@ -499,9 +668,8 @@ class OfflinePreprocessor:
     def _write_output(
         self,
         output_dir: Path,
-        extractor: VideoFrameExtractor,
+        extractor: Optional[VideoFrameExtractor],
         chunk_results: list[ChunkResult],
-        chunks: list[tuple[int, int]],
         transforms: list[AlignmentTransform],
     ) -> None:
         """Write VDZ sequence and camera poses."""
@@ -509,6 +677,13 @@ class OfflinePreprocessor:
 
         overlap = self.config.overlap
         all_poses: list[CameraPose] = []
+
+        # Get video metadata from extractor if available
+        video_path = str(extractor.video_path) if extractor else "torchcodec"
+        fps = extractor.fps if extractor else 0.0
+        duration_s = extractor.duration_s if extractor else 0.0
+        width = extractor.width if extractor else 0
+        height = extractor.height if extractor else 0
 
         # Write VDZ sequence
         vdz_path = output_dir / "depth_sequence.vdz"
@@ -521,10 +696,10 @@ class OfflinePreprocessor:
                     start_local = 0
                     end_local = (
                         len(result.depths) - (overlap // 2)
-                        if chunk_idx < len(chunks) - 1
+                        if chunk_idx < len(chunk_results) - 1
                         else len(result.depths)
                     )
-                elif chunk_idx == len(chunks) - 1:
+                elif chunk_idx == len(chunk_results) - 1:
                     start_local = overlap // 2
                     end_local = len(result.depths)
                 else:
@@ -590,21 +765,24 @@ class OfflinePreprocessor:
 
         # Write metadata
         meta = {
-            "video_path": str(extractor.video_path),
+            "video_path": video_path,
             "frame_count": frame_idx,
-            "fps": extractor.fps,
-            "duration_s": extractor.duration_s,
-            "width": extractor.width,
-            "height": extractor.height,
+            "fps": fps,
+            "duration_s": duration_s,
+            "width": width,
+            "height": height,
             "config": {
                 "chunk_size": self.config.chunk_size,
                 "overlap": self.config.overlap,
                 "model_id": self.config.model_id,
                 "process_res": self.config.process_res,
+                "decoder": "torchcodec" if not extractor else "cv2",
             },
         }
         meta_path = output_dir / "metadata.json"
         with open(meta_path, "w") as f:
+            import json
+
             json.dump(meta, f, indent=2)
 
 
