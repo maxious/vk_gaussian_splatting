@@ -654,6 +654,159 @@ def benchmark_multi_device(
     return result
 
 
+def benchmark_multi_device_torchcodec(
+    video_path: Path,
+    model_id: str,
+    process_res: int,
+    device_spec: str,
+    batch_size: int = 4,
+    warmup: int = 2,
+    iterations: int = 3,
+) -> BenchmarkResult | None:
+    """Benchmark multi-device with torchcodec decoding (accurate timestamps).
+
+    Uses torchcodec to decode frames with accurate PTS timestamps,
+    then feeds frames to DeviceWorkerPool for parallel multi-XPU inference.
+
+    Args:
+        video_path: Path to video file
+        model_id: DA3 model identifier
+        process_res: Processing resolution
+        device_spec: Device specification
+        batch_size: Batch size for per-worker inference
+        warmup: Number of warmup iterations
+        iterations: Number of timed iterations
+
+    Returns:
+        BenchmarkResult with timing statistics, or None if torchcodec unavailable
+    """
+    from pathlib import Path
+
+    logger.info("=" * 60)
+    logger.info(f"TORCHCODEC MULTI-DEVICE: {video_path.name}")
+    logger.info("=" * 60)
+
+    try:
+        from torchcodec.decoders import VideoDecoder
+    except ImportError as e:
+        logger.warning(f"torchcodec not available: {e}")
+        return None
+
+    # Open decoder once and decode all frames efficiently
+    decoder = VideoDecoder(str(video_path))
+    total_frames = decoder.metadata.num_frames
+    if total_frames is None:
+        raise ValueError(f"Cannot determine frame count for video: {video_path}")
+    average_fps = decoder.metadata.average_fps
+    if average_fps is None:
+        raise ValueError(f"Cannot determine FPS for video: {video_path}")
+
+    num_frames = total_frames
+    logger.info(f"  Frames: {num_frames}")
+    logger.info(f"  Batch size: {batch_size}")
+
+    # Decode ALL frames in chunks (torchcodec has limits on get_frames_in_range)
+    # Must re-create decoder for each chunk due to torchcodec state issues
+    logger.info("Decoding all frames with torchcodec...")
+    frames: list[np.ndarray] = []
+    target_sizes: list[tuple[int, int]] = []
+    all_pts: list[float] = []
+
+    chunk_size = 200  # torchcodec can handle ~350 frames in one call safely
+    for start in range(0, num_frames, chunk_size):
+        end = min(start + chunk_size, num_frames)
+        # Re-create decoder for each chunk (torchcodec has state issues with reuse)
+        # Use num_ffmpeg_threads=0 to let FFmpeg decide optimal thread count
+        chunk_decoder = VideoDecoder(str(video_path), num_ffmpeg_threads=0)
+        frame_batch = chunk_decoder.get_frames_in_range(start, end)
+        frames_tensor = frame_batch.data  # (B, C, H, W) uint8
+        pts_batch = [ts * 1000.0 for ts in frame_batch.pts_seconds.tolist()]
+        del chunk_decoder
+
+        for i in range(len(frames_tensor)):
+            frame_tensor = frames_tensor[i]
+            frame_np = frame_tensor.permute(1, 2, 0).cpu().numpy()
+            frames.append(frame_np)
+            target_sizes.append((frame_tensor.shape[2], frame_tensor.shape[1]))  # (W, H)
+            all_pts.append(pts_batch[i])
+
+    del decoder
+    logger.info(f"  Decoded {len(frames)} frames with timestamps")
+
+    # Create multi-device model
+    cache_dir = Path("checkpoints")
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    multi_model = MultiDeviceDepthModel(
+        model_id=model_id,
+        device_spec=device_spec,
+    )
+    multi_model.process_res = process_res
+    multi_model.cache_dir = cache_dir
+
+    # Warmup (using cached frames)
+    logger.info(f"Warming up ({warmup} iterations)...")
+    for _ in range(warmup):
+        warmup_frames = frames[: min(batch_size, len(frames))]
+        warmup_sizes = target_sizes[: min(batch_size, len(target_sizes))]
+        _ = multi_model.infer_depth_batch(
+            warmup_frames, target_sizes=warmup_sizes, batch_size=len(warmup_frames)
+        )
+        if hasattr(torch, "xpu") and torch.xpu.is_available():
+            torch.xpu.synchronize()
+        elif torch.cuda.is_available():
+            torch.cuda.synchronize()
+
+    # Benchmark iterations (using cached frames)
+    logger.info(f"Running benchmark ({iterations} iterations)...")
+    times: list[float] = []
+
+    for iteration in range(iterations):
+        start = time.perf_counter()
+
+        # Multi-device inference with cached frames
+        _ = multi_model.infer_depth_batch(frames, target_sizes=target_sizes, batch_size=batch_size)
+
+        if hasattr(torch, "xpu") and torch.xpu.is_available():
+            torch.xpu.synchronize()
+        elif torch.cuda.is_available():
+            torch.cuda.synchronize()
+
+        elapsed = time.perf_counter() - start
+        times.append(elapsed)
+        logger.info(f"  Iteration {iteration + 1}: {elapsed * 1000:.1f} ms ({len(frames)} frames)")
+
+    multi_model.shutdown()
+
+    # Calculate statistics
+    avg_time = sum(times) / len(times)
+    total_time_ms = avg_time * 1000
+    per_frame_ms = total_time_ms / len(frames)
+    fps = 1000 / per_frame_ms
+
+    # Verify timestamp precision
+    if all_pts:
+        sorted_pts = sorted(all_pts)
+        max_deviation = max(float(abs(ts - sorted_pts[i])) for i, ts in enumerate(all_pts))
+        logger.info(f"  Timestamp precision: max deviation {max_deviation:.3f} ms")
+
+    num_devices = len([d for d in device_spec.split(",") if d]) if "," in device_spec else 1
+
+    result = BenchmarkResult(
+        device_spec=f"torchcodec+{device_spec}",
+        num_frames=len(frames),
+        total_time_ms=total_time_ms,
+        per_frame_time_ms=per_frame_ms,
+        fps=fps,
+        num_devices=num_devices,
+        iterations=iterations,
+    )
+
+    logger.info(f"Torchcodec Multi-Device Result: {per_frame_ms:.1f} ms/frame ({fps:.2f} fps)")
+
+    return result
+
+
 def benchmark_dataloader_true_batch(
     frames: list[np.ndarray],
     model_id: str,
@@ -1519,6 +1672,16 @@ Examples:
         help="Skip torchcodec streaming benchmark (forward-only, optimal for real backend)",
     )
     parser.add_argument(
+        "--skip-streaming-multi",
+        action="store_true",
+        help="Skip multi-device streaming benchmark (interleaved decoders)",
+    )
+    parser.add_argument(
+        "--skip-torchcodec-multi",
+        action="store_true",
+        help="Skip torchcodec multi-device benchmark (accurate timestamps + multi-XPU)",
+    )
+    parser.add_argument(
         "--input-dir",
         type=Path,
         help="Directory containing input frames (frame_0000.png, etc.)",
@@ -1715,6 +1878,23 @@ Examples:
                     results.add_result(result)
             except Exception as e:
                 logger.error(f"Torchcodec streaming benchmark failed: {e}")
+
+        # Torchcodec multi-device benchmark (accurate timestamps + multi-XPU)
+        if not args.skip_torchcodec_multi:
+            try:
+                result = benchmark_multi_device_torchcodec(
+                    video_path=args.video,
+                    model_id=args.model_id,
+                    process_res=args.process_res,
+                    device_spec=device_spec,
+                    batch_size=args.batch_size,
+                    warmup=args.warmup,
+                    iterations=args.iterations,
+                )
+                if result:
+                    results.add_result(result)
+            except Exception as e:
+                logger.error(f"Torchcodec multi-device benchmark failed: {e}")
 
     # Print summary
     results.print_summary()
