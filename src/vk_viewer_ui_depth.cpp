@@ -797,16 +797,16 @@ void VkViewerUI::guiDrawDepthStreamProperties()
         // Reinitialize mesh based on mode
         if(currentMode == 1)  // POM Only - use simple quad
         {
-          m_app->getVdzMesh().generateQuad();
+          getVdzMesh().generateQuad();
         }
         else if(currentMode == 2)  // Hybrid - use lower resolution grid
         {
           // Hybrid mode uses lower resolution grid (32x18) for better performance
-          m_app->getVdzMesh().generateHybridGrid(32, 18);
+          getVdzMesh().generateHybridGrid(32, 18);
         }
         else  // Divided Mesh - use standard resolution
         {
-          m_app->getVdzMesh().reinitialize(128, 72);
+          getVdzMesh().reinitialize(128, 72);
         }
       }
       
