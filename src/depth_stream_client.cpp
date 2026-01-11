@@ -438,4 +438,96 @@ DepthStreamClient::ClientStats DepthStreamClient::getStats() const {
     return stats;
 }
 
+bool DepthStreamClient::createHlsSession(const std::filesystem::path& videoPath, SessionInfo& outSession) {
+    std::string response;
+    if (!sendHttpPostMultipart("/api/sessions", videoPath, response)) {
+        return false;
+    }
+
+    try {
+        auto json = nlohmann::json::parse(response);
+        outSession.sessionId = json["session_id"].get<std::string>();
+        outSession.width = json["width"].get<uint32_t>();
+        outSession.height = json["height"].get<uint32_t>();
+        outSession.fps = json["fps"].get<float>();
+        outSession.durationMs = json.value("duration_ms", static_cast<uint64_t>(0));
+
+        m_currentSession = outSession;
+
+        LOGI("HLS session created: %s (%dx%d @ %.1f FPS)\n",
+             outSession.sessionId.c_str(), outSession.width, outSession.height, outSession.fps);
+        return true;
+    } catch (const std::exception& e) {
+        LOGE("Failed to parse session response: %s\n", e.what());
+        return false;
+    }
+}
+
+bool DepthStreamClient::startHlsGeneration(const std::string& sessionId, float fps, int processRes) {
+    ix::HttpClient httpClient;
+    auto args = std::make_shared<ix::HttpRequestArgs>();
+
+    nlohmann::json jsonBody;
+    jsonBody["fps"] = fps;
+    jsonBody["segment_duration"] = 2.0;
+    jsonBody["process_res"] = processRes;
+    std::string body = jsonBody.dump();
+
+    args->extraHeaders["Content-Type"] = "application/json";
+
+    std::string url = "http://" + m_backendHost + ":" + std::to_string(m_backendPort)
+                      + "/api/sessions/" + sessionId + "/hls";
+    auto res = httpClient.post(url, body, args);
+
+    if (res->errorCode != ix::HttpErrorCode::Ok) {
+        LOGE("HTTP error starting HLS: %s\n", res->errorMsg.c_str());
+        return false;
+    }
+
+    if (res->statusCode != 200) {
+        LOGE("HTTP error %d starting HLS generation\n", res->statusCode);
+        return false;
+    }
+
+    LOGI("HLS generation started for session: %s\n", sessionId.c_str());
+    return true;
+}
+
+bool DepthStreamClient::getHlsStatus(const std::string& sessionId, HlsGenerationStatus& outStatus) {
+    std::string response;
+    std::string endpoint = "/api/sessions/" + sessionId + "/hls/status";
+
+    if (!sendHttpGet(endpoint, response)) {
+        return false;
+    }
+
+    try {
+        auto json = nlohmann::json::parse(response);
+
+        outStatus.status = json.value("status", "unknown");
+        outStatus.progress = json.value("progress", 0.0f);
+        outStatus.frameCount = json.value("frame_count", 0);
+        outStatus.totalFrames = json.value("total_frames", 0);
+        outStatus.etaSeconds = json.value("eta_seconds", 0.0f);
+        outStatus.framesPerSecond = json.value("frames_per_second", 0.0f);
+        outStatus.errorMessage = json.value("error", "");
+
+        if (outStatus.status == "ready") {
+            outStatus.streamUrl = json.value("stream_url", "");
+        }
+
+        return true;
+    } catch (const std::exception& e) {
+        LOGE("Failed to parse HLS status: %s\n", e.what());
+        return false;
+    }
+}
+
+std::string DepthStreamClient::getHlsMetadataPath(const std::string& sessionId) {
+    // Returns the local path to metadata.json based on data root
+    // The backend stores HLS at {data_root}/{session_id}/hls/metadata.json
+    std::filesystem::path dataRoot = std::filesystem::path("/home/maxious/vk_gaussian_splatting/python/tmp/sessions");
+    return (dataRoot / sessionId / "hls" / "metadata.json").string();
+}
+
 } // namespace vk_viewer

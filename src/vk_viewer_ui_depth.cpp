@@ -378,6 +378,137 @@ void VkViewerUI::guiDrawDepthStreamProperties()
 
         return false;
       });
+
+      PE::entry("Generate HLS from Video", [this]() {
+        static std::filesystem::path videoPath;
+        static bool uploading = false;
+        static bool generating = false;
+        static DepthStreamClient::HlsGenerationStatus hlsStatus;
+        static DepthStreamClient::SessionInfo hlsSession;
+        static double lastStatusPoll = 0.0;
+        static bool hlsReady = false;
+
+        if(ImGui::Button("Select Video..."))
+        {
+          videoPath = nvgui::windowOpenFileDialog(m_app->getWindowHandle(), "Select Video File", "Video Files|*.mp4;*.avi;*.mov;*.mkv");
+          uploading = false;
+          generating = false;
+          hlsReady = false;
+        }
+        ImGui::SameLine();
+        ImGui::Text("%s", videoPath.empty() ? "(none)" : videoPath.filename().string().c_str());
+
+        if(!videoPath.empty() && !hlsReady)
+        {
+          if(!uploading && !generating)
+          {
+            if(ImGui::Button("Upload & Generate HLS"))
+            {
+              uploading = true;
+              generating = false;
+              hlsReady = false;
+
+              if(m_depthClient->createHlsSession(videoPath, hlsSession))
+              {
+                if(m_depthClient->startHlsGeneration(hlsSession.sessionId, hlsSession.fps, 640))
+                {
+                  generating = true;
+                  uploading = false;
+                  lastStatusPoll = 0.0;
+                }
+                else
+                {
+                  LOGE("Failed to start HLS generation\n");
+                  uploading = false;
+                  generating = false;
+                }
+              }
+              else
+              {
+                LOGE("Failed to create HLS session\n");
+                uploading = false;
+              }
+            }
+          }
+        }
+
+        // Display upload/generation status with ETA
+        if(uploading)
+        {
+          ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Uploading video...");
+        }
+
+        if(generating)
+        {
+          auto now = ImGui::GetTime();
+          if(now - lastStatusPoll > 0.5)
+          {
+            m_depthClient->getHlsStatus(hlsSession.sessionId, hlsStatus);
+            lastStatusPoll = now;
+
+            if(hlsStatus.isReady())
+            {
+              generating = false;
+              hlsReady = true;
+            }
+            else if(hlsStatus.hasError())
+            {
+              generating = false;
+              ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Error: %s", hlsStatus.errorMessage.c_str());
+            }
+          }
+
+          if(generating)
+          {
+            ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Generating HLS stream...");
+
+            // Progress bar
+            ImGui::ProgressBar(hlsStatus.progress, ImVec2(-FLT_MIN, 0.0f));
+
+            // Progress details
+            ImGui::Text("Frames: %d / %d", hlsStatus.frameCount, hlsStatus.totalFrames);
+            ImGui::SameLine();
+
+            // ETA display
+            if(hlsStatus.etaSeconds > 0 && hlsStatus.etaSeconds < 3600)
+            {
+              int etaMinutes = static_cast<int>(hlsStatus.etaSeconds / 60);
+              int etaSeconds = static_cast<int>(hlsStatus.etaSeconds) % 60;
+              ImGui::Text("ETA: %d:%02d", etaMinutes, etaSeconds);
+            }
+            else if(hlsStatus.etaSeconds >= 3600)
+            {
+              int etaHours = static_cast<int>(hlsStatus.etaSeconds / 3600);
+              int etaMinutes = static_cast<int>(hlsStatus.etaSeconds) % 3600 / 60;
+              ImGui::Text("ETA: %d:%02d", etaHours, etaMinutes);
+            }
+            else
+            {
+              ImGui::Text("ETA: calculating...");
+            }
+
+            ImGui::SameLine();
+            ImGui::Text("(%.1f FPS)", hlsStatus.framesPerSecond);
+          }
+        }
+
+        // Show load button when HLS is ready
+        if(hlsReady)
+        {
+          ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "HLS stream ready!");
+
+          std::string metadataPath = m_depthClient->getHlsMetadataPath(hlsSession.sessionId);
+          ImGui::SameLine();
+          if(ImGui::Button("Load"))
+          {
+            enableHlsPlayback(metadataPath);
+            hlsReady = false;
+            generating = false;
+          }
+        }
+
+        return false;
+      });
     }
     else
     {

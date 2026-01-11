@@ -98,6 +98,25 @@ public:
     
     float getFps() const { return m_currentSession.fps; }
 
+    // HLS generation methods
+    struct HlsGenerationStatus {
+        std::string status;  // "pending", "processing", "ready", "error"
+        float progress;      // 0.0 to 1.0
+        int frameCount;
+        int totalFrames;
+        float etaSeconds;    // Estimated time remaining in seconds
+        float framesPerSecond;
+        std::string streamUrl;
+        std::string errorMessage;
+        bool isReady() const { return status == "ready"; }
+        bool hasError() const { return status == "error"; }
+    };
+
+    bool createHlsSession(const std::filesystem::path& videoPath, SessionInfo& outSession);
+    bool startHlsGeneration(const std::string& sessionId, float fps = 30.0f, int processRes = 640);
+    bool getHlsStatus(const std::string& sessionId, HlsGenerationStatus& outStatus);
+    std::string getHlsMetadataPath(const std::string& sessionId);
+
 private:
     void onDepthFrame(const ix::WebSocketMessagePtr& msg);
 
