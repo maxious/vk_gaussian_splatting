@@ -19,12 +19,12 @@
 
 // This file is included from gaussian_splatting.cpp - do not compile separately
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 //--------------------------------------------------------------------------------------------------
 // This descriptor set holds the Acceleration structure and the output image
 //
-void GaussianSplatting::initRtDescriptorSet()
+void VkViewer::initRtDescriptorSet()
 {
   //SCOPED_TIMER(__FUNCTION__"\n");
 
@@ -139,7 +139,7 @@ void GaussianSplatting::initRtDescriptorSet()
 // Writes the output image to the descriptor set
 // - Required when changing resolution
 //
-void GaussianSplatting::updateRtDescriptorSet()
+void VkViewer::updateRtDescriptorSet()
 {
   //SCOPED_TIMER(__FUNCTION__"\n");
 
@@ -188,7 +188,7 @@ void GaussianSplatting::updateRtDescriptorSet()
 //--------------------------------------------------------------------------------------------------
 // Pipeline for the ray tracer: all shaders, raygen, chit, miss
 //
-void GaussianSplatting::initRtPipeline()
+void VkViewer::initRtPipeline()
 {
   //SCOPED_TIMER(__FUNCTION__"\n");
 
@@ -357,7 +357,7 @@ void GaussianSplatting::initRtPipeline()
 //--------------------------------------------------------------------------------------------------
 // Ray Tracing the scene
 //
-void GaussianSplatting::raytrace(const VkCommandBuffer& cmdBuf, bool meshDepthOnly, glm::ivec2 viewportOffset, glm::ivec2 viewportSize)
+void VkViewer::raytrace(const VkCommandBuffer& cmdBuf, bool meshDepthOnly, glm::ivec2 viewportOffset, glm::ivec2 viewportSize)
 {
   NVVK_DBG_SCOPE(cmdBuf);
 
@@ -438,7 +438,7 @@ void GaussianSplatting::raytrace(const VkCommandBuffer& cmdBuf, bool meshDepthOn
 // Ray Tracing with VK_KHR_multiview support (mobile VR optimization)
 // Single raytrace call renders both eyes efficiently for side-by-side stereo
 //
-void GaussianSplatting::raytraceMultiview(const VkCommandBuffer& cmdBuf, bool meshDepthOnly,
+void VkViewer::raytraceMultiview(const VkCommandBuffer& cmdBuf, bool meshDepthOnly,
                                           const glm::mat4& leftViewMat, const glm::mat4& leftProjMat,
                                           const glm::mat4& rightViewMat, const glm::mat4& rightProjMat,
                                           const glm::vec3& leftEyePos, const glm::vec3& rightEyePos,
@@ -531,7 +531,7 @@ void GaussianSplatting::raytraceMultiview(const VkCommandBuffer& cmdBuf, bool me
 }
 
 
-bool GaussianSplatting::updateFrameCounter()
+bool VkViewer::updateFrameCounter()
 {
   static float     ref_fov{0};
   static glm::mat4 ref_cam_matrix;
@@ -554,4 +554,4 @@ bool GaussianSplatting::updateFrameCounter()
   return true;
 }
 
-}  // namespace vk_gaussian_splatting
+}  // namespace vk_viewer

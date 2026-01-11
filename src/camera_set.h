@@ -37,7 +37,7 @@
 
 #include "shaderio.h"
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 typedef nvutils::CameraManipulator::Camera NvutilCamera;
 
@@ -256,6 +256,6 @@ static bool importCamerasINRIA(std::string filename, CameraSet& cameraSet)
   }
 }
 
-}  // namespace vk_gaussian_splatting
+}  // namespace vk_viewer
 
 #endif

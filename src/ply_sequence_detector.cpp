@@ -23,7 +23,7 @@
 
 #include <nvutils/logger.hpp>
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 PlySequenceDetector::DetectionResult PlySequenceDetector::detect(const std::filesystem::path& path) {
     DetectionResult result;
@@ -162,4 +162,4 @@ std::filesystem::path PlySequenceDetector::findAudioInDirectory(const std::files
     return std::filesystem::path();
 }
 
-} // namespace vk_gaussian_splatting
+} // namespace vk_viewer

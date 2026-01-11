@@ -24,7 +24,7 @@
 #include <functional>
 #include "splat_set.h"
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 // Fast PLY loader for Gaussian Splatting models.
 // Uses memory mapping, parallel parsing, and SIMD acceleration.
@@ -41,6 +41,6 @@ public:
   static bool load(const std::filesystem::path& filename, SplatSet& output, std::function<void(float)> progressCallback = nullptr);
 };
 
-}  // namespace vk_gaussian_splatting
+}  // namespace vk_viewer
 
 #endif

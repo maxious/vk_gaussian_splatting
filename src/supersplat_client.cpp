@@ -13,7 +13,7 @@
 #pragma comment(lib, "winhttp.lib")
 #endif
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 SupersplatClient::SupersplatClient()
 {
@@ -282,4 +282,4 @@ bool SupersplatClient::httpGet(const std::string& url, std::vector<uint8_t>& res
 #endif
 }
 
-} // namespace vk_gaussian_splatting
+} // namespace vk_viewer

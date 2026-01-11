@@ -7,7 +7,7 @@
 #include <numeric>
 #include <algorithm>
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 class PerfStats {
 public:

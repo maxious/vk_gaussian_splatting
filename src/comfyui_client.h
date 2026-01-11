@@ -34,7 +34,7 @@
 #include <ixwebsocket/IXHttpClient.h>
 #include <tinygltf/json.hpp>
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 class ComfyUIClient
 {
@@ -117,7 +117,7 @@ private:
     std::queue<WorkflowResult>      m_pendingResults;
 };
 
-}  // namespace vk_gaussian_splatting
+}  // namespace vk_viewer
 
 #endif  // WITH_COMFYUI
 

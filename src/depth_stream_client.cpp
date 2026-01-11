@@ -11,7 +11,7 @@
 #define _HAS_EXCEPTIONS 0
 #include <mutex>
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 
 
@@ -438,4 +438,4 @@ DepthStreamClient::ClientStats DepthStreamClient::getStats() const {
     return stats;
 }
 
-} // namespace vk_gaussian_splatting
+} // namespace vk_viewer

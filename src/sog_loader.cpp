@@ -37,7 +37,7 @@
 #include <cstring>
 
 using nlohmann::json;
-using namespace vk_gaussian_splatting;
+using namespace vk_viewer;
 
 namespace {
 

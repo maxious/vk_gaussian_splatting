@@ -28,7 +28,7 @@ extern "C" {
 #include <libswscale/swscale.h>
 }
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 VideoDecoder::VideoDecoder()
     : m_formatContext(nullptr)
@@ -500,4 +500,4 @@ void VideoDecoder::cleanupFFmpeg()
     m_duration = 0.0;
 }
 
-} // namespace vk_gaussian_splatting
+} // namespace vk_viewer

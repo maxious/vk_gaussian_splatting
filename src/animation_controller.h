@@ -26,7 +26,7 @@
 #include "ply_sequence_loader.h"
 #include "audio_player.h"
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 /**
  * @brief Playback state for animation
@@ -193,4 +193,4 @@ private:
     float                                   m_frameTimeAccumulator = 0.0f;
 };
 
-} // namespace vk_gaussian_splatting
+} // namespace vk_viewer

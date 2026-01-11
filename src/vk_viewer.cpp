@@ -25,7 +25,7 @@
     printf("\n");                                                                                                      \
   }
 
-#include "gaussian_splatting.h"
+#include "vk_viewer.h"
 #include "hdr_support.h"
 #include "utilities.h"
 #include "animation_controller.h"
@@ -44,22 +44,22 @@
 #include <nvvk/sbt_generator.hpp>
 #include <nvvk/formats.hpp>
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
-GaussianSplatting::GaussianSplatting(nvutils::ProfilerManager* profilerManager, nvutils::ParameterRegistry* parameterRegistry)
+VkViewer::VkViewer(nvutils::ProfilerManager* profilerManager, nvutils::ParameterRegistry* parameterRegistry)
     : m_profilerManager(profilerManager)
     , m_parameterRegistry(parameterRegistry)
     , cameraManip(std::make_shared<nvutils::CameraManipulator>()) {
 
     };
 
-GaussianSplatting::~GaussianSplatting(){
+VkViewer::~VkViewer(){
     // all threads must be stopped,
     // work done in onDetach(),
     // could be done here, same result
 };
 
-void GaussianSplatting::onAttach(nvapp::Application* app)
+void VkViewer::onAttach(nvapp::Application* app)
 {
   if (m_attached)
     return;
@@ -221,7 +221,7 @@ void GaussianSplatting::onAttach(nvapp::Application* app)
 #endif
 };
 
-void GaussianSplatting::onDetach()
+void VkViewer::onDetach()
 {
 #ifdef WITH_OPENXR
   shutdownOpenXR();
@@ -279,7 +279,7 @@ void GaussianSplatting::onDetach()
   m_alloc.deinit();
 }
 
-void GaussianSplatting::onResize(VkCommandBuffer cmd, const VkExtent2D& viewportSize)
+void VkViewer::onResize(VkCommandBuffer cmd, const VkExtent2D& viewportSize)
 {
   m_viewSize = {viewportSize.width, viewportSize.height};
   NVVK_CHECK(m_gBuffers.update(cmd, viewportSize));
@@ -288,7 +288,7 @@ void GaussianSplatting::onResize(VkCommandBuffer cmd, const VkExtent2D& viewport
   resetFrameCounter();
 }
 
-void GaussianSplatting::onPreRender()
+void VkViewer::onPreRender()
 {
   m_profilerTimeline->frameAdvance();
 
@@ -323,7 +323,7 @@ void GaussianSplatting::onPreRender()
 #endif
 }
 
-void GaussianSplatting::deinitAll()
+void VkViewer::deinitAll()
 {
   vkDeviceWaitIdle(m_device);
 
@@ -351,7 +351,7 @@ void GaussianSplatting::deinitAll()
   m_cameraSet.setHomePreset(m_cameraSet.getCamera());
 }
 
-bool GaussianSplatting::initAll()
+bool VkViewer::initAll()
 {
   vkDeviceWaitIdle(m_device);
 
@@ -392,7 +392,7 @@ bool GaussianSplatting::initAll()
   return true;
 }
 
-void GaussianSplatting::enableDepthRendering(const std::string& host, int port, const std::string& videoPath)
+void VkViewer::enableDepthRendering(const std::string& host, int port, const std::string& videoPath)
 {
   if(!m_depthClient)
   {
@@ -441,7 +441,7 @@ void GaussianSplatting::enableDepthRendering(const std::string& host, int port, 
   LOGI("Depth rendering enabled for session: %s\n", videoPath.c_str());
 }
 
-void GaussianSplatting::enableDepthVideoPlayback(const std::string& metadataPath)
+void VkViewer::enableDepthVideoPlayback(const std::string& metadataPath)
 {
   LOGI("enableDepthVideoPlayback called with: %s\n", metadataPath.c_str());
 #ifdef WITH_VIDEO_DECODER
@@ -538,7 +538,7 @@ void GaussianSplatting::enableDepthVideoPlayback(const std::string& metadataPath
 #endif
 }
 
-bool GaussianSplatting::isDepthVideoPlaying() const
+bool VkViewer::isDepthVideoPlaying() const
 {
 #ifdef WITH_VIDEO_DECODER
     return m_videoDepthManager && m_videoDepthManager->isPlaying();
@@ -547,7 +547,7 @@ bool GaussianSplatting::isDepthVideoPlaying() const
 #endif
 }
 
-void GaussianSplatting::deinitScene()
+void VkViewer::deinitScene()
 
 {
   m_splatSet.clear();
@@ -556,7 +556,7 @@ void GaussianSplatting::deinitScene()
   m_pendingLoadFilename = "";
 }
 
-void GaussianSplatting::benchmarkAdvance()
+void VkViewer::benchmarkAdvance()
 {
   LOGI("BENCHMARK_ADV %d {\n", m_benchmarkId);
   LOGI(" Memory Scene; Host used \t%zu; Device Used \t%zu; Device Allocated \t%zu; (bytes)\n",
@@ -573,7 +573,7 @@ void GaussianSplatting::benchmarkAdvance()
 }
 
 #ifdef WITH_OPENXR
-bool GaussianSplatting::queryOpenXrVulkanExtensions(std::vector<std::string>& outInstanceExtensions,
+bool VkViewer::queryOpenXrVulkanExtensions(std::vector<std::string>& outInstanceExtensions,
                                                      std::vector<std::string>& outDeviceExtensions)
 {
   if(!m_xr)
@@ -583,7 +583,7 @@ bool GaussianSplatting::queryOpenXrVulkanExtensions(std::vector<std::string>& ou
   return m_xr->queryRequiredVulkanExtensions(outInstanceExtensions, outDeviceExtensions);
 }
 
-void GaussianSplatting::initializeOpenXR()
+void VkViewer::initializeOpenXR()
 {
   if(!m_xr)
   {
@@ -630,7 +630,7 @@ void GaussianSplatting::initializeOpenXR()
   onXrInitialized();
 }
 
-void GaussianSplatting::shutdownOpenXR()
+void VkViewer::shutdownOpenXR()
 {
   deinitXrMultiviewResources();
   
@@ -650,7 +650,7 @@ void GaussianSplatting::shutdownOpenXR()
   m_xrFirstFrame = true;
 }
 
-void GaussianSplatting::updateXrLocomotion(float deltaTime)
+void VkViewer::updateXrLocomotion(float deltaTime)
 {
   if(!m_xrInitialized || !m_xr)
     return;
@@ -788,7 +788,7 @@ void GaussianSplatting::updateXrLocomotion(float deltaTime)
   }
 }
 
-void GaussianSplatting::copyToXrSwapchain(VkCommandBuffer cmd)
+void VkViewer::copyToXrSwapchain(VkCommandBuffer cmd)
 {
   if(!m_xrInitialized || !m_xr || m_xrColorImage == VK_NULL_HANDLE)
     return;
@@ -1038,7 +1038,7 @@ void GaussianSplatting::copyToXrSwapchain(VkCommandBuffer cmd)
 
 #endif  // WITH_OPENXR
 
-void GaussianSplatting::enablePlySequencePlayback(const std::filesystem::path& dirPath)
+void VkViewer::enablePlySequencePlayback(const std::filesystem::path& dirPath)
 {
     // Close any existing animation
     if (m_animationController) {
@@ -1068,7 +1068,7 @@ void GaussianSplatting::enablePlySequencePlayback(const std::filesystem::path& d
          m_animationController->getTotalFrames(), dirPath.string().c_str());
 }
 
-void GaussianSplatting::updateAnimation(float deltaTime)
+void VkViewer::updateAnimation(float deltaTime)
 {
     if (!m_animationController || !m_isAnimationPlaying) {
         return;
@@ -1088,17 +1088,17 @@ void GaussianSplatting::updateAnimation(float deltaTime)
     }
 }
 
-}  // namespace vk_gaussian_splatting
+}  // namespace vk_viewer
 
 // Include the split implementation files
-#include "gaussian_splatting_render.cpp"
-#include "gaussian_splatting_frame_ubo.cpp"
-#include "gaussian_splatting_sorting.cpp"
-#include "gaussian_splatting_shaders.cpp"
-#include "gaussian_splatting_pipelines.cpp"
-#include "gaussian_splatting_rtx.cpp"
-#include "gaussian_splatting_postprocess.cpp"
-#include "gaussian_splatting_multiview.cpp"
+#include "vk_viewer_render.cpp"
+#include "vk_viewer_frame_ubo.cpp"
+#include "vk_viewer_sorting.cpp"
+#include "vk_viewer_shaders.cpp"
+#include "vk_viewer_pipelines.cpp"
+#include "vk_viewer_rtx.cpp"
+#include "vk_viewer_postprocess.cpp"
+#include "vk_viewer_multiview.cpp"
 
-#include "gaussian_splatting_dlss_rr.cpp"
-#include "gaussian_splatting_video.cpp"
+#include "vk_viewer_dlss_rr.cpp"
+#include "vk_viewer_video.cpp"

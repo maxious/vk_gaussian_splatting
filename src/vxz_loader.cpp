@@ -34,7 +34,7 @@
 
 using nlohmann::json;
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 // Helper to decode 3D Morton code (Z-order curve)
 // Decodes a 32-bit morton code into x, y, z coordinates
@@ -304,4 +304,4 @@ bool VxzLoader::decompress(const std::vector<uint8_t>& compressed,
     }
 }
 
-}  // namespace vk_gaussian_splatting
+}  // namespace vk_viewer

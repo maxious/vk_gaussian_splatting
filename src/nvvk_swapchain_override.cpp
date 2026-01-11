@@ -29,7 +29,7 @@
 // Include our local HDR support helper
 #include "hdr_support.h"
 
-using namespace vk_gaussian_splatting;
+using namespace vk_viewer;
 
 VkResult nvvk::Swapchain::init(const InitInfo& info)
 {

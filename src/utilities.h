@@ -57,7 +57,7 @@
   }, (uint32_t)std::thread::hardware_concurrency());                                                                   \
   }
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 // test if file extension converted to lower case matches ext,
 // ext shall be provided as lowerCase and contain '.' : Example: ".txt"
@@ -150,6 +150,6 @@ static void computeTransform(glm::vec3& scale, glm::vec3& rotation, glm::vec3& t
   transformInv = glm::inverse(transform);
 }
 
-}  // namespace vk_gaussian_splatting
+}  // namespace vk_viewer
 
 #endif

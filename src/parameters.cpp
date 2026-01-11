@@ -19,7 +19,7 @@
 
 #include "parameters.h"
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 // no reset function on purpose
 SceneParameters prmScene{};
@@ -111,4 +111,4 @@ void registerCommandLineParameters(nvutils::ParameterRegistry* parameterRegistry
                          &prmRtx.kernelDegree);
 }
 
-}  // namespace vk_gaussian_splatting
+}  // namespace vk_viewer

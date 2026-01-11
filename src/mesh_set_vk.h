@@ -35,7 +35,7 @@
 #include "obj_loader.h"
 #include "gltf_loader.h"
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 // GPU texture storage
 struct MeshTexture
@@ -175,4 +175,4 @@ private:
   nvvk::StagingUploader*   m_uploader{};
 };
 
-}  // namespace vk_gaussian_splatting
+}  // namespace vk_viewer

@@ -20,7 +20,7 @@
 // This file is included from gaussian_splatting.cpp - do not compile separately
 // Contains: Main render loop (onRender) and update request processing
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 // Helper function to create an off-axis (asymmetric) stereo projection matrix
 // This produces proper stereo with zero parallax at the convergence distance
@@ -51,7 +51,7 @@ static glm::mat4 makeOffAxisStereoProjection(float fovYRad, float aspect, float 
   return proj;
 }
 
-void GaussianSplatting::onRender(VkCommandBuffer cmd)
+void VkViewer::onRender(VkCommandBuffer cmd)
 {
   NVVK_DBG_SCOPE(cmd);
 
@@ -901,7 +901,7 @@ void GaussianSplatting::onRender(VkCommandBuffer cmd)
 #endif
 }
 
-void GaussianSplatting::processUpdateRequests(void)
+void VkViewer::processUpdateRequests(void)
 {
 
   // Automatic and Sanity settings depending in pipeline
@@ -1008,4 +1008,4 @@ void GaussianSplatting::processUpdateRequests(void)
       m_requestUpdateLightsBuffer = m_requestDeleteSelectedMesh = false;
 }
 
-}  // namespace vk_gaussian_splatting
+}  // namespace vk_viewer

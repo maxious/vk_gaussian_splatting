@@ -20,7 +20,7 @@
 #include "animation_controller.h"
 #include <nvutils/logger.hpp>
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 AnimationController::~AnimationController() {
     closeSequence();
@@ -216,4 +216,4 @@ void AnimationController::updatePosition() {
     m_currentPositionMs = m_currentFrame * m_plyLoader->getFrameDurationMs();
 }
 
-} // namespace vk_gaussian_splatting
+} // namespace vk_viewer

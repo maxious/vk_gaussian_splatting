@@ -17,7 +17,7 @@
 #include "depth_parser.h"
 #include "depth_buffer.h"
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 class DepthStreamClient {
 public:
@@ -121,6 +121,6 @@ private:
     ClientStats              m_stats{0};
 };
 
-} // namespace vk_gaussian_splatting
+} // namespace vk_viewer
 
 #endif // WITH_DEPTH_STREAMING

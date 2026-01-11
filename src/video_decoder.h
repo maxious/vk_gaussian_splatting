@@ -33,7 +33,7 @@ struct AVFrame;
 struct AVPacket;
 struct SwsContext;
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 /**
  * @brief Decoded video frame data
@@ -196,4 +196,4 @@ private:
     std::string m_errorMessage;
 };
 
-} // namespace vk_gaussian_splatting
+} // namespace vk_viewer

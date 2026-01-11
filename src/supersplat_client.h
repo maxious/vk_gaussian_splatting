@@ -8,7 +8,7 @@
 #include <mutex>
 #include <atomic>
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 class SupersplatClient
 {
@@ -49,6 +49,6 @@ private:
     std::vector<std::thread> m_threads;
 };
 
-} // namespace vk_gaussian_splatting
+} // namespace vk_viewer
 
 #endif // _SUPERSPLAT_CLIENT_H_

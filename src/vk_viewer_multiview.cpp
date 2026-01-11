@@ -22,9 +22,9 @@
 
 #ifdef WITH_OPENXR
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
-void GaussianSplatting::initXrMultiviewResources(VkCommandBuffer cmd, VkExtent2D perEyeExtent)
+void VkViewer::initXrMultiviewResources(VkCommandBuffer cmd, VkExtent2D perEyeExtent)
 {
   if(m_xrMultiviewInitialized && m_xrMultiviewExtent.width == perEyeExtent.width 
      && m_xrMultiviewExtent.height == perEyeExtent.height)
@@ -111,7 +111,7 @@ void GaussianSplatting::initXrMultiviewResources(VkCommandBuffer cmd, VkExtent2D
   LOGI("Multiview resources initialized: %ux%u per eye (2 layers)\n", perEyeExtent.width, perEyeExtent.height);
 }
 
-void GaussianSplatting::deinitXrMultiviewResources()
+void VkViewer::deinitXrMultiviewResources()
 {
   if(!m_xrMultiviewInitialized)
     return;
@@ -143,7 +143,7 @@ void GaussianSplatting::deinitXrMultiviewResources()
   m_xrMultiviewExtent = {};
 }
 
-void GaussianSplatting::renderMultiviewRaster(VkCommandBuffer cmd, uint32_t splatCount)
+void VkViewer::renderMultiviewRaster(VkCommandBuffer cmd, uint32_t splatCount)
 {
   if(!m_xrMultiviewInitialized || !m_shaders.valid)
     return;
@@ -264,6 +264,6 @@ void GaussianSplatting::renderMultiviewRaster(VkCommandBuffer cmd, uint32_t spla
                                     {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 2}});
 }
 
-}  // namespace vk_gaussian_splatting
+}  // namespace vk_viewer
 
 #endif  // WITH_OPENXR

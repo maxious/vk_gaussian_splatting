@@ -21,9 +21,9 @@
 
 #include <nvutils/alignment.hpp> // Ensure this is included
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
-void GaussianSplatting::initPipelines()
+void VkViewer::initPipelines()
 {
 
   nvvk::DescriptorBindings bindings;
@@ -561,7 +561,7 @@ void GaussianSplatting::initPipelines()
 }
 
 // include RTX one
-void GaussianSplatting::deinitPipelines()
+void VkViewer::deinitPipelines()
 {
   if(m_graphicsPipelineGsVert == VK_NULL_HANDLE)
     return;
@@ -610,7 +610,7 @@ void GaussianSplatting::deinitPipelines()
 
 }
 
-void GaussianSplatting::initRendererBuffers()
+void VkViewer::initRendererBuffers()
 {
   const auto splatCount = (uint32_t)m_splatSet.size();
 
@@ -704,7 +704,7 @@ void GaussianSplatting::initRendererBuffers()
 
 }
 
-void GaussianSplatting::deinitRendererBuffers()
+void VkViewer::deinitRendererBuffers()
 {
   // TODO can we rather move this to pipelines creation/deletion ?
   if(m_gpuSorter != VK_NULL_HANDLE)
@@ -727,4 +727,4 @@ void GaussianSplatting::deinitRendererBuffers()
   m_alloc.destroyBuffer(m_frameInfoBuffer);
 }
 
-}  // namespace vk_gaussian_splatting
+}  // namespace vk_viewer

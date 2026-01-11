@@ -24,7 +24,7 @@
 #include <string>
 #include <vector>
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 class VxzLoader
 {
@@ -43,4 +43,4 @@ private:
                   size_t originalSize);
 };
 
-}  // namespace vk_gaussian_splatting
+}  // namespace vk_viewer

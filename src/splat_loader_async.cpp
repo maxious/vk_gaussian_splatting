@@ -43,7 +43,7 @@
 #include <regex>
 #endif
 
-using namespace vk_gaussian_splatting;
+using namespace vk_viewer;
 
 // Type alias for SogMeta used in SuperSplat download
 using SogMeta = SogLoader::SogMeta;
@@ -117,7 +117,7 @@ bool downloadFile(const std::string& url, const std::filesystem::path& destPath)
   }
 
 #ifdef _WIN32
-  std::wstring wideAgent(L"VkGaussianSplatting/1.0");
+  std::wstring wideAgent(L"VkViewer/1.0");
   std::wstring wideHost(parts.host.begin(), parts.host.end());
   std::wstring widePath(parts.path.begin(), parts.path.end());
   
@@ -126,7 +126,7 @@ bool downloadFile(const std::string& url, const std::filesystem::path& destPath)
                                    WINHTTP_NO_PROXY_NAME,
                                    WINHTTP_NO_PROXY_BYPASS, 0);
 #else
-  HINTERNET hSession = WinHttpOpen("VkGaussianSplatting/1.0",
+  HINTERNET hSession = WinHttpOpen("VkViewer/1.0",
                                    WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
                                    WINHTTP_NO_PROXY_NAME,
                                    WINHTTP_NO_PROXY_BYPASS, 0);
@@ -371,7 +371,7 @@ bool SplatLoaderAsync::innerLoad(std::filesystem::path filename, SplatSet& outpu
   {
 #if defined(_WIN32) || defined(USE_WINHTTPPAL)
     std::string superSplatId = extractSuperSplatId(pathStr);
-    std::filesystem::path cacheDir = std::filesystem::temp_directory_path() / "vk_gaussian_splatting_cache";
+    std::filesystem::path cacheDir = std::filesystem::temp_directory_path() / "vk_viewer_cache";
     
     if (!std::filesystem::exists(cacheDir)) {
         std::filesystem::create_directories(cacheDir);

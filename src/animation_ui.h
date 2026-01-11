@@ -22,7 +22,7 @@
 #include <memory>
 #include "animation_controller.h"
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 /**
  * @brief Animation playback UI controls
@@ -70,4 +70,4 @@ private:
     void renderProgressDisplay();
 };
 
-} // namespace vk_gaussian_splatting
+} // namespace vk_viewer

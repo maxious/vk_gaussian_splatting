@@ -20,9 +20,9 @@
 // This file is included from gaussian_splatting.cpp - do not compile separately
 // Contains: CPU/GPU sorting, draw commands, indirect buffer handling
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
-void GaussianSplatting::tryConsumeAndUploadCpuSortingResult(VkCommandBuffer cmd, const uint32_t splatCount)
+void VkViewer::tryConsumeAndUploadCpuSortingResult(VkCommandBuffer cmd, const uint32_t splatCount)
 {
   NVVK_DBG_SCOPE(cmd);
 
@@ -91,7 +91,7 @@ void GaussianSplatting::tryConsumeAndUploadCpuSortingResult(VkCommandBuffer cmd,
   }
 }
 
-void GaussianSplatting::processSortingOnGPU(VkCommandBuffer cmd, const uint32_t splatCount)
+void VkViewer::processSortingOnGPU(VkCommandBuffer cmd, const uint32_t splatCount)
 {
   NVVK_DBG_SCOPE(cmd);
 
@@ -163,7 +163,7 @@ void GaussianSplatting::processSortingOnGPU(VkCommandBuffer cmd, const uint32_t 
   }
 }
 
-void GaussianSplatting::drawSplatPrimitives(VkCommandBuffer cmd, const uint32_t splatCount)
+void VkViewer::drawSplatPrimitives(VkCommandBuffer cmd, const uint32_t splatCount)
 {
   NVVK_DBG_SCOPE(cmd);
 
@@ -256,7 +256,7 @@ void GaussianSplatting::drawSplatPrimitives(VkCommandBuffer cmd, const uint32_t 
   }
 }
 
-void GaussianSplatting::drawMeshPrimitives(VkCommandBuffer cmd)
+void VkViewer::drawMeshPrimitives(VkCommandBuffer cmd)
 {
   static int logCounter = 0;
   if(logCounter++ < 5)
@@ -302,7 +302,7 @@ void GaussianSplatting::drawMeshPrimitives(VkCommandBuffer cmd)
   }
 }
 
-void GaussianSplatting::drawVdzMesh(VkCommandBuffer cmd)
+void VkViewer::drawVdzMesh(VkCommandBuffer cmd)
 {
   NVVK_DBG_SCOPE(cmd);
 
@@ -357,7 +357,7 @@ void GaussianSplatting::drawVdzMesh(VkCommandBuffer cmd)
   vkCmdDrawIndexed(cmd, m_vdzMesh.getIndexCount(), 1, 0, 0, 0);
 }
 
-void GaussianSplatting::collectReadBackValuesIfNeeded(void)
+void VkViewer::collectReadBackValuesIfNeeded(void)
 {
   if(m_indirectReadbackHost.buffer != VK_NULL_HANDLE && prmRaster.sortingMethod == SORTING_GPU_SYNC_RADIX && m_canCollectReadback)
   {
@@ -365,7 +365,7 @@ void GaussianSplatting::collectReadBackValuesIfNeeded(void)
   }
 }
 
-void GaussianSplatting::readBackIndirectParametersIfNeeded(VkCommandBuffer cmd)
+void VkViewer::readBackIndirectParametersIfNeeded(VkCommandBuffer cmd)
 {
   NVVK_DBG_SCOPE(cmd);
 
@@ -391,7 +391,7 @@ void GaussianSplatting::readBackIndirectParametersIfNeeded(VkCommandBuffer cmd)
   }
 }
 
-void GaussianSplatting::updateRenderingMemoryStatistics(VkCommandBuffer cmd, const uint32_t splatCount)
+void VkViewer::updateRenderingMemoryStatistics(VkCommandBuffer cmd, const uint32_t splatCount)
 {
   // update rendering memory statistics
   if(prmRaster.sortingMethod != SORTING_GPU_SYNC_RADIX)
@@ -448,4 +448,4 @@ void GaussianSplatting::updateRenderingMemoryStatistics(VkCommandBuffer cmd, con
   m_renderMemoryStats.deviceAllocTotal = m_renderMemoryStats.rasterDeviceAllocTotal + m_renderMemoryStats.rtxDeviceAllocTotal;
 }
 
-}  // namespace vk_gaussian_splatting
+}  // namespace vk_viewer

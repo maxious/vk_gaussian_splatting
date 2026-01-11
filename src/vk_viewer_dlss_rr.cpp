@@ -21,9 +21,9 @@
 
 #ifdef WITH_DLSS_RR
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
-void GaussianSplatting::initializeDlssRR()
+void VkViewer::initializeDlssRR()
 {
   if(m_dlssRRInitialized)
     return;
@@ -85,7 +85,7 @@ void GaussianSplatting::initializeDlssRR()
   LOGI("DLSS-RR initialized successfully\n");
 }
 
-void GaussianSplatting::shutdownDlssRR()
+void VkViewer::shutdownDlssRR()
 {
   if(m_dlssRR)
   {
@@ -103,7 +103,7 @@ void GaussianSplatting::shutdownDlssRR()
   m_dlssRRFrameIndex  = 0;
 }
 
-void GaussianSplatting::updateDlssRRDescriptorSet()
+void VkViewer::updateDlssRRDescriptorSet()
 {
   if(!m_dlssRRInitialized || !m_dlssRR || !m_dlssRR->isValid())
     return;
@@ -158,6 +158,6 @@ void GaussianSplatting::updateDlssRRDescriptorSet()
                         VK_FORMAT_R16_SFLOAT);
 }
 
-}  // namespace vk_gaussian_splatting
+}  // namespace vk_viewer
 
 #endif  // WITH_DLSS_RR

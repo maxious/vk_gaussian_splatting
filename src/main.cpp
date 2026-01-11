@@ -17,17 +17,17 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <gaussian_splatting_ui.h>
+#include <vk_viewer_ui.h>
 
 // Define the dynamic dispatcher storage
 // This handles LNK2001: unresolved external symbol "class vk::detail::DispatchLoaderDynamic vk::detail::defaultDispatchLoaderDynamic"
 #include <vulkan/vulkan.hpp>
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
-using namespace vk_gaussian_splatting;
+using namespace vk_viewer;
 
 // create, setup and run an nvapp::Application
-// with a GaussianSplatting element.
+// with a VkViewer element.
 int main(int argc, char** argv)
 {
   nvutils::Logger::getInstance().breakOnError(false);
@@ -52,7 +52,7 @@ int main(int argc, char** argv)
   /////////////////////////////////
   // Parse the command line to get the application creation information
   // those parameter will have no effect if changed via benchmark script
-  // see GaussianSplatting constructor for other options
+  // see VkViewer constructor for other options
   parameterRegistry.addVector({"size", "Size of the window to be created"}, &appInfo.windowSize);
   parameterRegistry.add({"vsync"}, &appInfo.vSync);
   parameterRegistry.add({"verbose", "Verbose output of the Vulkan context"}, &vkSetup.verbose);
@@ -63,19 +63,19 @@ int main(int argc, char** argv)
   registerCommandLineParameters(&parameterRegistry);
 
   /////////////////////////////////
-  // Create elements of the application, including the core of the sample (gaussianSplatting)
+  // Create elements of the application, including the core of the sample (vkViewer)
 
-  // The GaussianSplattingUI includes the core GaussianSplatting class by inheritance
-  auto gaussianSplatting = std::make_shared<GaussianSplattingUI>(&profilerManager, &parameterRegistry, &benchmarkMode);
+  // The VkViewerUI includes the core VkViewer class by inheritance
+  auto vkViewer = std::make_shared<VkViewerUI>(&profilerManager, &parameterRegistry, &benchmarkMode);
 
   // add a few more parameters to registry and parser to handle sequencer settings
   sequencerInfo.registerScriptParameters(parameterRegistry, parameterParser);
 
   // extends reporting output with memory consumption information
   sequencerInfo.postCallbacks.emplace_back(
-      [&](const nvutils::ParameterSequencer::State& /* unused */) { gaussianSplatting->benchmarkAdvance(); });
+      [&](const nvutils::ParameterSequencer::State& /* unused */) { vkViewer->benchmarkAdvance(); });
 
-  // After the creation of the elements we have more parameters in the registry than before (from gaussianSplatting).
+  // After the creation of the elements we have more parameters in the registry than before (from vkViewer).
   // Therefore add the entire registry to the commandline parser again, to add new ones.
   parameterParser.add(parameterRegistry);
   // commandline parsing
@@ -146,7 +146,7 @@ int main(int argc, char** argv)
   // Query OpenXR required Vulkan extensions before creating Vulkan context
   // Store extension strings in static vectors to keep pointers valid
   static std::vector<std::string> xrInstanceExts, xrDeviceExts;
-  if(gaussianSplatting->queryOpenXrVulkanExtensions(xrInstanceExts, xrDeviceExts))
+  if(vkViewer->queryOpenXrVulkanExtensions(xrInstanceExts, xrDeviceExts))
   {
     for(const auto& ext : xrInstanceExts)
     {
@@ -202,19 +202,19 @@ int main(int argc, char** argv)
   };
 
   //
-  gaussianSplatting->guiRegisterIniFileHandlers();
+  vkViewer->guiRegisterIniFileHandlers();
 
   // Initializes the application
   application.init(appInfo);
 
-  // Add all application elements including our sample specific gaussianSplatting
+  // Add all application elements including our sample specific vkViewer
   // onAttach will be invoked on elements at this stage
   application.addElement(elemSequencer);
-  application.addElement(gaussianSplatting);
+  application.addElement(vkViewer);
   application.addElement(std::make_shared<nvapp::ElementDefaultWindowTitle>("", fmt::format("({})", "GLSL")));
 
   auto elemCamera = std::make_shared<nvapp::ElementCamera>();
-  elemCamera->setCameraManipulator(gaussianSplatting->cameraManip);
+  elemCamera->setCameraManipulator(vkViewer->cameraManip);
   application.addElement(elemCamera);
 
   if(benchmarkMode)

@@ -23,7 +23,7 @@
 #include "nvgui/tooltip.hpp"
 #include <cinttypes>
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 void AnimationUI::initialize(std::shared_ptr<AnimationController> animationController) {
     m_animationController = animationController;
@@ -177,4 +177,4 @@ bool AnimationUI::getCurrentFrameData(SplatSet& outFrame) {
     return m_animationController->getCurrentFrameData(outFrame);
 }
 
-}  // namespace vk_gaussian_splatting
+}  // namespace vk_viewer

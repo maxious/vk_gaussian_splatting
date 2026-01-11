@@ -32,7 +32,7 @@ extern "C" {
 #include <libswresample/swresample.h>
 }
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 /**
  * @brief Audio player for synchronized playback with PLY sequences
@@ -130,4 +130,4 @@ private:
     std::mutex                       m_mutex;
 };
 
-} // namespace vk_gaussian_splatting
+} // namespace vk_viewer

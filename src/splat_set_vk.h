@@ -36,7 +36,7 @@
 #include "splat_set.h"
 #include "utilities.h"
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 // Format and upload 3DGS data to VRAM
 class SplatSetVk
@@ -283,6 +283,6 @@ private:
   nvvk::PhysicalDeviceInfo* m_deviceInfo = nullptr;
 };
 
-}  // namespace vk_gaussian_splatting
+}  // namespace vk_viewer
 
 #endif

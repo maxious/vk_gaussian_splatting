@@ -27,7 +27,7 @@
 #include <cmath>
 #include <glm/vec4.hpp>
 
-using namespace vk_gaussian_splatting;
+using namespace vk_viewer;
 
 bool SplatSorterAsync::initialize(nvutils::ProfilerTimeline* profiler)
 {

@@ -29,7 +29,7 @@
 
 #include "splat_set.h"
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 // Async loader for Gaussian splat formats (PLY, SPZ, SOG)
 class SplatLoaderAsync
@@ -120,6 +120,6 @@ private:
   float m_progress = 0.0f;
 };
 
-}  // namespace vk_gaussian_splatting
+}  // namespace vk_viewer
 
 #endif

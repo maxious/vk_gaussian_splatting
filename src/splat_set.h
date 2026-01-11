@@ -34,7 +34,7 @@
 // 3rd party spz library, used here for coordinate system convertions
 #include "splat-types.h"
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 // Represents a single loaded radiance field file with its metadata
 struct RadianceFieldEntry
@@ -391,6 +391,6 @@ struct SplatSet
   }
 };
 
-}  // namespace vk_gaussian_splatting
+}  // namespace vk_viewer
 
 #endif

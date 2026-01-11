@@ -36,18 +36,18 @@
 
 #include <GLFW/glfw3.h>
 
-#include "gaussian_splatting_ui.h"
+#include "vk_viewer_ui.h"
 #include "animation_ui.h"
 #include "utilities.h"
 #include <backends/imgui_impl_vulkan.h>
 #include <imgui/imgui_internal.h>
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
-GaussianSplattingUI::GaussianSplattingUI(nvutils::ProfilerManager*   profilerManager,
+VkViewerUI::VkViewerUI(nvutils::ProfilerManager*   profilerManager,
                                          nvutils::ParameterRegistry* parameterRegistry,
                                          bool*                       benchmarkEnabled)
-    : GaussianSplatting(profilerManager, parameterRegistry)
+    : VkViewer(profilerManager, parameterRegistry)
     , m_pBenchmarkEnabled(benchmarkEnabled)
 {
 
@@ -79,13 +79,13 @@ GaussianSplattingUI::GaussianSplattingUI(nvutils::ProfilerManager*   profilerMan
   m_supersplatClient = std::make_unique<SupersplatClient>();
 };
 
-GaussianSplattingUI::~GaussianSplattingUI(){
+VkViewerUI::~VkViewerUI(){
     // Nothing to do here
 };
 
-void GaussianSplattingUI::onAttach(nvapp::Application* app)
+void VkViewerUI::onAttach(nvapp::Application* app)
 {
-    GaussianSplatting::onAttach(app);
+    VkViewer::onAttach(app);
 
   // we hide the UI dy default in benchmark mode
   m_showUI = !(*m_pBenchmarkEnabled);
@@ -171,20 +171,20 @@ void GaussianSplattingUI::onAttach(nvapp::Application* app)
 #endif
 }
 
-void GaussianSplattingUI::onDetach()
+void VkViewerUI::onDetach()
 {
 #ifdef WITH_OPENXR
     destroyHandMeshes();
 #endif
-    GaussianSplatting::onDetach();
+    VkViewer::onDetach();
 }
 
-void GaussianSplattingUI::onResize(VkCommandBuffer cmd, const VkExtent2D& size)
+void VkViewerUI::onResize(VkCommandBuffer cmd, const VkExtent2D& size)
 {
-  GaussianSplatting::onResize(cmd, size);
+  VkViewer::onResize(cmd, size);
 }
 
-void GaussianSplattingUI::onPreRender()
+void VkViewerUI::onPreRender()
 {
 #ifdef WITH_COMFYUI
   if (m_comfyClient)
@@ -227,17 +227,17 @@ void GaussianSplattingUI::onPreRender()
     }
   }
 
-  GaussianSplatting::onPreRender();
+  VkViewer::onPreRender();
 }
 
-void GaussianSplattingUI::onRender(VkCommandBuffer cmd)
+void VkViewerUI::onRender(VkCommandBuffer cmd)
 {
 #ifdef WITH_OPENXR
   // Update hand meshes before rendering
   updateHandMeshes();
 #endif
 
-  GaussianSplatting::onRender(cmd);
+  VkViewer::onRender(cmd);
 
 #ifdef WITH_OPENXR
   // Render hand meshes after main scene
@@ -280,7 +280,7 @@ void GaussianSplattingUI::onRender(VkCommandBuffer cmd)
 
 #define ICON_BLANK "     "
 
-void GaussianSplattingUI::onUIMenu()
+void VkViewerUI::onUIMenu()
 {
   static bool close_app{false};
   bool        v_sync = m_app->isVsync();
@@ -547,7 +547,7 @@ void GaussianSplattingUI::onUIMenu()
     dumpSplat(m_indirectReadback.particleID);
 }
 
-void GaussianSplattingUI::onFileDrop(const std::filesystem::path& filename)
+void VkViewerUI::onFileDrop(const std::filesystem::path& filename)
 {
   // extension To lower case
   std::string extension = filename.extension().string();
@@ -570,7 +570,7 @@ void GaussianSplattingUI::onFileDrop(const std::filesystem::path& filename)
     LOGE("Error: unsupported file extension %s\n", extension.c_str());
 }
 
-void GaussianSplattingUI::onUIRender()
+void VkViewerUI::onUIRender()
 {
   /////////////
   // Rendering Viewport display the GBuffer
@@ -973,7 +973,7 @@ void GaussianSplattingUI::onUIRender()
 #endif
 }
 
-void GaussianSplattingUI::guiDrawAssetsWindow()
+void VkViewerUI::guiDrawAssetsWindow()
 {
   ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyle().Colors[ImGuiCol_ChildBg]);
 
@@ -996,7 +996,7 @@ void GaussianSplattingUI::guiDrawAssetsWindow()
   ImGui::PopStyleColor();
 }
 
-void GaussianSplattingUI::guiDrawRendererTree()
+void VkViewerUI::guiDrawRendererTree()
 {
   static ImGuiTreeNodeFlags base_flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick;
 
@@ -1034,7 +1034,7 @@ void GaussianSplattingUI::guiDrawRendererTree()
   }
 }
 
-void GaussianSplattingUI::guiDrawCameraTree()
+void VkViewerUI::guiDrawCameraTree()
 {
 
   const ImGuiTreeNodeFlags base_flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick;
@@ -1130,7 +1130,7 @@ void GaussianSplattingUI::guiDrawCameraTree()
   }
 }
 
-void GaussianSplattingUI::guiDrawLightTree()
+void VkViewerUI::guiDrawLightTree()
 {
   const ImGuiTreeNodeFlags base_flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick;
 
@@ -1187,7 +1187,7 @@ void GaussianSplattingUI::guiDrawLightTree()
   }
 }
 
-void GaussianSplattingUI::guiDrawRadianceFieldsTree()
+void VkViewerUI::guiDrawRadianceFieldsTree()
 {
 
   const ImGuiTreeNodeFlags base_flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick;
@@ -1259,7 +1259,7 @@ void GaussianSplattingUI::guiDrawRadianceFieldsTree()
   }
 }
 
-void GaussianSplattingUI::guiDrawObjectTree()
+void VkViewerUI::guiDrawObjectTree()
 {
 
   namespace PE = nvgui::PropertyEditor;
@@ -1370,7 +1370,7 @@ void GaussianSplattingUI::guiDrawObjectTree()
   }
 }
 
-void GaussianSplattingUI::guiDrawDepthStreamTree()
+void VkViewerUI::guiDrawDepthStreamTree()
 {
   const ImGuiTreeNodeFlags base_flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick;
   const ImGuiTreeNodeFlags leaf_flags = base_flags | ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
@@ -1428,7 +1428,7 @@ void GaussianSplattingUI::guiDrawDepthStreamTree()
   }
 }
 
-void GaussianSplattingUI::guiDrawPropertiesWindow()
+void VkViewerUI::guiDrawPropertiesWindow()
 {
   if(ImGui::Begin("Properties"))
   {
@@ -1492,7 +1492,7 @@ void GaussianSplattingUI::guiDrawPropertiesWindow()
   ImGui::End();
 }
 
-void GaussianSplattingUI::guiDrawRendererProperties()
+void VkViewerUI::guiDrawRendererProperties()
 {
 
   namespace PE = nvgui::PropertyEditor;
@@ -2009,7 +2009,7 @@ void GaussianSplattingUI::guiDrawRendererProperties()
   ImGui::EndTabBar();
 }
 
-void GaussianSplattingUI::guiDrawSplatSetProperties()
+void VkViewerUI::guiDrawSplatSetProperties()
 {
   namespace PE = nvgui::PropertyEditor;
 
@@ -2149,7 +2149,7 @@ void GaussianSplattingUI::guiDrawSplatSetProperties()
   }
 }
 
-void GaussianSplattingUI::guiDrawMeshTransformProperties()
+void VkViewerUI::guiDrawMeshTransformProperties()
 {
   namespace PE = nvgui::PropertyEditor;
 
@@ -2162,7 +2162,7 @@ void GaussianSplattingUI::guiDrawMeshTransformProperties()
   PE::end();
 }
 
-void GaussianSplattingUI::guiDrawMeshMaterialProperties()
+void VkViewerUI::guiDrawMeshMaterialProperties()
 {
   namespace PE = nvgui::PropertyEditor;
 
@@ -2196,7 +2196,7 @@ void GaussianSplattingUI::guiDrawMeshMaterialProperties()
   }
 }
 
-void GaussianSplattingUI::guiDrawCameraProperties()
+void VkViewerUI::guiDrawCameraProperties()
 {
   namespace PE = nvgui::PropertyEditor;
 
@@ -2290,7 +2290,7 @@ void GaussianSplattingUI::guiDrawCameraProperties()
     m_cameraSet.setCamera(camera);
 }
 
-void GaussianSplattingUI::guiDrawNavigationProperties()
+void VkViewerUI::guiDrawNavigationProperties()
 {
 
   namespace PE = nvgui::PropertyEditor;
@@ -2334,7 +2334,7 @@ void GaussianSplattingUI::guiDrawNavigationProperties()
   ImGui::EndDisabled();
 }
 
-void GaussianSplattingUI::guiDrawLightProperties()
+void VkViewerUI::guiDrawLightProperties()
 {
   namespace PE = nvgui::PropertyEditor;
 
@@ -2355,7 +2355,7 @@ void GaussianSplattingUI::guiDrawLightProperties()
   m_requestUpdateLightsBuffer |= needUpdate;
 }
 
-bool GaussianSplattingUI::guiGetTransform(glm::vec3& scale,
+bool VkViewerUI::guiGetTransform(glm::vec3& scale,
                                           glm::vec3& rotation,
                                           glm::vec3& translation,
                                           glm::mat4& transform,
@@ -2379,7 +2379,7 @@ bool GaussianSplattingUI::guiGetTransform(glm::vec3& scale,
   return updated;
 }
 
-void GaussianSplattingUI::guiDrawRendererStatisticsWindow()
+void VkViewerUI::guiDrawRendererStatisticsWindow()
 {
   if(ImGui::Begin("Rendering Statistics"))
   {
@@ -2430,7 +2430,7 @@ void GaussianSplattingUI::guiDrawRendererStatisticsWindow()
 }
 
 
-void GaussianSplattingUI::guiDrawMemoryStatisticsWindow()
+void VkViewerUI::guiDrawMemoryStatisticsWindow()
 {
   ImGuiTableFlags itemFlags   = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
   ImGuiTableFlags totalFlags  = ImGuiTreeNodeFlags_DefaultOpen;
@@ -2625,7 +2625,7 @@ void GaussianSplattingUI::guiDrawMemoryStatisticsWindow()
   ImGui::End();
 }
 
-void GaussianSplattingUI::guiDrawFooterBar()
+void VkViewerUI::guiDrawFooterBar()
 {
   //
   //ImGuiViewportP* viewport = (ImGuiViewportP*)(void*)ImGui::GetMainViewport();
@@ -2677,7 +2677,7 @@ void GaussianSplattingUI::guiDrawFooterBar()
   }
 }
 
-void GaussianSplattingUI::guiAddToRecentFiles(std::filesystem::path filePath, int historySize)
+void VkViewerUI::guiAddToRecentFiles(std::filesystem::path filePath, int historySize)
 {
   // first check if filePath is absolute
   if(filePath.is_relative())
@@ -2697,7 +2697,7 @@ void GaussianSplattingUI::guiAddToRecentFiles(std::filesystem::path filePath, in
   }
 }
 
-void GaussianSplattingUI::guiAddToRecentProjects(std::filesystem::path filePath, int historySize)
+void VkViewerUI::guiAddToRecentProjects(std::filesystem::path filePath, int historySize)
 {
   // first check if filePath is absolute
   if(filePath.is_relative())
@@ -2717,7 +2717,7 @@ void GaussianSplattingUI::guiAddToRecentProjects(std::filesystem::path filePath,
   }
 }
 
-void GaussianSplattingUI::guiRegisterIniFileHandlers()
+void VkViewerUI::guiRegisterIniFileHandlers()
 {
   // mandatory to work, see ImGui::DockContextInitialize as an example
   auto readOpen = [](ImGuiContext*, ImGuiSettingsHandler* handler, const char* name) -> void* {
@@ -2725,7 +2725,7 @@ void GaussianSplattingUI::guiRegisterIniFileHandlers()
       return NULL;
     // Make sure we clear out our current recent vectors so we don't just keep adding to the list every time we load
     // This is if the .ini file is loaded twice, which happens in nvpro_core2
-    auto* ui = static_cast<GaussianSplattingUI*>(handler->UserData);
+    auto* ui = static_cast<VkViewerUI*>(handler->UserData);
     if(strcmp(handler->TypeName, "RecentFiles") == 0)
     {
       ui->m_recentFiles.clear();
@@ -2740,7 +2740,7 @@ void GaussianSplattingUI::guiRegisterIniFileHandlers()
   {
     // Save settings handler, not using capture so can be used as a function pointer
     auto saveRecentFilesToIni = [](ImGuiContext* ctx, ImGuiSettingsHandler* handler, ImGuiTextBuffer* buf) {
-      auto* self = static_cast<GaussianSplattingUI*>(handler->UserData);
+      auto* self = static_cast<VkViewerUI*>(handler->UserData);
       buf->appendf("[%s][Data]\n", handler->TypeName);
       for(const auto& file : self->m_recentFiles)
       {
@@ -2751,7 +2751,7 @@ void GaussianSplattingUI::guiRegisterIniFileHandlers()
 
     // Load settings handler, not using capture so can be used as a function pointer
     auto loadRecentFilesFromIni = [](ImGuiContext* ctx, ImGuiSettingsHandler* handler, void* entry, const char* line) {
-      auto* self = static_cast<GaussianSplattingUI*>(handler->UserData);
+      auto* self = static_cast<VkViewerUI*>(handler->UserData);
       if(strncmp(line, "File=", 5) == 0)
       {
         const char* filePath = line + 5;
@@ -2772,7 +2772,7 @@ void GaussianSplattingUI::guiRegisterIniFileHandlers()
   {
     // Save settings handler, not using capture so can be used as a function pointer
     auto saveRecentProjectsToIni = [](ImGuiContext* ctx, ImGuiSettingsHandler* handler, ImGuiTextBuffer* buf) {
-      auto* self = static_cast<GaussianSplattingUI*>(handler->UserData);
+      auto* self = static_cast<VkViewerUI*>(handler->UserData);
       buf->appendf("[%s][Data]\n", handler->TypeName);
       for(const auto& file : self->m_recentProjects)
       {
@@ -2783,7 +2783,7 @@ void GaussianSplattingUI::guiRegisterIniFileHandlers()
 
     // Load settings handler, not using capture so can be used as a function pointer
     auto loadRecentProjectsFromIni = [](ImGuiContext* ctx, ImGuiSettingsHandler* handler, void* entry, const char* line) {
-      auto* self = static_cast<GaussianSplattingUI*>(handler->UserData);
+      auto* self = static_cast<VkViewerUI*>(handler->UserData);
       if(strncmp(line, "File=", 5) == 0)
       {
         const char* filePath = line + 5;
@@ -2861,7 +2861,7 @@ std::filesystem::path makeAbsolutePath(const std::filesystem::path& base, const 
   (val) = glm::vec4((item)[name][0], (item)[name][1], (item)[name][2], 0.0f)
 
 // This method is multi pass
-bool GaussianSplattingUI::loadProjectIfNeeded()
+bool VkViewerUI::loadProjectIfNeeded()
 {
   // Nothing to load
   if(prmScene.projectToLoadFilename.empty())
@@ -3139,7 +3139,7 @@ bool GaussianSplattingUI::loadProjectIfNeeded()
   }
 }
 
-bool GaussianSplattingUI::saveProject(std::string path)
+bool VkViewerUI::saveProject(std::string path)
 {
   std::ofstream o(path);
   if(!o.is_open())
@@ -3307,7 +3307,7 @@ bool GaussianSplattingUI::saveProject(std::string path)
   }
 }
 
-void GaussianSplattingUI::dumpSplat(uint32_t splatIdx)
+void VkViewerUI::dumpSplat(uint32_t splatIdx)
 {
   if(!(splatIdx >= 0 && splatIdx < m_splatSet.size()))
   {
@@ -3366,7 +3366,7 @@ void GaussianSplattingUI::dumpSplat(uint32_t splatIdx)
 }
 
 #ifdef WITH_COMFYUI
-void GaussianSplattingUI::guiDrawComfyUIWindow()
+void VkViewerUI::guiDrawComfyUIWindow()
 {
   ImGui::SetNextWindowSize(ImVec2(500, 450), ImGuiCond_FirstUseEver);
   if (!ImGui::Begin("ComfyUI 3D Generator", &m_showComfyUIWindow))
@@ -3527,7 +3527,7 @@ void GaussianSplattingUI::guiDrawComfyUIWindow()
   ImGui::End();
 }
 
-void GaussianSplattingUI::onComfyUIWorkflowComplete(const ComfyUIClient::WorkflowResult& result)
+void VkViewerUI::onComfyUIWorkflowComplete(const ComfyUIClient::WorkflowResult& result)
 {
   if (result.success && !result.plyPath.empty())
   {
@@ -3558,7 +3558,7 @@ void GaussianSplattingUI::onComfyUIWorkflowComplete(const ComfyUIClient::Workflo
 
 
 
-void GaussianSplattingUI::guiDrawDepthStreamProperties()
+void VkViewerUI::guiDrawDepthStreamProperties()
 {
   namespace PE = nvgui::PropertyEditor;
 
@@ -4038,7 +4038,7 @@ void GaussianSplattingUI::guiDrawDepthStreamProperties()
   }
 }
 
-void GaussianSplattingUI::guiDrawPerformancePanel()
+void VkViewerUI::guiDrawPerformancePanel()
 {
     if (ImGui::Begin("Performance Telemetry")) {
         auto metrics = m_perfStats.getAllMetrics();
@@ -4117,12 +4117,12 @@ void GaussianSplattingUI::guiDrawPerformancePanel()
 }
 
 #ifdef WITH_OPENXR
-void GaussianSplattingUI::onWristButtonPressed()
+void VkViewerUI::onWristButtonPressed()
 {
     m_showVrMenu = !m_showVrMenu;
 }
 
-void GaussianSplattingUI::onXrInitialized()
+void VkViewerUI::onXrInitialized()
 {
     // Initialize hand meshes now that XR session is ready with hand trackers
     if (initHandMeshes()) {
@@ -4130,7 +4130,7 @@ void GaussianSplattingUI::onXrInitialized()
     }
 }
 
-bool GaussianSplattingUI::initHandMeshes()
+bool VkViewerUI::initHandMeshes()
 {
     if (!m_xr || !m_xr->handsSupported())
         return false;
@@ -4147,7 +4147,7 @@ bool GaussianSplattingUI::initHandMeshes()
     // Initialize each hand mesh
     for (int handIdx = 0; handIdx < 2; ++handIdx) {
         GsOpenXr::Hand hand = (handIdx == 0) ? GsOpenXr::Hand::Left : GsOpenXr::Hand::Right;
-        GaussianSplattingUI::HandMeshVk& mesh = (handIdx == 0) ? m_leftHandMesh : m_rightHandMesh;
+        VkViewerUI::HandMeshVk& mesh = (handIdx == 0) ? m_leftHandMesh : m_rightHandMesh;
 
         XrHandTrackerEXT tracker = m_xr->getHandTracker(hand);
         if (tracker == XR_NULL_HANDLE) {
@@ -4246,10 +4246,10 @@ bool GaussianSplattingUI::initHandMeshes()
     return true;
 }
 
-void GaussianSplattingUI::destroyHandMeshes()
+void VkViewerUI::destroyHandMeshes()
 {
     for (int hand = 0; hand < 2; ++hand) {
-        GaussianSplattingUI::HandMeshVk& mesh = (hand == 0) ? m_leftHandMesh : m_rightHandMesh;
+        VkViewerUI::HandMeshVk& mesh = (hand == 0) ? m_leftHandMesh : m_rightHandMesh;
 
         m_alloc.destroyBuffer(mesh.vertexBuffer);
         m_alloc.destroyBuffer(mesh.indexBuffer);
@@ -4259,7 +4259,7 @@ void GaussianSplattingUI::destroyHandMeshes()
     }
 }
 
-void GaussianSplattingUI::updateHandMeshes()
+void VkViewerUI::updateHandMeshes()
 {
     if (!m_xr || !m_xr->handsSupported())
         return;
@@ -4273,7 +4273,7 @@ void GaussianSplattingUI::updateHandMeshes()
 
     for (int handIdx = 0; handIdx < 2; ++handIdx) {
         GsOpenXr::Hand hand = (handIdx == 0) ? GsOpenXr::Hand::Left : GsOpenXr::Hand::Right;
-        GaussianSplattingUI::HandMeshVk& mesh = (handIdx == 0) ? m_leftHandMesh : m_rightHandMesh;
+        VkViewerUI::HandMeshVk& mesh = (handIdx == 0) ? m_leftHandMesh : m_rightHandMesh;
 
         if (!mesh.initialized)
             continue;
@@ -4307,7 +4307,7 @@ void GaussianSplattingUI::updateHandMeshes()
     }
 }
 
-void GaussianSplattingUI::renderHandMesh(VkCommandBuffer cmd, const GaussianSplattingUI::HandMeshVk& mesh, const glm::mat4& wristTransform)
+void VkViewerUI::renderHandMesh(VkCommandBuffer cmd, const VkViewerUI::HandMeshVk& mesh, const glm::mat4& wristTransform)
 {
     if (!mesh.initialized || !mesh.visible)
         return;
@@ -4378,7 +4378,7 @@ void GaussianSplattingUI::renderHandMesh(VkCommandBuffer cmd, const GaussianSpla
     vkCmdDrawIndexed(cmd, static_cast<uint32_t>(mesh.indices.size()), 1, 0, 0, 0);
 }
 
-void GaussianSplattingUI::onRenderMultiviewExtra(VkCommandBuffer cmd)
+void VkViewerUI::onRenderMultiviewExtra(VkCommandBuffer cmd)
 {
     if (!m_xr || !m_xr->handsSupported() || !m_xrInitialized || m_descriptorSet == VK_NULL_HANDLE)
         return;
@@ -4414,7 +4414,7 @@ void GaussianSplattingUI::onRenderMultiviewExtra(VkCommandBuffer cmd)
     }
 }
 
-void GaussianSplattingUI::renderHandMeshMultiview(VkCommandBuffer cmd, const GaussianSplattingUI::HandMeshVk& mesh, const glm::mat4& wristTransform)
+void VkViewerUI::renderHandMeshMultiview(VkCommandBuffer cmd, const VkViewerUI::HandMeshVk& mesh, const glm::mat4& wristTransform)
 {
     if (!mesh.initialized || !mesh.visible)
         return;
@@ -4477,10 +4477,10 @@ void GaussianSplattingUI::renderHandMeshMultiview(VkCommandBuffer cmd, const Gau
 }
 #endif
 
-// namespace vk_gaussian_splatting (continued)
+// namespace vk_viewer (continued)
 
 
-void GaussianSplattingUI::guiDrawFileDialog()
+void VkViewerUI::guiDrawFileDialog()
 {
   if(m_showFileDialog)
   {
@@ -4507,7 +4507,7 @@ void GaussianSplattingUI::guiDrawFileDialog()
   }
 }
 
-void GaussianSplattingUI::guiDrawSupersplatDialog()
+void VkViewerUI::guiDrawSupersplatDialog()
 {
   if(m_showSupersplatDialog)
   {
@@ -4611,7 +4611,7 @@ void GaussianSplattingUI::guiDrawSupersplatDialog()
   }
 }
 
-void GaussianSplattingUI::createTextureFromRGBA(const std::vector<uint8_t>& data, int width, int height, nvvk::Image& texture, VkImageView& view)
+void VkViewerUI::createTextureFromRGBA(const std::vector<uint8_t>& data, int width, int height, nvvk::Image& texture, VkImageView& view)
 {
     VkCommandBuffer cmd = m_app->createTempCmdBuffer();
     
@@ -4682,7 +4682,7 @@ void GaussianSplattingUI::createTextureFromRGBA(const std::vector<uint8_t>& data
     m_alloc.destroyBuffer(staging);
 }
 
-void GaussianSplattingUI::guiDrawVrMenu()
+void VkViewerUI::guiDrawVrMenu()
 {
     // A simple window floating in front of the camera (conceptually)
     // For now just a standard ImGui window
@@ -4750,4 +4750,4 @@ void GaussianSplattingUI::guiDrawVrMenu()
     ImGui::End();
 }
 
-} // namespace vk_gaussian_splatting
+} // namespace vk_viewer

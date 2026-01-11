@@ -25,7 +25,7 @@
 #include <functional>
 #include "splat_set.h"
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 class FourDvLoader
 {
@@ -64,6 +64,6 @@ private:
   static void unpackVertex(const PackedVertex& packed, const ChunkInfo& chunk, SplatSet& output, size_t index);
 };
 
-} // namespace vk_gaussian_splatting
+} // namespace vk_viewer
 
 #endif

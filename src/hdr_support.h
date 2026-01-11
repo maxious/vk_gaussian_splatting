@@ -22,7 +22,7 @@
 #include <vulkan/vulkan_core.h>
 #include <nvutils/logger.hpp>
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 // HDR Display Support Utilities
 class HDRSupport
@@ -82,4 +82,4 @@ public:
   static VkFormat getGlobalFormat();
 };
 
-}  // namespace vk_gaussian_splatting
+}  // namespace vk_viewer

@@ -31,7 +31,7 @@ extern "C" {
 
 #include <nvutils/logger.hpp>
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 AudioPlayer::~AudioPlayer() {
     close();
@@ -97,4 +97,4 @@ void AudioPlayer::update() {
     // In a full implementation, this would update m_positionMs based on time
 }
 
-} // namespace vk_gaussian_splatting
+} // namespace vk_viewer

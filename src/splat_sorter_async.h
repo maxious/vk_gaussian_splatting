@@ -33,7 +33,7 @@
 
 #include "splat_set.h"
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 class SplatSorterAsync
 {
@@ -139,6 +139,6 @@ private:
   double                m_sortTime = 0;  // distance sorting timer
 };
 
-}  // namespace vk_gaussian_splatting
+}  // namespace vk_viewer
 
 #endif

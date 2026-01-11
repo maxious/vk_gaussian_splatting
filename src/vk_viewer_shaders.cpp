@@ -19,9 +19,9 @@
 
 // This file is included from gaussian_splatting.cpp - do not compile separately
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
-void GaussianSplatting::updateSlangMacros()
+void VkViewer::updateSlangMacros()
 {
   m_shaderMacros =  // comment to force clang new line and better indent
       {{"PIPELINE", std::to_string(prmSelectedPipeline)},
@@ -69,7 +69,7 @@ void GaussianSplatting::updateSlangMacros()
   }
 }
 
-bool GaussianSplatting::compileSlangShader(const std::string& filename, VkShaderModule& module)
+bool VkViewer::compileSlangShader(const std::string& filename, VkShaderModule& module)
 {
 
   if(!m_slangCompiler.compileFile(filename))
@@ -98,7 +98,7 @@ bool GaussianSplatting::compileSlangShader(const std::string& filename, VkShader
   return true;
 }
 
-bool GaussianSplatting::initShaders(void)
+bool VkViewer::initShaders(void)
 {
   auto startTime = std::chrono::high_resolution_clock::now();
 
@@ -144,7 +144,7 @@ bool GaussianSplatting::initShaders(void)
   return (m_shaders.valid = true);
 }
 
-void GaussianSplatting::deinitShaders(void)
+void VkViewer::deinitShaders(void)
 {
   for(auto& shader : m_shaders.modules)
   {
@@ -156,4 +156,4 @@ void GaussianSplatting::deinitShaders(void)
   m_shaders.modules.clear();
 }
 
-}  // namespace vk_gaussian_splatting
+}  // namespace vk_viewer

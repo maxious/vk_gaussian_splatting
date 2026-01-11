@@ -26,7 +26,7 @@
 #include <glm/glm.hpp>
 #include <vector>
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 struct VdzMeshVertex
 {
@@ -63,6 +63,6 @@ private:
   std::vector<uint32_t>      m_indices;
 };
 
-}  // namespace vk_gaussian_splatting
+}  // namespace vk_viewer
 
 #endif  // VDZ_MESH_H

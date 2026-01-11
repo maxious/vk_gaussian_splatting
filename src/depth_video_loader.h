@@ -37,7 +37,7 @@ extern "C" {
 }
 #endif
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 /**
  * @brief Metadata structure for depth video playback
@@ -332,4 +332,4 @@ private:
     std::atomic<double> m_currentTime{0.0};
 };
 
-} // namespace vk_gaussian_splatting
+} // namespace vk_viewer

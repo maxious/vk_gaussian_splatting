@@ -30,7 +30,7 @@
 
 #include <ixwebsocket/IXNetSystem.h>
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 ComfyUIClient::ComfyUIClient()
 {
@@ -427,6 +427,6 @@ void ComfyUIClient::update()
     }
 }
 
-}  // namespace vk_gaussian_splatting
+}  // namespace vk_viewer
 
 #endif  // WITH_COMFYUI

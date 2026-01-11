@@ -23,7 +23,7 @@
 
 #include "shaderio.h"
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 // Parameters that controls the scene
 struct SceneParameters
@@ -158,4 +158,4 @@ void resetRtxParameters();
 // register the set of global parameters
 void registerCommandLineParameters(nvutils::ParameterRegistry* parameterRegistry);
 
-}  // namespace vk_gaussian_splatting
+}  // namespace vk_viewer

@@ -29,7 +29,7 @@
 #include <algorithm>
 #include "splat_set.h"
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 /**
  * @brief Metadata for a frame in a PLY sequence
@@ -189,4 +189,4 @@ private:
     bool                                   m_hasAudio = false;
 };
 
-}  // namespace vk_gaussian_splatting
+}  // namespace vk_viewer

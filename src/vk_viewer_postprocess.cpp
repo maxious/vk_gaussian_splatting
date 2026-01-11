@@ -19,9 +19,9 @@
 
 // This file is included from gaussian_splatting.cpp - do not compile separately
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
-void GaussianSplatting::initDescriptorSetPostProcessing()
+void VkViewer::initDescriptorSetPostProcessing()
 {
   // Descriptor Bindings
   m_descriptorBindingsPostProcess.clear();
@@ -97,7 +97,7 @@ void GaussianSplatting::initDescriptorSetPostProcessing()
   vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writeContainer.size()), writeContainer.data(), 0, nullptr);
 }
 
-void GaussianSplatting::updateDescriptorSetPostProcessing()
+void VkViewer::updateDescriptorSetPostProcessing()
 {
   // update only if the descriptor set is already initialized
   if(m_descriptorSetPostProcess != VK_NULL_HANDLE)
@@ -127,7 +127,7 @@ void GaussianSplatting::updateDescriptorSetPostProcessing()
   }
 }
 
-void GaussianSplatting::initPipelinePostProcessing()
+void VkViewer::initPipelinePostProcessing()
 {
 
   VkComputePipelineCreateInfo pipelineInfo{
@@ -145,7 +145,7 @@ void GaussianSplatting::initPipelinePostProcessing()
   NVVK_DBG_NAME(m_computePipelinePostProcess);
 }
 
-void GaussianSplatting::postProcess(VkCommandBuffer cmd)
+void VkViewer::postProcess(VkCommandBuffer cmd)
 {
   NVVK_DBG_SCOPE(cmd);
 
@@ -164,4 +164,4 @@ void GaussianSplatting::postProcess(VkCommandBuffer cmd)
   vkCmdDispatch(cmd, (uint32_t(m_viewSize.x) + wgSize - 1) / wgSize, (uint32_t(m_viewSize.y) + wgSize - 1) / wgSize, 1);
 }
 
-}  // namespace vk_gaussian_splatting
+}  // namespace vk_viewer

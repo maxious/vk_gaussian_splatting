@@ -22,7 +22,7 @@
 #include <filesystem>
 #include <string>
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 /**
  * @brief Detects file format and determines if it's a PLY sequence
@@ -103,4 +103,4 @@ private:
     static std::filesystem::path findAudioInDirectory(const std::filesystem::path& dirPath);
 };
 
-} // namespace vk_gaussian_splatting
+} // namespace vk_viewer

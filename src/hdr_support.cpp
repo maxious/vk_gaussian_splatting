@@ -19,7 +19,7 @@
 
 #include "hdr_support.h"
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 // Static storage for the global color space
 static VkColorSpaceKHR g_globalColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
@@ -45,4 +45,4 @@ VkFormat HDRSupport::getGlobalFormat()
   return g_globalFormat;
 }
 
-}  // namespace vk_gaussian_splatting
+}  // namespace vk_viewer

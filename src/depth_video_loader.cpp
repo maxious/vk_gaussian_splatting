@@ -34,7 +34,7 @@ extern "C" {
 }
 #endif
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 bool loadDepthVideoMetadata(const std::filesystem::path& metadataPath, DepthVideoMetadata& outMetadata)
 {
@@ -748,4 +748,4 @@ void VideoDepthPlaybackManager::seek(double timestamp)
     m_currentTime.store(timestamp);
 }
 
-} // namespace vk_gaussian_splatting
+} // namespace vk_viewer

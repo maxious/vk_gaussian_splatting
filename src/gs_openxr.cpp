@@ -66,7 +66,7 @@ typedef struct XrSystemSpaceWarpPropertiesFB {
 } XrSystemSpaceWarpPropertiesFB;
 #endif
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 
 #define XR_CHECK(result, msg)                                        \
@@ -315,10 +315,10 @@ bool GsOpenXr::createInstance()
 
   XrInstanceCreateInfo createInfo{XR_TYPE_INSTANCE_CREATE_INFO};
 #ifdef _WIN32
-  XR_STRCPY(createInfo.applicationInfo.applicationName, "vk_gaussian_splatting");
+  XR_STRCPY(createInfo.applicationInfo.applicationName, "vk_viewer");
   XR_STRCPY(createInfo.applicationInfo.engineName, "nvpro_core2");
 #else
-  strncpy(createInfo.applicationInfo.applicationName, "vk_gaussian_splatting", XR_MAX_APPLICATION_NAME_SIZE - 1);
+  strncpy(createInfo.applicationInfo.applicationName, "vk_viewer", XR_MAX_APPLICATION_NAME_SIZE - 1);
   strncpy(createInfo.applicationInfo.engineName, "nvpro_core2", XR_MAX_ENGINE_NAME_SIZE - 1);
 #endif
   createInfo.applicationInfo.applicationVersion = 1;
@@ -2443,6 +2443,6 @@ XrResult GsOpenXr::getHandMeshFB(XrHandTrackerEXT handTracker, XrHandTrackingMes
   return m_xrGetHandMeshFB(handTracker, mesh);
 }
 
-}  // namespace vk_gaussian_splatting
+}  // namespace vk_viewer
 
 #endif  // WITH_OPENXR

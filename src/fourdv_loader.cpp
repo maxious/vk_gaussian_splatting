@@ -22,7 +22,7 @@
 #include "miniply.h"
 #include <cmath>
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 // Helper for normalizing unpacking
 inline float normalize(uint32_t value, uint32_t bits)
@@ -348,4 +348,4 @@ bool FourDvLoader::load(const std::filesystem::path& filename, SplatSet& output,
   return true;
 }
 
-} // namespace vk_gaussian_splatting
+} // namespace vk_viewer

@@ -17,8 +17,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef _GAUSSIAN_SPLATTING_H_
-#define _GAUSSIAN_SPLATTING_H_
+#ifndef _VK_VIEWER_H_
+#define _VK_VIEWER_H_
 
 #include "depth_stream_client.h"
 #include "depth_to_vk.h"
@@ -113,7 +113,7 @@
 #include "gs_dlss_rr.hpp"
 #endif
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 // Forward declarations for animation
 class AnimationController;
@@ -122,7 +122,7 @@ class AnimationUI;
 
 
 
-class GaussianSplatting : public nvapp::IAppElement
+class VkViewer : public nvapp::IAppElement
 {
 public:
   // Benchmarking, print extended info
@@ -148,9 +148,9 @@ public:
   std::shared_ptr<nvutils::CameraManipulator> cameraManip{};
 
 protected:
-  GaussianSplatting(nvutils::ProfilerManager* profilerManager, nvutils::ParameterRegistry* parameterRegistry);
+  VkViewer(nvutils::ProfilerManager* profilerManager, nvutils::ParameterRegistry* parameterRegistry);
 
-  virtual ~GaussianSplatting();
+  virtual ~VkViewer();
 
   virtual void onAttach(nvapp::Application* app);
 
@@ -684,6 +684,6 @@ protected:
 
 };
 
-}  // namespace vk_gaussian_splatting
+}  // namespace vk_viewer
 
 #endif

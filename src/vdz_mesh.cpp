@@ -23,7 +23,7 @@
 #include <nvvk/check_error.hpp>
 #include <cstring>
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 bool VdzMesh::initialize(VkDevice device, nvvk::ResourceAllocator* alloc, uint32_t gridWidth, uint32_t gridHeight)
 {
@@ -144,4 +144,4 @@ std::vector<VkVertexInputAttributeDescription> VdzMesh::getAttributeDescriptions
   return attributeDescriptions;
 }
 
-}  // namespace vk_gaussian_splatting
+}  // namespace vk_viewer

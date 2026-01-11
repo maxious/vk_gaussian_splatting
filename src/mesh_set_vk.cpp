@@ -36,7 +36,7 @@
 
 #include <meshoptimizer.h>
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 bool MeshSetVk::loadModel(const std::filesystem::path& filename)
 {
@@ -463,4 +463,4 @@ void MeshSetVk::deleteInstance(uint32_t instanceId)
   }
 }
 
-}  // namespace vk_gaussian_splatting
+}  // namespace vk_viewer

@@ -31,7 +31,7 @@
 
 #include <glm/gtc/type_ptr.hpp>
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 // Application ID for NGX (arbitrary unique ID)
 static constexpr uint64_t g_ApplicationID = 0x47535F444C535352;  // "GS_DLSSR"
@@ -381,6 +381,6 @@ NVSDK_NGX_Result GsDlssRR::denoise(VkCommandBuffer  cmd,
   return NVSDK_NGX_Result_Success;
 }
 
-}  // namespace vk_gaussian_splatting
+}  // namespace vk_viewer
 
 #endif  // WITH_DLSS_RR

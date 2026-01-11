@@ -38,7 +38,7 @@
 #include <nvvk/check_error.hpp>
 #include <nvvk/default_structs.hpp>
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 // Utility function to compute the texture size according to the size of the data to be stored
 // By default use map of 4K Width and 1K height then adjust the height according to the data size
@@ -1140,4 +1140,4 @@ void SplatSetVk::rtxInitAccelerationStructures(SplatSet& splatSet)
   rtxValid = true;
 }
 
-}  // namespace vk_gaussian_splatting
+}  // namespace vk_viewer

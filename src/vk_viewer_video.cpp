@@ -17,12 +17,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "gaussian_splatting.h"
+#include "vk_viewer.h"
 #include <nvutils/logger.hpp>
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
-void GaussianSplatting::updateDepthRendering(VkCommandBuffer cmd)
+void VkViewer::updateDepthRendering(VkCommandBuffer cmd)
 {
 #ifdef WITH_VIDEO_DECODER
   if (m_videoDepthManager && m_videoDepthManager->isPlaying())
@@ -209,4 +209,4 @@ void GaussianSplatting::updateDepthRendering(VkCommandBuffer cmd)
   }
 }
 
-} // namespace vk_gaussian_splatting
+} // namespace vk_viewer

@@ -24,7 +24,7 @@
 #include <cstdint>
 #include <map>
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 struct VoxelAttribute {
     std::string name;
@@ -52,4 +52,4 @@ struct VoxelSet
   }
 };
 
-}  // namespace vk_gaussian_splatting
+}  // namespace vk_viewer

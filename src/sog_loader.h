@@ -27,7 +27,7 @@
 
 #include "splat_set.h"
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 // SOG (Spatially Ordered Gaussians) format loader
 // Supports both bundled .sog (ZIP archive) and unbundled (meta.json + webp files) formats
@@ -131,6 +131,6 @@ private:
   static bool loadWithReader(const SogMeta& meta, FileReader reader, SplatSet& output, std::function<void(float)> progressCallback);
 };
 
-}  // namespace vk_gaussian_splatting
+}  // namespace vk_viewer
 
 #endif

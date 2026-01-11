@@ -6,7 +6,7 @@
 #include <chrono>
 #include <mutex>
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
     class DepthStreamClient;
 }
 
@@ -14,7 +14,7 @@ class DepthBuffer {
 public:
     DepthBuffer(size_t maxPending = 60) : m_maxPending(maxPending) {}
 
-    void setClient(vk_gaussian_splatting::DepthStreamClient* client) { m_client = client; }
+    void setClient(vk_viewer::DepthStreamClient* client) { m_client = client; }
     void addFrame(const DepthFrame& frame);
 
     // Get best frame for current timestamp. Returns true if frame is available.
@@ -48,7 +48,7 @@ private:
     size_t m_maxPending;
     mutable std::recursive_mutex m_mutex;  // Recursive mutex for prefetch calling from getFrame
 
-    vk_gaussian_splatting::DepthStreamClient* m_client{nullptr};
+    vk_viewer::DepthStreamClient* m_client{nullptr};
 
     uint64_t m_lastTimestamp{0};
     float m_rtt{0.0f};

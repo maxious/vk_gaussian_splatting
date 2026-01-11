@@ -75,7 +75,7 @@
 #define XR_EXT_HAND_TRACKING_DATA_SOURCE_EXTENSION_NAME "XR_EXT_hand_tracking_data_source"
 #endif
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 class GsOpenXr
 {
@@ -525,6 +525,6 @@ public:
   bool acquireEnvironmentDepthImage(VkImage& outDepthImage, XrEnvironmentDepthImageMETA& outDepthInfo);
 };
 
-}  // namespace vk_gaussian_splatting
+}  // namespace vk_viewer
 
 #endif  // WITH_OPENXR

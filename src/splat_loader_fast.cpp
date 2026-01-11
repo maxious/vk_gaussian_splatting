@@ -34,7 +34,7 @@
 #include <cpuid.h>
 #endif
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 struct PropertyLayout
 {
@@ -334,4 +334,4 @@ bool SplatLoaderFast::load(const std::filesystem::path& filename, SplatSet& outp
   return true;
 }
 
-}  // namespace vk_gaussian_splatting
+}  // namespace vk_viewer

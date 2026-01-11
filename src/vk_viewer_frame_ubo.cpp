@@ -20,9 +20,9 @@
 // This file is included from gaussian_splatting.cpp - do not compile separately
 // Contains: Frame info UBO update functions
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
-void GaussianSplatting::updateAndUploadFrameInfoUBO(VkCommandBuffer cmd, const uint32_t splatCount)
+void VkViewer::updateAndUploadFrameInfoUBO(VkCommandBuffer cmd, const uint32_t splatCount)
 {
   NVVK_DBG_SCOPE(cmd);
 
@@ -105,7 +105,7 @@ void GaussianSplatting::updateAndUploadFrameInfoUBO(VkCommandBuffer cmd, const u
                        0, 1, &barrier, 0, NULL, 0, NULL);
 }
 
-void GaussianSplatting::updateAndUploadFrameInfoUBO(VkCommandBuffer  cmd,
+void VkViewer::updateAndUploadFrameInfoUBO(VkCommandBuffer  cmd,
                                                     const uint32_t   splatCount,
                                                     const glm::mat4& view,
                                                     const glm::mat4& proj,
@@ -231,4 +231,4 @@ void GaussianSplatting::updateAndUploadFrameInfoUBO(VkCommandBuffer  cmd,
                        0, 1, &barrier, 0, NULL, 0, NULL);
 }
 
-}  // namespace vk_gaussian_splatting
+}  // namespace vk_viewer

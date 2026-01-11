@@ -24,7 +24,7 @@
 
 #include <nvutils/logger.hpp>
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 PlySequenceLoader::~PlySequenceLoader() {
     close();
@@ -255,4 +255,4 @@ void PlySequenceLoader::updateAdaptiveCacheSize(const SplatSet& frame) {
     }
 }
 
-} // namespace vk_gaussian_splatting
+} // namespace vk_viewer

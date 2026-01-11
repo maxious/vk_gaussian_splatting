@@ -17,8 +17,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef _GAUSSIAN_SPLATTING_UI_H_
-#define _GAUSSIAN_SPLATTING_UI_H_
+#ifndef _VK_VIEWER_UI_H_
+#define _VK_VIEWER_UI_H_
 
 // Include winsock2 first to avoid winsock.h conflicts
 #ifdef _WIN32
@@ -103,7 +103,7 @@
 #include "mesh_set_vk.h"
 #include "light_set_vk.h"
 #include "camera_set.h"
-#include "gaussian_splatting.h"
+#include "vk_viewer.h"
 
 #ifdef WITH_COMFYUI
 #include "comfyui_client.h"
@@ -119,14 +119,14 @@ using nlohmann::json;
 
 #include "perf_stats.h"
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
-class GaussianSplattingUI : public GaussianSplatting
+class VkViewerUI : public VkViewer
 {
 public:  // Methods specializing IAppElement
-  GaussianSplattingUI(nvutils::ProfilerManager* profilerManager, nvutils::ParameterRegistry* parameterRegistry, bool* benchmarkEnabled);
+  VkViewerUI(nvutils::ProfilerManager* profilerManager, nvutils::ParameterRegistry* parameterRegistry, bool* benchmarkEnabled);
 
-  ~GaussianSplattingUI() override;
+  ~VkViewerUI() override;
 
   void onAttach(nvapp::Application* app) override;
 
@@ -315,9 +315,9 @@ private:
   bool initHandMeshes();
   void destroyHandMeshes();
   void updateHandMeshes();
-  void renderHandMesh(VkCommandBuffer cmd, const GaussianSplattingUI::HandMeshVk& mesh, const glm::mat4& wristTransform);
+  void renderHandMesh(VkCommandBuffer cmd, const VkViewerUI::HandMeshVk& mesh, const glm::mat4& wristTransform);
   void onRenderMultiviewExtra(VkCommandBuffer cmd) override;
-  void renderHandMeshMultiview(VkCommandBuffer cmd, const GaussianSplattingUI::HandMeshVk& mesh, const glm::mat4& wristTransform);
+  void renderHandMeshMultiview(VkCommandBuffer cmd, const VkViewerUI::HandMeshVk& mesh, const glm::mat4& wristTransform);
 
   // Wrist button for file picker
   struct WristButton {
@@ -356,6 +356,6 @@ private:
   void guiDrawVrMenu();
 };
 
-}  // namespace vk_gaussian_splatting
+}  // namespace vk_viewer
 
 #endif

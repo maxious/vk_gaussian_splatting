@@ -29,7 +29,7 @@
 #include <filesystem>
 #include <string>
 
-namespace vk_gaussian_splatting {
+namespace vk_viewer {
 
 // Helper to convert NGX error codes to string
 std::string getNGXResultString(NVSDK_NGX_Result result);
@@ -162,6 +162,6 @@ private:
   std::array<NVSDK_NGX_Resource_VK, RESOURCE_COUNT>  m_resources   = {};
 };
 
-}  // namespace vk_gaussian_splatting
+}  // namespace vk_viewer
 
 #endif  // WITH_DLSS_RR
