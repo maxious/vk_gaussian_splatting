@@ -226,6 +226,51 @@ Use `ty` to run type checks:
 uvx ty check
 ```
 
+### Running the Backend Server
+
+The backend server provides HTTP endpoints and WebSocket streaming for video depth processing. Use a PTY session for interactive debugging:
+
+```bash
+# Start the backend server in a PTY session
+pty_spawn --command "bash" --title "Backend Server"
+
+# Inside the PTY, run:
+cd /home/maxious/vk_gaussian_splatting/python
+source .venv/bin/activate
+uv run --extra backend uvicorn backend.main:app --host 0.0.0.0 --port 8000
+```
+
+**Useful curl commands for testing:**
+
+```bash
+# Create a session from a video file
+curl -X POST -F "file=@video.mp4" http://localhost:8000/api/sessions
+
+# Start HLS stream generation (returns status URL)
+curl -X POST "http://localhost:8000/api/sessions/{session_id}/hls" \
+  -H "Content-Type: application/json" \
+  -d '{"fps": 30, "segment_duration": 2.0, "process_res": 640}'
+
+# Poll HLS generation status
+curl http://localhost:8000/api/sessions/{session_id}/hls/status
+```
+
+**Environment Variables for Backend:**
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `VIDEO_DEPTH_MULTI_DEVICE` | Enable multi-device mode (for CPU/XPU fallback) | `0` |
+| `VIDEO_DEPTH_DEVICE_SPEC` | Device specification (e.g., `xpu:0,1`, `cpu`) | `auto` |
+| `VIDEO_DEPTH_MODEL_ID` | Model to use | `depth-anything/DA3METRIC-LARGE` |
+| `VIDEO_DEPTH_PROCESS_RES` | Processing resolution | `640` |
+| `VIDEO_DEPTH_LOG_LEVEL` | Logging level (DEBUG, INFO, WARNING, ERROR) | `WARNING` |
+
+Example with CPU fallback:
+```bash
+VIDEO_DEPTH_MULTI_DEVICE=1 VIDEO_DEPTH_LOG_LEVEL=DEBUG \
+  uv run --extra backend uvicorn backend.main:app --host 0.0.0.0 --port 8000
+```
+
 ## Third-party Libraries
 
 - nvpro_core2 - NVIDIA Vulkan utilities (submodule)

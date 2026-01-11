@@ -163,6 +163,12 @@ class MultiDeviceDepthModel:
         self._max_workers = settings.inference_worker_count
         self._executor: ThreadPoolExecutor | None = None
 
+    def _get_executor(self) -> ThreadPoolExecutor:
+        """Get or create the thread pool executor."""
+        if self._executor is None:
+            self._executor = ThreadPoolExecutor(max_workers=self._max_workers)
+        return self._executor
+
     def _ensure_worker_pool(self) -> DeviceWorkerPool:
         if self._worker_pool is not None:
             return self._worker_pool

@@ -24,13 +24,18 @@ import subprocess
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import cv2
 import numpy as np
 
 from backend.config import get_settings
-from backend.models.depth_model import DepthModel, DepthPrediction, get_depth_model
+from backend.models.depth_model import (
+    DepthModel,
+    DepthPrediction,
+    MultiDeviceDepthModel,
+    get_depth_model,
+)
 from backend.video.io import FrameDecoder, VideoMetadata
 
 
@@ -95,14 +100,14 @@ class HlsGenerator:
 
         self.state = HlsGeneratorState()
         self._lock = threading.Lock()
-        self._depth_model: Optional[DepthModel] = None
+        self._depth_model: Any = None
         self._ffmpeg_process: Optional[subprocess.Popen] = None
 
-    @property
-    def depth_model(self) -> DepthModel:
-        """Lazy-load the depth model."""
+    def _get_depth_model(self) -> DepthModel | MultiDeviceDepthModel:
+        """Get the appropriate depth model based on settings."""
+        settings = get_settings()
         if self._depth_model is None:
-            self._depth_model = get_depth_model()
+            self._depth_model = get_depth_model(use_multi_device=settings.use_multi_device)
         return self._depth_model
 
     def pack_depth_rgb(self, depth: np.ndarray, z_min: float, z_max: float) -> np.ndarray:
@@ -264,7 +269,7 @@ class HlsGenerator:
                     frame = frame.astype(np.uint8)
 
                 # Run depth inference
-                prediction = await self.depth_model.infer_depth_async(
+                prediction = await self._get_depth_model().infer_depth_async(
                     frame,
                     process_res=self.process_res,
                     target_size=(depth_width, depth_height),
@@ -278,7 +283,11 @@ class HlsGenerator:
 
                 # Write to FFmpeg stdin
                 composite_bytes = composite.tobytes()
-                self._ffmpeg_process.stdin.write(composite_bytes)  # type: ignore[union-attr]
+                try:
+                    self._ffmpeg_process.stdin.write(composite_bytes)  # type: ignore[union-attr]
+                except Exception:
+                    # FFmpeg may reject frames with invalid timestamps (e.g., last frame slightly out of bounds)
+                    break
 
                 frame_idx += 1
 
@@ -362,7 +371,7 @@ class HlsGenerator:
                 break
 
             # Run depth inference on sample
-            prediction = await self.depth_model.infer_depth_async(
+            prediction = await self._get_depth_model().infer_depth_async(
                 frame,
                 process_res=min(self.process_res, 384),  # Lower res for sampling
             )
