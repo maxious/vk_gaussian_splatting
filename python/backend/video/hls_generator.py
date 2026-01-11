@@ -197,7 +197,8 @@ class HlsGenerator:
         segment_pattern = hls_dir / "segment_%03d.ts"
 
         # FFmpeg command for HLS encoding
-        # Using pipe for input to avoid intermediate files
+        # Using setpts=PTS-STARTPTS to ensure timestamps start at 0.0
+        # This prevents "Invalid pts in seconds" errors from FFmpeg
         ffmpeg_cmd = [
             "ffmpeg",
             "-y",  # Overwrite output
@@ -211,6 +212,10 @@ class HlsGenerator:
             str(self.fps),
             "-i",
             "-",  # Read from stdin
+            "-fflags",
+            "+genpts",  # Generate PTS if missing
+            "-filter:v",
+            "setpts=PTS-STARTPTS",  # Reset timestamps to start at 0
             "-c:v",
             "libx264",
             "-preset",
