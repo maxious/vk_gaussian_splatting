@@ -654,6 +654,13 @@ protected:
   bool m_parallaxDragActive = false;           // Whether parallax drag is active
   float m_parallaxSensitivity = 0.001f;        // Sensitivity for parallax offset
 
+  // VR depth video control state
+  glm::vec2 m_vrPlaneTilt{0.0f, 0.0f};         // Current plane tilt (pitch, yaw) in VR
+  glm::vec2 m_vrPlaneTiltTarget{0.0f, 0.0f};   // Target tilt (spring target)
+  glm::vec2 m_vrViewpointOffset{0.0f, 0.0f};   // Viewpoint offset for parallax in VR
+  float m_vrParallaxScale = 1.0f;              // Parallax scale from VR right stick X
+  float m_vrViewpointDistance = 0.0f;          // Viewpoint distance from plane (VR right stick Y)
+
   DepthStreamClient::ClientStats m_depthStats{};
   int m_depthFrameCounter = 0;  // For selective debug logging
   

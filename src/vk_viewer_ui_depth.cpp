@@ -717,6 +717,60 @@ void VkViewerUI::guiDrawDepthStreamProperties()
     // Parallax rendering controls
     if(ImGui::TreeNode("Parallax Rendering"))
     {
+      // Control mode indicator
+      bool hasSplats = m_splatSet.positions.size() > 0 || m_splatLoader.getStatus() == SplatLoaderAsync::State::STATE_READY;
+      bool hasMeshes = !m_meshSetVk.instances.empty();
+      bool isDepthOnly = m_enableDepthRendering && !hasSplats && !hasMeshes;
+
+      if(isDepthOnly)
+      {
+        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 200, 100, 255));
+        ImGui::Text(ICON_MS_VIDEOCAM " Depth Video Mode");
+        ImGui::PopStyleColor();
+
+        // Desktop controls help
+        ImGui::BeginDisabled();
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+        ImGui::InputTextWithHint("##controls", "LMB: parallax | WASD: timeline | Space: play/pause",
+                                 nullptr, ImGuiInputTextFlags_ReadOnly);
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        if(ImGui::SmallButton(ICON_MS_HELP "?##parallaxHelp"))
+        {
+          ImGui::OpenPopup("parallax_controls_help");
+        }
+        if(ImGui::BeginPopup("parallax_controls_help"))
+        {
+          ImGui::TextUnformatted("Desktop Controls:");
+          ImGui::Separator();
+          ImGui::TextWrapped("LMB drag: Adjust parallax (simulates head movement)");
+          ImGui::TextWrapped("Mouse wheel: Adjust focus plane");
+          ImGui::TextWrapped("WASD / Arrows: Scrub timeline");
+          ImGui::TextWrapped("Home/End: Jump to start/end");
+          ImGui::TextWrapped("Space: Play/Pause");
+          ImGui::EndPopup();
+        }
+
+        // VR controls display
+#ifdef WITH_OPENXR
+        if(m_xrInitialized)
+        {
+          ImGui::Spacing();
+          ImGui::Text("VR Controls:");
+          ImGui::SameLine();
+          ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(100, 200, 255, 255));
+          ImGui::Text(ICON_MS_HEADSET " Left stick: tilt | Right stick: parallax");
+          ImGui::PopStyleColor();
+        }
+#endif
+      }
+      else
+      {
+        ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f), ICON_MS_SCENE " Scene Mode");
+      }
+
+      ImGui::Separator();
+
       PE::SliderFloat("Strength", &prmFrame.vdzParallaxStrength, 0.0f, 2.0f, "%.2f", 0,
                       "Parallax intensity multiplier (0.0 = disabled)");
       PE::SliderFloat("Focus Plane", &prmFrame.vdzParallaxFocus, 0.0f, 1.0f, "%.2f", 0,

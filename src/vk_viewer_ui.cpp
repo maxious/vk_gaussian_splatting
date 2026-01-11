@@ -227,12 +227,17 @@ void VkViewerUI::onPreRender()
     }
   }
 
-  // Update parallax offset based on right mouse button drag
-  if(prmFrame.vdzParallaxStrength > 0.0f)
+  // Depth video specific controls (when in depth-only mode, camera manipulator is ineffective)
+  bool isDepthOnlyMode = m_enableDepthRendering && !m_splatLoader.getStatus() == SplatLoaderAsync::State::STATE_READY && m_meshSetVk.instances.empty();
+  bool hasDepthContent = m_enableDepthRendering || m_videoDepthPlaybackMode || m_hlsPlaybackMode;
+
+  if(hasDepthContent && prmFrame.vdzParallaxStrength > 0.0f)
   {
     ImGuiIO& io = ImGui::GetIO();
-    
-    if(io.MouseDown[1])  // Right mouse button
+    float deltaTime = io.DeltaTime;
+
+    // LMB drag: parallax offset (simulates head movement)
+    if(io.MouseDown[0])  // Left mouse button
     {
       if(m_lastMousePos.x >= 0.0f)
       {
@@ -241,13 +246,82 @@ void VkViewerUI::onPreRender()
         prmFrame.vdzParallaxOffset.x = std::clamp(prmFrame.vdzParallaxOffset.x, -1.0f, 1.0f);
         prmFrame.vdzParallaxOffset.y = std::clamp(prmFrame.vdzParallaxOffset.y, -1.0f, 1.0f);
       }
+      m_lastMousePos = glm::vec2(io.MousePos.x, io.MousePos.y);
     }
     else
     {
+      // Reset parallax offset when not dragging
       prmFrame.vdzParallaxOffset = glm::vec2(0.0f, 0.0f);
+      m_lastMousePos = glm::vec2(-1.0f, -1.0f);
     }
-    
-    m_lastMousePos = glm::vec2(io.MousePos.x, io.MousePos.y);
+
+    // Mouse wheel: focus plane adjustment
+    if(io.MouseWheel != 0.0f)
+    {
+      prmFrame.vdzParallaxFocus = std::clamp(prmFrame.vdzParallaxFocus + io.MouseWheel * 0.1f, 0.0f, 1.0f);
+    }
+
+    // WASD / Arrow keys: timeline scrubbing (only when paused or for fine control)
+    float scrubSpeed = 1000.0f * deltaTime;  // 1 second per second at default
+    if(ImGui::IsKeyDown(ImGuiKey_LeftShift) || ImGui::IsKeyDown(ImGuiKey_RightShift))
+    {
+      scrubSpeed *= 5.0f;  // Faster scrubbing with shift
+    }
+    if(ImGui::IsKeyDown(ImGuiKey_LeftCtrl) || ImGui::IsKeyDown(ImGuiKey_RightCtrl))
+    {
+      scrubSpeed *= 0.1f;  // Slower scrubbing with ctrl
+    }
+
+    if(ImGui::IsKeyDown(ImGuiKey_A) || ImGui::IsKeyDown(ImGuiKey_LeftArrow))
+    {
+      m_playbackTimeOffset -= scrubSpeed;
+      m_playbackPaused = true;  // Auto-pause when scrubbing
+    }
+    if(ImGui::IsKeyDown(ImGuiKey_D) || ImGui::IsKeyDown(ImGuiKey_RightArrow))
+    {
+      m_playbackTimeOffset += scrubSpeed;
+      m_playbackPaused = true;
+    }
+    if(ImGui::IsKeyDown(ImGuiKey_W) || ImGui::IsKeyDown(ImGuiKey_UpArrow))
+    {
+      m_playbackTimeOffset += scrubSpeed * 2.0f;  // Page up
+      m_playbackPaused = true;
+    }
+    if(ImGui::IsKeyDown(ImGuiKey_S) || ImGui::IsKeyDown(ImGuiKey_DownArrow))
+    {
+      m_playbackTimeOffset -= scrubSpeed * 2.0f;  // Page down
+      m_playbackPaused = true;
+    }
+
+    // Home/End: jump to start/end
+    if(ImGui::IsKeyDown(ImGuiKey_Home))
+    {
+      m_playbackTimeOffset = 0.0;
+      m_playbackPaused = true;
+    }
+    if(ImGui::IsKeyDown(ImGuiKey_End))
+    {
+      if(m_hlsPlaybackMode && m_hlsMetadata.duration > 0)
+      {
+        m_playbackTimeOffset = m_hlsMetadata.duration * 1000.0;
+      }
+      else
+      {
+        m_playbackTimeOffset = 0.0;  // Default to start
+      }
+      m_playbackPaused = true;
+    }
+
+    // Space: play/pause toggle
+    if(ImGui::IsKeyPressed(ImGuiKey_Space, false))
+    {
+      m_playbackPaused = !m_playbackPaused;
+      if(!m_playbackPaused)
+      {
+        // Resume from current position
+        m_playbackStartTime = std::chrono::steady_clock::now();
+      }
+    }
   }
   else
   {

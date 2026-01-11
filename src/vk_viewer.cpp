@@ -643,6 +643,76 @@ void VkViewer::updateXrLocomotion(float deltaTime)
   m_xr->pollControllerInput();
   const auto& locomotion = m_xr->getLocomotionInput();
 
+  // Check if in depth-only mode (depth content but no splats or meshes)
+  bool hasDepthContent = m_enableDepthRendering || m_videoDepthPlaybackMode || m_hlsPlaybackMode;
+  bool hasSplats = m_splatSet.positions.size() > 0 || m_splatLoader.getStatus() == SplatLoaderAsync::State::STATE_READY;
+  bool hasMeshes = !m_meshSetVk.instances.empty();
+  bool isDepthOnlyMode = hasDepthContent && !hasSplats && !hasMeshes;
+
+  // Handle depth video mode controls
+  if(isDepthOnlyMode && hasDepthContent)
+  {
+    // Left stick: plane tilt with spring-back on release
+    if(std::abs(locomotion.move.x) > 0.1f || std::abs(locomotion.move.y) > 0.1f)
+    {
+      // Map left stick to tilt angles (limited range)
+      const float maxTilt = glm::radians(20.0f);  // ±20 degrees
+      m_vrPlaneTiltTarget.x = locomotion.move.y * maxTilt;  // Pitch (up/down)
+      m_vrPlaneTiltTarget.y = -locomotion.move.x * maxTilt; // Yaw (left/right)
+    }
+    else
+    {
+      // Spring back to neutral when stick released
+      m_vrPlaneTiltTarget = glm::vec2(0.0f, 0.0f);
+    }
+
+    // Apply spring-back interpolation for plane tilt
+    float springStiffness = 10.0f;
+    glm::vec2 tiltDelta = m_vrPlaneTiltTarget - m_vrPlaneTilt;
+    m_vrPlaneTilt += tiltDelta * springStiffness * deltaTime;
+
+    // Right stick: parallax parameters
+    // X-axis: parallax strength/scale
+    // Y-axis: viewpoint distance from plane
+    if(std::abs(locomotion.turn.x) > 0.1f)
+    {
+      m_vrParallaxScale = std::clamp(m_vrParallaxScale + locomotion.turn.x * deltaTime * 2.0f, 0.0f, 2.0f);
+      prmFrame.vdzParallaxStrength = m_vrParallaxScale;
+    }
+    if(std::abs(locomotion.turn.y) > 0.1f)
+    {
+      m_vrViewpointDistance = std::clamp(m_vrViewpointDistance + locomotion.turn.y * deltaTime * 0.5f, -0.5f, 0.5f);
+      // Apply to parallax focus as a rough proxy for viewpoint distance
+      prmFrame.vdzParallaxFocus = std::clamp(0.5f - m_vrViewpointDistance * 2.0f, 0.0f, 1.0f);
+    }
+
+    // Stick button: play/pause toggle
+    if(locomotion.sprintPressed && !m_playbackPaused)
+    {
+      m_playbackPaused = true;
+    }
+    else if(!locomotion.sprintPressed && m_playbackPaused && m_playbackTimeOffset == 0.0)
+    {
+      // Only resume if we were paused by the stick button (detected by timeOffset == 0)
+      m_playbackPaused = false;
+      m_playbackStartTime = std::chrono::steady_clock::now();
+    }
+
+    // Apply plane tilt to the VDZ mesh orientation
+    // This simulates "leaning" into the scene
+    // Since rotation is stored as Euler angles (vec3), we modify the rotation directly
+    if(std::abs(m_vrPlaneTilt.x) > 0.001f || std::abs(m_vrPlaneTilt.y) > 0.001f)
+    {
+      m_splatSetVk.rotation.x = m_vrPlaneTilt.x;  // Pitch
+      m_splatSetVk.rotation.y = m_vrPlaneTilt.y;  // Yaw
+      computeTransform(m_splatSetVk.scale, m_splatSetVk.rotation, m_splatSetVk.translation,
+                       m_splatSetVk.transform, m_splatSetVk.transformInverse);
+    }
+
+    return;  // Skip normal locomotion in depth-only mode
+  }
+
+  // Normal scene locomotion (not depth-only mode)
   // Determine if we should use hand input or controller input
   bool useHands = m_xr->handsSupported() &&
                   (m_xr->getHandInput(GsOpenXr::Hand::Left).tracked ||
