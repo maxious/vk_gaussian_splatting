@@ -31,7 +31,17 @@ using namespace vk_viewer;
 int main(int argc, char** argv)
 {
   nvutils::Logger::getInstance().breakOnError(false);
-  //nvutils::Logger::getInstance().setLogLevel(nvutils::Logger::LogLevel::eDEBUG);
+  // Enable file flushing so logs are preserved on crash
+  nvutils::Logger::getInstance().setFileFlush(true);
+  
+  // Check for debug log level via environment variable
+  if(const char* debugEnv = std::getenv("VK_VIEWER_DEBUG"))
+  {
+    if(std::string(debugEnv) == "1")
+    {
+      nvutils::Logger::getInstance().setMinimumLogLevel(nvutils::Logger::LogLevel::eDEBUG);
+    }
+  }
 
   nvutils::ProfilerManager              profilerManager;
   nvutils::ParameterRegistry            parameterRegistry;

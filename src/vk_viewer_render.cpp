@@ -240,11 +240,12 @@ void VkViewer::processUpdateRequests(void)
   bool needUpdate = m_requestUpdateSplatData || m_requestUpdateSplatAs || m_requestUpdateMeshData
                     || m_requestUpdateShaders || m_requestUpdateLightsBuffer || m_requestDeleteSelectedMesh;
 
-  // Allow mesh-only updates even without splats loaded
+  // Allow mesh-only or depth-only updates even without splats loaded
   bool hasMeshUpdate = m_requestUpdateMeshData || m_requestDeleteSelectedMesh;
+  bool hasDepthContent = m_enableDepthRendering || m_videoDepthPlaybackMode;
   if(!needUpdate)
     return;
-  if(!m_splatSet.size() && !hasMeshUpdate)
+  if(!m_splatSet.size() && !hasMeshUpdate && !hasDepthContent)
     return;
 
   resetFrameCounter();

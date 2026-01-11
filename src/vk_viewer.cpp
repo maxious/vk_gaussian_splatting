@@ -227,6 +227,9 @@ void VkViewer::onDetach()
   shutdownOpenXR();
 #endif
 
+  // Wait for GPU to finish before cleanup
+  vkDeviceWaitIdle(m_device);
+
   // stops the threads
   m_splatLoader.shutdown();
   m_cpuSorter.shutdown();
@@ -244,6 +247,12 @@ void VkViewer::onDetach()
   }
   m_depthClient.reset();
 #ifdef WITH_VIDEO_DECODER
+  // Clean up video depth playback manager first (it owns video decoder and depth loader)
+  if(m_videoDepthManager)
+  {
+    m_videoDepthManager->close();
+    m_videoDepthManager.reset();
+  }
   m_videoDecoder.reset();
   // Clean up video texture
   if(m_videoTexture.view != VK_NULL_HANDLE)
@@ -445,6 +454,15 @@ void VkViewer::enableDepthVideoPlayback(const std::string& metadataPath)
 {
   LOGI("enableDepthVideoPlayback called with: %s\n", metadataPath.c_str());
 #ifdef WITH_VIDEO_DECODER
+  // Clean up any existing playback manager first
+  if(m_videoDepthManager)
+  {
+    vkDeviceWaitIdle(m_device);
+    m_videoDepthManager->close();
+    m_videoDepthManager.reset();
+  }
+
+  // Initialize or reinitialize depth manager
   if(!m_depthManager)
   {
     m_depthManager = std::make_unique<DepthTextureManager>();
@@ -509,12 +527,25 @@ void VkViewer::enableDepthVideoPlayback(const std::string& metadataPath)
   }
 
   // Ensure shaders and pipelines are initialized
-  if(!m_shaders.valid)
+  // Also reinitialize if VDZ pipeline is missing (can happen if splats were unloaded)
+  if(!m_shaders.valid || m_graphicsPipelineVdzMesh == VK_NULL_HANDLE)
   {
-    m_lightSet.init(m_app, &m_alloc, &m_uploader);
-    initShaders();
-    initRendererBuffers();
+    if(!m_shaders.valid)
+    {
+      m_lightSet.init(m_app, &m_alloc, &m_uploader);
+      initShaders();
+      initRendererBuffers();
+    }
+    else
+    {
+      // Shaders valid but pipelines were destroyed - reinitialize
+      deinitPipelines();
+    }
     initPipelines();
+    initRtDescriptorSet();
+    initRtPipeline();
+    initDescriptorSetPostProcessing();
+    initPipelinePostProcessing();
   }
 
   m_videoDepthPlaybackMode = true;

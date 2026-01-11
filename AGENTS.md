@@ -11,7 +11,16 @@
 
 Include `<nvutils/logger.hpp>` to use these macros.
 
-The logger writes to both console and log file, making debugging easier.
+The logger writes to both console and a log file at `_bin/Debug/log_vk_viewer.txt` (or `_bin/Release/log_vk_viewer.txt`). This is useful for debugging as it captures all output even if the app crashes.
+
+### Debug Logging
+
+To enable verbose debug logging, set the environment variable:
+```bash
+export VK_VIEWER_DEBUG=1
+```
+
+This enables `LOGD()` debug messages which are suppressed by default.
 
 ## Code Style
 

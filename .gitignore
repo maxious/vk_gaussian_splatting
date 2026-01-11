@@ -31,3 +31,4 @@ ENV/
 .ruff_cache/
 build_check/
 checkpoints/
+python/tmp/

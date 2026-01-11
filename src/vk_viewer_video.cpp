@@ -27,6 +27,11 @@ void VkViewer::updateDepthRendering(VkCommandBuffer cmd)
 #ifdef WITH_VIDEO_DECODER
   if (m_videoDepthManager && m_videoDepthManager->isPlaying())
   {
+    static int updateLogCounter = 0;
+    if(updateLogCounter++ % 120 == 0) {
+      LOGD("updateDepthRendering: videoDepthManager active, paused=%d\n", m_playbackPaused ? 1 : 0);
+    }
+    
     if(m_playbackPaused) return;
 
     VideoDecoder* videoDecoder = m_videoDepthManager->getVideoDecoder();
@@ -35,7 +40,12 @@ void VkViewer::updateDepthRendering(VkCommandBuffer cmd)
     if(videoDecoder && depthLoader)
     {
         DecodedFrame videoFrame;
-        if(videoDecoder->getNextFrame(videoFrame))
+        bool gotFrame = videoDecoder->getNextFrame(videoFrame);
+        if(updateLogCounter % 120 == 1) {
+          LOGD("updateDepthRendering: getNextFrame=%d, frame size=%dx%d\n", 
+               gotFrame ? 1 : 0, videoFrame.width, videoFrame.height);
+        }
+        if(gotFrame)
         {
             if (videoFrame.width > 0 && videoFrame.height > 0)
             {

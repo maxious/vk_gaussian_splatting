@@ -18,13 +18,20 @@ bool DepthTextureManager::initialize(VkDevice device, VkPhysicalDevice physicalD
 
 void DepthTextureManager::cleanup() {
     for (auto& tex : m_textures) {
-        if (tex.image.descriptor.imageView) vkDestroyImageView(m_device, tex.image.descriptor.imageView, nullptr);
-        m_allocator->destroyImage(tex.image);
+        if (tex.image.descriptor.imageView) {
+            vkDestroyImageView(m_device, tex.image.descriptor.imageView, nullptr);
+            tex.image.descriptor.imageView = VK_NULL_HANDLE;
+        }
+        if (tex.image.image) {
+            m_allocator->destroyImage(tex.image);
+            tex.image = {};
+        }
     }
     m_textures.clear();
     
     if (m_stagingAllocator) {
         m_stagingAllocator->deinit();
+        m_stagingAllocator.reset();
     }
 }
 
