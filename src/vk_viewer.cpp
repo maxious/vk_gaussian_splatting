@@ -540,6 +540,103 @@ void VkViewer::enableDepthVideoPlayback(const std::string& metadataPath)
 #endif
 }
 
+void VkViewer::enableHlsPlayback(const std::string& hlsPlaylistPath)
+{
+  LOGI("enableHlsPlayback called with: %s\n", hlsPlaylistPath.c_str());
+#ifdef WITH_VIDEO_DECODER
+  // Clean up any existing HLS player or video depth manager first
+  if(m_hlsPlayer)
+  {
+    vkDeviceWaitIdle(m_device);
+    m_hlsPlayer->stop();
+    m_hlsPlayer.reset();
+  }
+
+  if(m_videoDepthManager)
+  {
+    vkDeviceWaitIdle(m_device);
+    m_videoDepthManager->close();
+    m_videoDepthManager.reset();
+  }
+
+  // Initialize or reinitialize depth manager
+  if(!m_depthManager)
+  {
+    m_depthManager = std::make_unique<DepthTextureManager>();
+    m_depthManager->initialize(m_device, m_app->getPhysicalDevice(), m_app->getQueue(0).queue, &m_alloc);
+  }
+
+  m_hlsPlayer = std::make_unique<HlsDepthPlayer>();
+  if(!m_hlsPlayer->open(hlsPlaylistPath))
+  {
+    LOGE("Failed to open HLS stream from: %s\n", hlsPlaylistPath.c_str());
+    m_hlsPlayer.reset();
+    return;
+  }
+
+  // Get metadata from HLS player
+  m_hlsMetadata = m_hlsPlayer->getMetadata();
+
+  // Update video texture dimensions
+  m_videoTexture.width = m_hlsMetadata.rgbWidth;
+  m_videoTexture.height = m_hlsMetadata.height;
+
+  // Set depth rendering parameters
+  prmFrame.vdzZMin = m_hlsMetadata.zMin;
+  prmFrame.vdzZMax = m_hlsMetadata.zMax;
+  prmFrame.vdzAspect = m_hlsMetadata.rgbWidth > 0 && m_hlsMetadata.height > 0
+      ? static_cast<float>(m_hlsMetadata.rgbWidth) / static_cast<float>(m_hlsMetadata.height)
+      : 1.777f;
+  prmFrame.vdzZScale = 10.0f;
+  prmFrame.vdzZBias = 2.0f;
+  prmFrame.vdzZGamma = 5.0f;
+  prmFrame.vdzZMaxClip = 0.2f;
+  prmFrame.vdzPlaneScale = 1.4f;
+  prmFrame.vdzEdgeThreshold = 1.0f;
+
+  LOGI("HLS playback initialized: %dx%d (RGB: %dx%d), fps=%.2f, z=[%.2f, %.2f]\n",
+       m_hlsMetadata.rgbWidth * 2, m_hlsMetadata.height,
+       m_hlsMetadata.rgbWidth, m_hlsMetadata.height,
+       m_hlsMetadata.fps, m_hlsMetadata.zMin, m_hlsMetadata.zMax);
+
+  // Ensure shaders and pipelines are initialized
+  if(!m_shaders.valid || m_graphicsPipelineVdzMesh == VK_NULL_HANDLE)
+  {
+    if(!m_shaders.valid)
+    {
+      m_lightSet.init(m_app, &m_alloc, &m_uploader);
+      initShaders();
+      initRendererBuffers();
+    }
+    else
+    {
+      // Shaders valid but pipelines were destroyed - reinitialize
+      deinitPipelines();
+    }
+    initPipelines();
+    initRtDescriptorSet();
+    initRtPipeline();
+    initDescriptorSetPostProcessing();
+    initPipelinePostProcessing();
+  }
+
+  m_hlsPlaybackMode = true;
+  m_enableDepthRendering = true;
+  m_playbackStartTime = std::chrono::steady_clock::now();
+  m_playbackTimeOffset = 0.0;
+  m_playbackPaused = false;
+  m_lastVdzFrameIndex = SIZE_MAX;
+
+  m_hlsPlayer->start();
+
+  prmFrame.vdzUseVideoTexture = 1;
+
+  LOGI("HLS playback enabled from: %s\n", hlsPlaylistPath.c_str());
+#else
+  LOGE("Video decoder not available - rebuild with ENABLE_VIDEO_DECODER=ON\n");
+#endif
+}
+
 bool VkViewer::isDepthVideoPlaying() const
 {
 #ifdef WITH_VIDEO_DECODER

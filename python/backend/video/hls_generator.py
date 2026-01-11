@@ -22,9 +22,10 @@ import os
 import shutil
 import subprocess
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import IO, Any, Optional, cast
 
 import cv2
 import numpy as np
@@ -64,6 +65,12 @@ class HlsGeneratorState:
     frame_count: int = 0
     total_frames: int = 0
     error_message: str | None = None
+    start_time: float = 0.0  # Unix timestamp when generation started
+    eta_seconds: float | None = None  # Estimated time remaining in seconds
+    frames_per_second: float = 0.0  # Processing speed
+    sampling_frames: int = 10  # Number of frames used for depth range sampling
+    sampling_start_time: float = 0.0  # When sampling phase started
+    production_start_time: float = 0.0  # When actual HLS encoding started
 
 
 class HlsGenerator:
@@ -165,6 +172,10 @@ class HlsGenerator:
         """
         settings = get_settings()
 
+        # Record start time for ETA calculation
+        self.state.start_time = time.time()
+        self.state.status = "processing"
+
         # Clean output directory
         if self.output_dir.exists():
             shutil.rmtree(self.output_dir)
@@ -175,9 +186,16 @@ class HlsGenerator:
         video_meta = decoder.metadata()
         decoder.close()
 
-        self.state.total_frames = (
-            int(video_meta.duration_ms / 1000.0 * self.fps) if video_meta.duration_ms else 0
-        )
+        # Use actual frame count from video metadata for accurate progress tracking
+        if video_meta.frames:
+            self.state.total_frames = int(video_meta.frames)
+        else:
+            duration_ms_val = video_meta.duration_ms
+            fps_val = self.fps
+            if duration_ms_val is not None and fps_val is not None:
+                self.state.total_frames = int(duration_ms_val / 1000.0 * fps_val)
+            else:
+                self.state.total_frames = 0
 
         # Calculate dimensions
         rgb_width = video_meta.width
@@ -188,6 +206,16 @@ class HlsGenerator:
 
         # Calculate global z_min/z_max from a sample of frames
         z_min, z_max = await self._calculate_depth_range(decoder, video_meta)
+
+        # Mark when actual HLS encoding starts (after sampling)
+        self.state.production_start_time = time.time()
+
+        # Store video duration for accurate frame timing
+        video_duration_ms = (
+            video_meta.duration_ms or (video_meta.frames / self.fps * 1000)
+            if video_meta.frames
+            else None
+        )
 
         # Create FFmpeg pipeline for HLS generation
         hls_dir = self.output_dir / "hls"
@@ -250,22 +278,55 @@ class HlsGenerator:
             decoder = FrameDecoder(self.source_path)
             frame_interval_ms = 1000.0 / self.fps
             frame_idx = 0
+            max_frame_idx = None
 
             while True:
                 # Check if process is still running
                 if self._ffmpeg_process.poll() is not None:
                     raise RuntimeError("FFmpeg process died unexpectedly")
 
+                # Calculate target timestamp for this frame
+                target_time_ms = frame_idx * frame_interval_ms
+
+                # Stop if we exceed video duration (with small tolerance)
+                if video_duration_ms is not None and target_time_ms >= video_duration_ms - 1:
+                    break
+
                 try:
-                    frame, frame_info = decoder.decode_at(frame_idx * frame_interval_ms)
+                    frame, frame_info = decoder.decode_at(target_time_ms)
                 except StopIteration:
                     break
 
-                # Update progress
                 progress = (frame_idx + 1) / max(self.state.total_frames, 1)
+
+                production_elapsed_s = time.time() - self.state.production_start_time
+
+                if frame_idx < 20:
+                    current_fps = (frame_idx + 1) / max(production_elapsed_s, 0.001)
+                    smoothing_alpha = 0.3
+                else:
+                    current_fps = (frame_idx + 1) / max(production_elapsed_s, 0.001)
+                    smoothing_alpha = 0.1
+
+                if self.state.frames_per_second == 0.0:
+                    self.state.frames_per_second = current_fps
+                else:
+                    self.state.frames_per_second = (
+                        smoothing_alpha * current_fps
+                        + (1 - smoothing_alpha) * self.state.frames_per_second
+                    )
+
+                remaining_frames = max(self.state.total_frames - (frame_idx + 1), 0)
+                eta_seconds = (
+                    remaining_frames / self.state.frames_per_second
+                    if self.state.frames_per_second > 0 and frame_idx >= 10
+                    else None
+                )
+
                 with self._lock:
                     self.state.progress = progress
                     self.state.frame_count = frame_idx + 1
+                    self.state.eta_seconds = eta_seconds
 
                 # Ensure RGB is uint8
                 if frame.dtype == np.float32 or frame.dtype == np.float64:
@@ -288,11 +349,13 @@ class HlsGenerator:
 
                 # Write to FFmpeg stdin
                 composite_bytes = composite.tobytes()
-                try:
-                    self._ffmpeg_process.stdin.write(composite_bytes)  # type: ignore[union-attr]
-                except Exception:
-                    # FFmpeg may reject frames with invalid timestamps (e.g., last frame slightly out of bounds)
-                    break
+                stdin = self._ffmpeg_process.stdin
+                if stdin is not None:
+                    try:
+                        stdin.write(composite_bytes)  # type: ignore[arg-type]
+                    except Exception:
+                        # FFmpeg may reject frames with invalid timestamps (e.g., last frame slightly out of bounds)
+                        break
 
                 frame_idx += 1
 
@@ -402,6 +465,9 @@ class HlsGenerator:
                 frame_count=self.state.frame_count,
                 total_frames=self.state.total_frames,
                 error_message=self.state.error_message,
+                start_time=self.state.start_time,
+                eta_seconds=self.state.eta_seconds,
+                frames_per_second=self.state.frames_per_second,
             )
 
     def cancel(self) -> None:

@@ -346,18 +346,36 @@ void VkViewerUI::guiDrawDepthStreamProperties()
   {
     PE::begin("##Offline Video+Depth");
 
-    if(!m_videoDepthPlaybackMode)
+    if(!m_videoDepthPlaybackMode && !m_hlsPlaybackMode)
     {
       PE::entry("Load Video+Depth", [this]() {
         static std::filesystem::path videoPath;
-        
+
         if(ImGui::Button("Load Video..."))
         {
           videoPath = nvgui::windowOpenFileDialog(m_app->getWindowHandle(), "Select Video File", "Video Files|*.mp4;*.avi;*.mov;*.mkv");
         }
         ImGui::SameLine();
         ImGui::Text("%s", videoPath.empty() ? "(none)" : videoPath.filename().string().c_str());
-        
+
+        return false;
+      });
+
+      PE::entry("Load HLS Stream", [this]() {
+        static std::filesystem::path hlsPath;
+
+        if(ImGui::Button("Select metadata.json..."))
+        {
+          hlsPath = nvgui::windowOpenFileDialog(m_app->getWindowHandle(), "Select HLS Metadata", "Metadata Files|metadata.json");
+        }
+        ImGui::SameLine();
+        ImGui::Text("%s", hlsPath.empty() ? "(none)" : hlsPath.filename().string().c_str());
+
+        if(!hlsPath.empty() && ImGui::Button("Load HLS"))
+        {
+          enableHlsPlayback(hlsPath.string());
+        }
+
         return false;
       });
     }
@@ -456,10 +474,17 @@ void VkViewerUI::guiDrawDepthStreamProperties()
       {
         m_enableDepthRendering = false;
         m_videoDepthPlaybackMode = false;
+        m_hlsPlaybackMode = false;
 #ifdef WITH_VIDEO_DECODER
         if(m_videoDepthManager)
         {
+          m_videoDepthManager->close();
           m_videoDepthManager.reset();
+        }
+        if(m_hlsPlayer)
+        {
+          m_hlsPlayer->stop();
+          m_hlsPlayer.reset();
         }
 #endif
       }

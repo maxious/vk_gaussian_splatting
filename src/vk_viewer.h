@@ -25,6 +25,7 @@
 #ifdef WITH_VIDEO_DECODER
 #include "video_decoder.h"
 #include "depth_video_loader.h"
+#include "hls_depth_player.h"
 #endif
 
 #include <iostream>
@@ -138,6 +139,7 @@ public:
 
     void enableDepthRendering(const std::string& host, int port, const std::string& videoPath);
     void enableDepthVideoPlayback(const std::string& metadataPath);
+    void enableHlsPlayback(const std::string& hlsPlaylistPath);
     void updateDepthRendering(VkCommandBuffer cmd);
     bool isDepthVideoPlaying() const;
 
@@ -664,6 +666,13 @@ protected:
     uint32_t width = 0;
     uint32_t height = 0;
   } m_videoTexture;
+#endif
+
+  // HLS Depth Player for HLS streaming playback
+#ifdef WITH_VIDEO_DECODER
+  std::unique_ptr<HlsDepthPlayer> m_hlsPlayer;
+  bool m_hlsPlaybackMode = false;
+  HlsDepthMetadata m_hlsMetadata{};
 #endif
 
   // Dummy texture for binding initialization (1x1 2D array)
