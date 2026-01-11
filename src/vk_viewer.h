@@ -22,6 +22,7 @@
 
 #include "depth_stream_client.h"
 #include "depth_to_vk.h"
+#include "backend_process_manager.h"
 #ifdef WITH_VIDEO_DECODER
 #include "video_decoder.h"
 #include "depth_video_loader.h"
@@ -674,6 +675,10 @@ protected:
   bool m_hlsPlaybackMode = false;
   HlsDepthMetadata m_hlsMetadata{};
 #endif
+
+  // Backend process manager for spawning/stopping local backend
+  std::unique_ptr<BackendProcessManager> m_backendManager;
+  bool m_localBackendStarted = false;
 
   // Dummy texture for binding initialization (1x1 2D array)
   struct

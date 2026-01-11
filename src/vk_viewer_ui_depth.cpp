@@ -47,6 +47,68 @@ void VkViewerUI::guiDrawDepthStreamProperties()
     static bool uploadInProgress = false;
     static bool uploadFailed = false;
 
+    // Initialize backend manager if not already done
+    if (!m_backendManager)
+    {
+      m_backendManager = std::make_unique<BackendProcessManager>();
+    }
+
+    // Local backend management
+    PE::entry("Local Backend", [&]() {
+      bool backendRunning = m_backendManager->isRunning();
+      bool backendManaged = m_backendManager->isManaged();
+
+      if (backendRunning)
+      {
+        ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "✓ Backend running (PID managed)");
+        ImGui::SameLine();
+
+        if (ImGui::Button("Stop##StopBackend"))
+        {
+          m_backendManager->stop();
+          m_localBackendStarted = false;
+          strncpy(hostBuffer, "192.168.1.200", sizeof(hostBuffer) - 1);
+          backendConnected = false;
+        }
+      }
+      else
+      {
+        if (ImGui::Button("Start Local Backend (XPU)"))
+        {
+          if (m_backendManager->start())
+          {
+            strncpy(hostBuffer, "127.0.0.1", sizeof(hostBuffer) - 1);
+            port = 8000;
+
+            if (m_depthClient)
+            {
+              m_depthClient->setBackendAddress(hostBuffer, port);
+            }
+
+            m_localBackendStarted = true;
+
+            if (!m_depthClient)
+            {
+              m_depthClient = std::make_unique<DepthStreamClient>(hostBuffer, port);
+            }
+            connectionAttempted = true;
+            backendConnected = m_depthClient->testConnection();
+            connectionFailed = !backendConnected;
+          }
+        }
+
+        if (backendManaged && !backendRunning)
+        {
+          ImGui::SameLine();
+          ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "(exited)");
+        }
+      }
+
+      return false;
+    });
+
+    ImGui::Separator();
+
     if(connectionAttempted)
     {
       if(backendConnected)

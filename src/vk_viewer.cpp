@@ -245,209 +245,95 @@ void VkViewer::onDetach()
     m_depthManager->cleanup();
     m_depthManager.reset();
   }
-  m_depthClient.reset();
-#ifdef WITH_VIDEO_DECODER
-  // Clean up video depth playback manager first (it owns video decoder and depth loader)
-  if(m_videoDepthManager)
+   m_depthClient.reset();
+
+  // Stop the managed backend process if we started it
+  if(m_backendManager && m_localBackendStarted)
   {
-    m_videoDepthManager->close();
-    m_videoDepthManager.reset();
+    m_backendManager->stop();
   }
-  m_videoDecoder.reset();
-  // Clean up video texture
-  if(m_videoTexture.view != VK_NULL_HANDLE)
-  {
-    vkDestroyImageView(m_device, m_videoTexture.view, nullptr);
-    m_videoTexture.view = VK_NULL_HANDLE;
-  }
-  if(m_videoTexture.image.image != VK_NULL_HANDLE)
-  {
-    m_alloc.destroyImage(m_videoTexture.image);
-    m_videoTexture.image = {};
-  }
-#endif
-
-  if(m_dummyTextureArray.view != VK_NULL_HANDLE)
-  {
-    vkDestroyImageView(m_device, m_dummyTextureArray.view, nullptr);
-    m_dummyTextureArray.view = VK_NULL_HANDLE;
-  }
-  if(m_dummyTextureArray.image.image != VK_NULL_HANDLE)
-  {
-    m_alloc.destroyImage(m_dummyTextureArray.image);
-    m_dummyTextureArray.image = {};
-  }
-
-  m_profilerGpuTimer.deinit();
-  m_profilerManager->destroyTimeline(m_profilerTimeline);
-  m_profilerTimeline = nullptr;
-  m_gBuffers.deinit();
-  m_samplerPool.releaseSampler(m_sampler);
-  m_samplerPool.deinit();
-  m_uploader.deinit();
-  m_alloc.deinit();
-}
-
-void VkViewer::onResize(VkCommandBuffer cmd, const VkExtent2D& viewportSize)
-{
-  m_viewSize = {viewportSize.width, viewportSize.height};
-  NVVK_CHECK(m_gBuffers.update(cmd, viewportSize));
-  updateRtDescriptorSet();
-  updateDescriptorSetPostProcessing();
-  resetFrameCounter();
-}
-
-void VkViewer::onPreRender()
-{
-  m_profilerTimeline->frameAdvance();
-
-#ifdef WITH_OPENXR
-  // Clear the resize flag from previous frame
-  m_xrResizedThisFrame = false;
-
-  // Check if XR requires GBuffer resize (must happen before command buffer recording)
-  if(m_xrInitialized && m_xr && m_xr->isValid())
-  {
-    VkExtent2D xrExtent = m_xr->getFullExtent();
-    if(xrExtent.width > 0 && xrExtent.height > 0
-       && (m_viewSize.x != xrExtent.width || m_viewSize.y != xrExtent.height))
-    {
-      // Wait for GPU to finish all work before resizing
-      vkDeviceWaitIdle(m_device);
-
-      // Create a temporary command buffer for the resize operation
-      VkCommandBuffer cmd = m_app->createTempCmdBuffer();
-      m_viewSize = glm::vec2(xrExtent.width, xrExtent.height);
-      NVVK_CHECK(m_gBuffers.update(cmd, xrExtent));
-      updateRtDescriptorSet();
-      updateDescriptorSetPostProcessing();
-      resetFrameCounter();
-      m_app->submitAndWaitTempCmdBuffer(cmd);
-
-      // Skip rendering this frame to let descriptor sets stabilize
-      m_xrResizedThisFrame = true;
-    }
-
-  }
-#endif
-}
-
-void VkViewer::deinitAll()
-{
-  vkDeviceWaitIdle(m_device);
-
-#ifdef WITH_DLSS_RR
-  shutdownDlssRR();
-#endif
-
-  m_canCollectReadback = false;
-  deinitScene();
-  m_splatSetVk.resetTransform();
-  m_splatSetVk.deinitDataStorage();
-  m_splatSetVk.rtxDeinitSplatModel();
-  m_splatSetVk.rtxDeinitAccelerationStructures();
-  m_meshSetVk.deinitDataStorage();
-  m_meshSetVk.rtxDeinitAccelerationStructures();
-  m_lightSet.deinit();
-  m_cameraSet.deinit();
-  deinitShaders();
-  deinitPipelines();
-  deinitRendererBuffers();
-  resetRenderSettings();
-  // record default cam for reset in UI
-  m_cameraSet.setCamera(Camera());
-  // record default cam for reset in UI
-  m_cameraSet.setHomePreset(m_cameraSet.getCamera());
-}
-
-bool VkViewer::initAll()
-{
-  vkDeviceWaitIdle(m_device);
-
-  // resize the CPU sorter indices buffer
-  m_splatIndices.resize(m_splatIndices.size());
-  // TODO: use BBox of point cloud to set far plane, eye and center
-  m_cameraSet.setCamera(Camera());
-  // record default cam for reset in UI
-  m_cameraSet.setHomePreset(m_cameraSet.getCamera());
-  // reset general parameters
-  resetRenderSettings();
-
-  m_lightSet.init(m_app, &m_alloc, &m_uploader);
-  // init a new setup
-  if(!initShaders())
-  {
-    return false;
-  }
-  initRendererBuffers();
-  m_splatSetVk.initDataStorage(m_splatSet, prmData.dataStorage, prmData.shFormat);
-  initPipelines();
-
-  // RTX specifics
-  m_splatSetVk.rtxInitSplatModel(m_splatSet, prmRtxData.useTlasInstances, prmRtxData.useAABBs, prmRtxData.compressBlas,
-                                 prmRtx.kernelDegree, prmRtx.kernelMinResponse, prmRtx.kernelAdaptiveClamping);
-
-  m_splatSetVk.rtxInitAccelerationStructures(m_splatSet);
-
-  initRtDescriptorSet();
-  initRtPipeline();
-
-  // Post processing
-  initDescriptorSetPostProcessing();
-  initPipelinePostProcessing();
-
-
-
-  return true;
+   m_backendManager.reset();
 }
 
 void VkViewer::enableDepthRendering(const std::string& host, int port, const std::string& videoPath)
 {
-  if(!m_depthClient)
-  {
-    m_depthClient = std::make_unique<DepthStreamClient>();
-    m_depthClient->setBackendAddress(host, port);
-    m_depthClient->setDepthCallback([this](const DepthFrame& frame) {
-      // Frame is already added to buffer by client
-      // We will pick it up in updateDepthRendering on the main thread
-    });
+  LOGI("enableDepthRendering called: host=%s, port=%d, video=%s\n", host.c_str(), port, videoPath.c_str());
 
-  }
-  else
+  // Configure depth client with host and port
+  if(m_depthClient)
   {
     m_depthClient->setBackendAddress(host, port);
   }
 
+  // Ensure depth manager is initialized
   if(!m_depthManager)
   {
     m_depthManager = std::make_unique<DepthTextureManager>();
-    // Initialize with device objects
     m_depthManager->initialize(m_device, m_app->getPhysicalDevice(), m_app->getQueue(0).queue, &m_alloc);
   }
 
-  // Upload video and connect WebSocket for depth streaming
-  DepthStreamClient::SessionInfo session;
-  if(!m_depthClient->uploadVideo(videoPath, session))
+  // Set default VDZ parameters
+  prmFrame.vdzZScale = 10.0f;
+  prmFrame.vdzZBias = 2.0f;
+  prmFrame.vdzZGamma = 5.0f;
+  prmFrame.vdzZMaxClip = 0.2f;
+  prmFrame.vdzPlaneScale = 1.4f;
+  prmFrame.vdzEdgeThreshold = 1.0f;
+  prmFrame.vdzAspect = 1.777f;  // 16:9 default
+  prmFrame.vdzUseVideoTexture = 1;
+
+  // Ensure shaders and pipelines are initialized
+  if(!m_shaders.valid || m_graphicsPipelineVdzMesh == VK_NULL_HANDLE)
   {
-    LOGE("Failed to upload video to backend\n");
-    return;
+    if(!m_shaders.valid)
+    {
+      m_lightSet.init(m_app, &m_alloc, &m_uploader);
+      initShaders();
+      initRendererBuffers();
+    }
+    else
+    {
+      deinitPipelines();
+    }
+    initPipelines();
+    initRtDescriptorSet();
+    initRtPipeline();
+    initDescriptorSetPostProcessing();
+    initPipelinePostProcessing();
   }
 
-  // Connect WebSocket for depth stream
-  if(!m_depthClient->connectWebSocket(session.sessionId))
-  {
-    LOGE("Failed to connect depth stream WebSocket\n");
-    return;
-  }
-
-#ifdef WITH_VIDEO_DECODER
-  // Optionally initialize video decoder for local video overlay
-  // (not required for depth-only streaming)
-  LOGI("Depth streaming active - video decoder optional for overlay\n");
-#endif
-
+  m_videoDepthPlaybackMode = false;
+  m_hlsPlaybackMode = false;
   m_enableDepthRendering = true;
-  LOGI("Depth rendering enabled for session: %s\n", videoPath.c_str());
+  m_playbackStartTime = std::chrono::steady_clock::now();
+  m_playbackTimeOffset = 0.0;
+  m_playbackPaused = false;
+  m_lastVdzFrameIndex = SIZE_MAX;
+
+  LOGI("Depth rendering enabled for streaming session\n");
+}
+
+void VkViewer::onResize(VkCommandBuffer cmd, const VkExtent2D& size)
+{
+  // Base implementation - subclasses can override
+  VkViewer::onResize(cmd, size);
+}
+
+void VkViewer::onPreRender()
+{
+  // Base implementation - subclasses can override
+  VkViewer::onPreRender();
+}
+
+bool VkViewer::initAll()
+{
+  // Base implementation - subclasses can override
+  return true;
+}
+
+void VkViewer::deinitAll()
+{
+  // Base implementation - subclasses can override
 }
 
 void VkViewer::enableDepthVideoPlayback(const std::string& metadataPath)

@@ -234,6 +234,7 @@ endif()
 # Exclude Depth Streaming files if disabled
 if (NOT ENABLE_DEPTH_STREAMING)
      list(FILTER SOURCE_FILES EXCLUDE REGEX "depth_(stream_client|parser|buffer|to_vk)\\.cpp$")
+     list(FILTER SOURCE_FILES EXCLUDE REGEX "backend_process_manager\\.cpp$")
 endif()
 
 # Exclude Video Decoder files if disabled
