@@ -22,8 +22,23 @@
 // clang-format off
 [[vk::binding(BINDING_FRAME_INFO_UBO, 0)]] ConstantBuffer<FrameInfo> frameInfo;
 // Combined image samplers - sampler is embedded with texture
+// For HLS mode: RGB video (left half) and RGB-packed depth (right half)
 [[vk::binding(BINDING_VDZ_VIDEO_TEXTURE, 0)]] Sampler2D<float4> vdzVideoTexture;
-[[vk::binding(BINDING_VDZ_DEPTH_TEXTURE, 0)]] Sampler2D<float> vdzDepthTexture;
+// For HLS mode: RGB-packed depth (float4). For legacy mode: float depth
+[[vk::binding(BINDING_VDZ_DEPTH_TEXTURE, 0)]] Sampler2D<float4> vdzDepthTexture;
+
+// Helper function to unpack RGB-packed 16-bit depth to float
+// RGB packing: R = high byte, G = low byte, B = 128 (midpoint)
+// Returns depth in meters using zMin and scale from frameInfo
+float unpackPackedDepth(float4 color)
+{
+    // Unpack 16-bit value from RGB
+    uint16_t uint16Val = (uint16_t(color.r * 255.0) << 8) | uint16_t(color.g * 255.0);
+    
+    // Convert to float depth: depth = uint16 * scale + z_min
+    float scale = (frameInfo.vdzZMax > frameInfo.vdzZMin) ? (frameInfo.vdzZMax - frameInfo.vdzZMin) / 65535.0 : 1.0;
+    return float(uint16Val) * scale + frameInfo.vdzZMin;
+}
 
 struct FragmentInput
 {
@@ -63,8 +78,9 @@ FragmentOutput main(FragmentInput input)
   // Sample directly (match vertex shader convention)
   float2 sampleUv = input.uv;
   
-  // Sample depth for edge detection
-  float depth = vdzDepthTexture.Sample(sampleUv);
+  // Sample depth and unpack from RGB-packed format
+  float4 depthColor = vdzDepthTexture.Sample(sampleUv);
+  float depth = unpackPackedDepth(depthColor);
   
   // Detect depth discontinuities using screen-space derivatives
   // Large gradients indicate triangle spanning a depth edge
@@ -90,6 +106,7 @@ FragmentOutput main(FragmentInput input)
   if (frameInfo.vdzUseVideoTexture != 0)
   {
     // Video+Depth mode: Use video RGB texture
+    // For HLS side-by-side: sample from left half (UV.x stays the same)
     float4 videoColor = vdzVideoTexture.Sample(sampleUv);
     output.color = float4(videoColor.rgb, 1.0);
   }

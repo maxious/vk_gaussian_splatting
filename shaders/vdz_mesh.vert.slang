@@ -22,8 +22,22 @@
 // clang-format off
 [[vk::binding(BINDING_FRAME_INFO_UBO, 0)]] ConstantBuffer<FrameInfo> frameInfo;
 // Combined image sampler - sampler is embedded with texture
-[[vk::binding(BINDING_VDZ_DEPTH_TEXTURE, 0)]] Sampler2D<float> vdzDepthTexture;
+// For HLS mode: RGB-packed depth (float4). For legacy mode: float depth
+[[vk::binding(BINDING_VDZ_DEPTH_TEXTURE, 0)]] Sampler2D<float4> vdzDepthTexture;
 [[vk::push_constant]] ConstantBuffer<PushConstant> pcRaster;
+
+// Helper function to unpack RGB-packed 16-bit depth to float
+// RGB packing: R = high byte, G = low byte, B = 128 (midpoint)
+// Returns depth in meters using zMin and scale from frameInfo
+float unpackPackedDepth(float4 color)
+{
+    // Unpack 16-bit value from RGB
+    uint16_t uint16Val = (uint16_t(color.r * 255.0) << 8) | uint16_t(color.g * 255.0);
+    
+    // Convert to float depth: depth = uint16 * scale + z_min
+    float scale = (frameInfo.vdzZMax > frameInfo.vdzZMin) ? (frameInfo.vdzZMax - frameInfo.vdzZMin) / 65535.0 : 1.0;
+    return float(uint16Val) * scale + frameInfo.vdzZMin;
+}
 
 struct VertexInput
 {
@@ -46,9 +60,11 @@ VertexOutput main(VertexInput input)
   float2 uv = input.uv;
   output.uv = uv;
 
-  // Sample depth from VDZ texture (no flip needed - direct mapping)
-  float2 sampleUv = uv;
-  float depth = vdzDepthTexture.SampleLevel(sampleUv, 0);
+  // Sample depth from VDZ texture
+  // For HLS side-by-side mode: sample RGB and unpack
+  // For legacy VDZ mode: texture is float, unpackPackedDepth handles both
+  float4 depthColor = vdzDepthTexture.SampleLevel(uv, 0);
+  float depth = unpackPackedDepth(depthColor);
   
   // Apply gamma correction
   depth = max(depth, 0.0);

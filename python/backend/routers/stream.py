@@ -1,27 +1,185 @@
-"""WebSocket interface streaming binary depth payloads."""
+"""WebSocket and HLS interface streaming depth payloads.
+
+This module provides:
+1. WebSocket streaming for real-time per-frame depth (existing VDZ format)
+2. HLS streaming for processed video with side-by-side RGB and RGB-packed depth
+"""
 
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
+import os
+import shutil
+import threading
 import time
 from contextlib import suppress
+from pathlib import Path
+from typing import Optional
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    HTTPException,
+    WebSocket,
+    WebSocketDisconnect,
+    Depends,
+)
+from pydantic import BaseModel
 
+from backend.config import get_settings
 from backend.models.depth_model import get_depth_model
 from backend.utils.packets import pack_depth_payload
 from backend.utils.depth_ops import downsample_depth
-from backend.video.session import DepthFrame, get_session_manager, SessionManager
-from backend.config import get_settings
 from backend.utils.queues import DroppingQueue
 from backend.utils.stats import StatisticsCollector
+from backend.video.hls_generator import (
+    HlsGenerator,
+    HlsMetadata,
+    get_hls_generator,
+    register_hls_generator,
+    unregister_hls_generator,
+)
+from backend.video.session import DepthFrame, get_session_manager, SessionManager
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/sessions", tags=["stream"])
 profile_logger = logging.getLogger("uvicorn.error")
+
+
+# =============================================================================
+# HLS Endpoints (New)
+# =============================================================================
+
+
+class HlsRequest(BaseModel):
+    """Request model for HLS generation."""
+
+    fps: float = 30.0
+    segment_duration: float = 2.0
+    process_res: int = 640
+
+
+@router.post("/{session_id}/hls")
+async def create_hls_stream(
+    session_id: str,
+    request: HlsRequest,
+    background_tasks: BackgroundTasks,
+    manager: SessionManager = Depends(get_session_manager),
+) -> dict:
+    """Start HLS stream generation for a session.
+
+    This processes the video to generate a side-by-side HLS stream with:
+    - Left half: Original RGB video
+    - Right half: RGB-packed 16-bit depth data
+
+    Returns immediately with a status URL. Use GET /hls/status to poll for completion.
+    """
+    session = await manager.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="session not found")
+
+    settings = get_settings()
+    data_root = settings.data_root
+
+    # Create output directory
+    hls_output_dir = data_root / session_id / "hls"
+    if hls_output_dir.exists():
+        shutil.rmtree(hls_output_dir)
+    hls_output_dir.mkdir(parents=True)
+
+    # Create generator
+    generator = HlsGenerator(
+        session_id=session_id,
+        source_path=session.source_path,
+        output_dir=hls_output_dir,
+        fps=request.fps,
+        segment_duration=request.segment_duration,
+        process_res=request.process_res,
+    )
+
+    # Register generator
+    register_hls_generator(session_id, generator)
+
+    # Start generation in background
+    def run_generation():
+        import asyncio
+
+        try:
+            asyncio.run(generator.generate())
+        except Exception as e:
+            logger.error(f"HLS generation failed for session {session_id}: {e}")
+            with generator._lock:
+                generator.state.status = "error"
+                generator.state.error_message = str(e)
+
+    thread = threading.Thread(target=run_generation, daemon=True)
+    thread.start()
+
+    return {
+        "session_id": session_id,
+        "status_url": f"/api/sessions/{session_id}/hls/status",
+        "message": "HLS generation started",
+    }
+
+
+@router.get("/{session_id}/hls/status")
+async def get_hls_status(session_id: str) -> dict:
+    """Get HLS generation status."""
+    generator = get_hls_generator(session_id)
+    if not generator:
+        # Check if there's a completed HLS stream
+        settings = get_settings()
+        metadata_path = settings.data_root / session_id / "hls" / "metadata.json"
+        if metadata_path.exists():
+            with open(metadata_path) as f:
+                metadata = json.load(f)
+            return {
+                "status": "ready",
+                "progress": 1.0,
+                **metadata,
+            }
+        raise HTTPException(status_code=404, detail="HLS stream not found")
+
+    state = generator.get_state()
+    response = {
+        "status": state.status,
+        "progress": state.progress,
+        "frame_count": state.frame_count,
+        "total_frames": state.total_frames,
+    }
+
+    if state.error_message:
+        response["error"] = state.error_message
+
+    if state.status == "ready":
+        # Load metadata
+        settings = get_settings()
+        metadata_path = settings.data_root / session_id / "hls" / "metadata.json"
+        if metadata_path.exists():
+            with open(metadata_path) as f:
+                metadata = json.load(f)
+            response.update(metadata)
+
+    return response
+
+
+@router.delete("/{session_id}/hls")
+async def cancel_hls_stream(session_id: str) -> dict:
+    """Cancel HLS generation."""
+    generator = get_hls_generator(session_id)
+    if generator:
+        generator.cancel()
+        unregister_hls_generator(session_id)
+        return {"status": "cancelled"}
+    raise HTTPException(status_code=404, detail="HLS stream not found")
+
+
+# =============================================================================
+# WebSocket Endpoint (Existing VDZ format - kept for backward compatibility)
+# =============================================================================
 
 
 @router.websocket("/{session_id}/stream")
@@ -69,16 +227,6 @@ async def depth_stream(
             stop.set()
             logger.exception("Receiver error: %s", exc)
 
-    # Queue for incoming requests
-    request_queue = DroppingQueue(maxsize=32)
-    # Queue for outgoing tasks (to preserve order)
-    send_queue = asyncio.Queue()
-
-    stop = asyncio.Event()
-    active_tasks = set()
-
-    stats = StatisticsCollector()
-
     async def process_request_pipeline(
         request: dict, session
     ) -> tuple[bytes | None, dict[str, float]]:
@@ -123,7 +271,6 @@ async def depth_stream(
             stats.add("decode_s", decode_s)
 
             timings["decode_s"] = decode_s
-            # print(f"[Backend] Processing: {time_ms}ms. QueueWait: {timings['queue_wait_s']:.3f}s. Decode: {timings['decode_s']:.3f}s")
         except StopIteration:
             # EOF
             return None, timings
@@ -140,7 +287,6 @@ async def depth_stream(
         downsample_factor = settings.depth_downsample_factor
         target_size = None
         if downsample_factor > 1:
-            # frame is (H, W, C), target_size expects (W, H)
             h, w = frame.shape[:2]
             target_w = max(1, w // downsample_factor)
             target_h = max(1, h // downsample_factor)
@@ -156,9 +302,6 @@ async def depth_stream(
         timings["inflight_used"] = float(inflight_estimate)
 
         depth_map = prediction.depth
-        # Downsampling is now handled inside infer_depth via target_size
-        # if downsample_factor > 1:
-        #     depth_map = downsample_depth(depth_map, downsample_factor)
 
         frame_time_ms = frame_info.time_ms if frame_info.time_ms >= 0 else time_ms
         cached_frame = DepthFrame(
@@ -196,7 +339,6 @@ async def depth_stream(
             if not snapshot:
                 continue
 
-            # Format log message
             msg_parts = ["[Stats Report]"]
             if "fps" in snapshot:
                 msg_parts.append(f"FPS: {snapshot['fps']:.1f}")
@@ -218,7 +360,6 @@ async def depth_stream(
             log_line = " | ".join(msg_parts)
             logger.info(log_line)
 
-            # Write to file for analysis
             with open("backend_stats.txt", "a") as f:
                 f.write(f"{time.time()}: {log_line}\n")
 
@@ -226,7 +367,6 @@ async def depth_stream(
         """Spawns pipeline tasks for each request."""
         while not stop.is_set():
             try:
-                # Update gauge metrics
                 stats.set_counter("request_queue_size", request_queue.qsize())
                 stats.set_counter("active_tasks", len(active_tasks))
 
@@ -248,18 +388,15 @@ async def depth_stream(
                     stop.set()
                     break
 
-                # Report dropped requests
                 dropped = request_queue.dropped_count
                 if dropped > 0:
                     stats.increment("dropped_count", dropped)
                     await session.update_telemetry({"dropped": float(dropped)})
                     request_queue.reset_dropped_count()
 
-                # Extract RTT if present
                 if "rtt" in request:
                     await session.update_telemetry({"latency_ms": float(request["rtt"])})
 
-                # Concurrency Control
                 MAX_CONCURRENT_TASKS = 16
                 if len(active_tasks) >= MAX_CONCURRENT_TASKS:
                     done, pending = await asyncio.wait(
@@ -294,7 +431,6 @@ async def depth_stream(
 
                 task = get_task.result()
 
-                # Await the result (enforcing order)
                 result = await task
                 if result is None:
                     continue
