@@ -1091,6 +1091,7 @@ void VkViewer::updateAnimation(float deltaTime)
 }  // namespace vk_viewer
 
 // Include the split implementation files
+#include "vk_viewer_frame.cpp"
 #include "vk_viewer_render.cpp"
 #include "vk_viewer_frame_ubo.cpp"
 #include "vk_viewer_sorting.cpp"

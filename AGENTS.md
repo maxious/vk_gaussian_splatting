@@ -64,14 +64,35 @@ cmake --build build --target RUN_TESTS --config Debug
 
 Test files are located in the `tests/` directory. Add new test files to `tests/CMakeLists.txt` as needed.
 
+### Functional Screenshot Testing
+
+To verify the rendering pipeline works correctly, run the viewer with a test scene and auto-screenshot:
+
+```bash
+source /opt/vulkan/1.4.335.0/setup-env.sh
+cd _bin/Debug
+./vk_viewer --inputFile ../../_downloaded_resources/flowers_1/flowers_1.ply \
+  --screenshotDelay 3.0 --screenshot /tmp/test_render.png \
+  --size 800 600 --validation 0
+```
+
+This loads the default flower scene, waits 3 seconds for rendering to stabilize, takes a screenshot, and exits. Verify the output:
+```bash
+file /tmp/test_render.png  # Should show: PNG image data, 800 x 600
+```
+
 **Note**: Manual testing is still required for UI features and Vulkan rendering.
 
 ## Key Subsystems
 
-- **Rendering**: `gaussian_splatting.cpp`, `gaussian_splatting_render.cpp`
-- **UI**: `gaussian_splatting_ui.cpp` (ImGui-based)
+- **Rendering Core**: `vk_viewer.cpp` (main class), `vk_viewer_render.cpp` (orchestrator)
+- **Frame Helpers**: `vk_viewer_frame.cpp` (beginFrame, buildViews, renderSingleView, etc.)
+- **Multiview/XR**: `vk_viewer_multiview.cpp` (VK_KHR_multiview stereo rendering)
+- **RTX**: `vk_viewer_rtx.cpp` (ray tracing pipeline)
+- **UI**: `vk_viewer_ui.cpp` (ImGui-based)
 - **Video Export**: `video_renderer.cpp`, `camera_trajectory.cpp`
 - **Scene Loading**: `splat_loader_async.cpp`, `sog_loader.cpp`, `splat_set.cpp`
+- **Depth Video**: `vk_viewer_video.cpp`, `depth_video_loader.cpp`
 
 ## Python Tools
 

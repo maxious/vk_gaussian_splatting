@@ -250,6 +250,13 @@ void VkViewer::renderMultiviewRaster(VkCommandBuffer cmd, uint32_t splatCount)
     }
   }
 
+  // Draw VDZ depth mesh if depth rendering is enabled
+  if(m_enableDepthRendering)
+  {
+    updateDepthRendering(cmd);
+    drawVdzMesh(cmd);
+  }
+
   // Allow subclasses to render additional content (e.g., hand meshes)
   onRenderMultiviewExtra(cmd);
 

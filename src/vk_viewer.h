@@ -104,6 +104,7 @@
 #include "light_set_vk.h"
 #include "vdz_mesh.h"
 #include "camera_set.h"
+#include "render_context.h"
 
 #ifdef WITH_OPENXR
 #include "gs_openxr.hpp"
@@ -247,6 +248,24 @@ private:
   bool initShaders(void);
 
   void deinitShaders(void);
+
+  /////////////
+  // Rendering orchestration (refactored from monolithic onRender)
+  
+  // Frame lifecycle helpers
+  bool beginFrame(FrameRenderContext& ctx);
+  void buildContentState(FrameRenderContext& ctx);
+  void buildViews(FrameRenderContext& ctx);
+  void prepareSceneForFrame(FrameRenderContext& ctx);
+  void clearMainTargets(FrameRenderContext& ctx);
+  void renderMultiviewPath(FrameRenderContext& ctx);
+  void renderPerViewPath(FrameRenderContext& ctx);
+  void renderSingleView(FrameRenderContext& ctx, const RenderView& view);
+  void finalizeFrame(FrameRenderContext& ctx);
+  
+  // RTX-specific frame paths
+  void renderRtxFrame(FrameRenderContext& ctx);
+  void renderRtxStereoFrame(FrameRenderContext& ctx);
 
   /////////////
   // Rendering submethods
