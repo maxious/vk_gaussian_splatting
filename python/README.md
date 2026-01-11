@@ -1,6 +1,6 @@
 # Python Tools for vk_gaussian_splatting
 
-This directory contains Python tools for video-to-depth processing, supporting both **real-time streaming** and **offline preprocessing** workflows.
+This directory contains Python tools for video-to-depth processing and Gaussian Splatting export, supporting both **real-time streaming** and **offline preprocessing** workflows.
 
 ## Architecture Overview
 
@@ -15,29 +15,19 @@ This directory contains Python tools for video-to-depth processing, supporting b
     │   Real-time Streaming     │    │       Offline Preprocessing           │
     │   (backend/)              │    │       (offline/)                      │
     │                           │    │                                       │
-    │  • FastAPI + WebSocket    │    │  • DA3-streaming chunk processing     │
-    │  • Per-frame DA3 inference│    │  • Sim3 alignment between chunks      │
-    │  • VDZ packets over WS    │    │  • Global scale consistency           │
-    │  • ~100ms latency         │    │  • Camera pose estimation             │
+    │  • FastAPI + HLS stream   │    │  • DA3/MoGe depth inference           │
+    │  • Per-frame inference    │    │  • Gaussian Splatting export          │
+    │  • Side-by-side depth     │    │  • H.265 depth video output           │
     └─────────────┬─────────────┘    └──────────────────┬────────────────────┘
                   │                                      │
                   ▼                                      ▼
     ┌───────────────────────────┐    ┌───────────────────────────────────────┐
-    │  C++ Viewer (real-time)   │    │        Output Files                   │
-    │  DepthStreamClient        │    │                                       │
-    │  WebSocket → VDZ frames   │    │  • depth_sequence.vdz (per-frame)     │
-    └───────────────────────────┘    │  • camera_poses.txt (4x4 c2w)         │
-                                     │  • intrinsics.txt (fx,fy,cx,cy)       │
+    │  Web Viewer (HLS)         │    │        Output Files                   │
+    │  Standards-compliant      │    │                                       │
+    │  RGB + depth side-by-side │    │  • depth_sequence.mp4 (H.265)         │
+    └───────────────────────────┘    │  • frame_*.ply (Gaussian Splatting)   │
                                      │  • metadata.json                      │
-                                     └──────────────────┬────────────────────┘
-                                                        │
-                                     ┌──────────────────┴────────────────────┐
-                                     ▼                                        ▼
-                      ┌───────────────────────────┐    ┌─────────────────────────┐
-                      │  C++ Viewer (playback)    │    │   PLY Export            │
-                      │  Load preprocessed seq    │    │   vkgs-export-ply       │
-                      │  Use poses for 3D recon   │    │   Fused point cloud     │
-                      └───────────────────────────┘    └─────────────────────────┘
+                                     └──────────────────────────────────────────┘
 ```
 
 ## Installation
@@ -73,7 +63,7 @@ uv sync --extra cpu --extra offline --extra inference
 
 | Extra | Description |
 |-------|-------------|
-| `backend` | FastAPI + WebSocket streaming server |
+| `backend` | FastAPI + HLS streaming server |
 | `inference` | Transformers, timm, einops for depth models |
 | `offline` | Trimesh, plyfile for PLY generation |
 | `matrix3d` | Apple Matrix3D support via pytorch3d |
@@ -92,20 +82,9 @@ uv sync --extra cuda --extra backend --extra inference
 uv sync --extra cuda --extra offline --extra inference --extra dev
 ```
 
-### Custom Package Indexes
-
-The `pyproject.toml` configures these indexes automatically:
-
-| Package | Index |
-|---------|-------|
-| `torch`, `torchvision`, `xformers` | PyTorch official (per backend) |
-| `pytorch3d` | `miropsota.github.io/torch_packages_builder` |
-
-No manual `--index-url` commands needed.
-
 ## Workflows
 
-### 1. Real-time Streaming (existing)
+### 1. Real-time Streaming
 
 For interactive viewing with live depth estimation:
 
@@ -114,73 +93,54 @@ For interactive viewing with live depth estimation:
 uv run --extra cuda --extra backend uvicorn backend.main:app --host 0.0.0.0 --port 8000
 
 # Start backend server with Intel XPU (multi-GPU mode)
-VIDEO_DEPTH_MULTI_DEVICE=1 VIDEO_DEPTH_DEVICE_SPEC=xpu:0,1 uv run --extra xpu --extra backend uvicorn backend.main:app --host 0.0.0.0 --port 8000
+VIDEO_DEPTH_MULTI_DEVICE=1 VIDEO_DEPTH_DEVICE_SPEC=xpu:0,1 \
+  uv run --extra xpu --extra backend uvicorn backend.main:app --host 0.0.0.0 --port 8000
 ```
 
-The C++ viewer connects via WebSocket, uploads video, and receives VDZ depth frames in real-time.
+The backend provides HLS streaming with RGB + depth side-by-side video.
 
-**Pros:** Interactive, immediate feedback
-**Cons:** No temporal consistency between frames, per-frame scale varies
+### 2. Offline Depth Video Export
 
-### 2. Offline Preprocessing (new)
-
-For high-quality depth with global consistency:
+Extract depth from video and output as H.265 video:
 
 ```bash
-# Preprocess video with chunk-based alignment
-vkgs-preprocess --input video.mp4 --output ./preprocessed/
+# Using DA3 model (default)
+uv run --extra cuda python -m offline.cli depth \
+  --input video.mp4 --output ./depth_output/ \
+  --model "depth-anything/DA3METRIC-LARGE" --device-spec cuda
 
-# Options:
-#   --chunk-size 60    Frames per chunk (default: 60)
-#   --overlap 30       Overlap for alignment (default: 30)
-#   --process-res 518  Model resolution (default: 518)
-#   --no-poses         Skip camera pose estimation
+# Using MoGe model (produces depth + normals side-by-side)
+uv run --extra cuda python -m offline.cli depth \
+  --input video.mp4 --output ./depth_output/ \
+  --model "Ruicheng/moge-2-vitl-normal" --device-spec cuda
 ```
 
-Output structure:
-```
-preprocessed/
-├── depth_sequence.vdz    # All frames in single VDZ container
-├── camera_poses.txt      # 4x4 c2w matrices (16 values per line)
-├── intrinsics.txt        # fx, fy, cx, cy per line
-└── metadata.json         # Video info and config
-```
+Output:
+- `depth_sequence.mp4` - H.265 lossless depth video (with normals if MoGe)
+- `metadata.json` - Processing info including z_min/z_max
 
-### 3. PLY Export
+### 3. Gaussian Splatting Export
 
-Convert preprocessed depth to point cloud:
+Convert images or video to Gaussian Splatting PLY files:
 
 ```bash
-vkgs-export-ply --input ./preprocessed/ --output scene.ply
+# Export images to per-frame PLYs
+uv run --extra cuda python -m offline.cli images \
+  --input ./images/ --output ./ply_output/ \
+  --model "Ruicheng/moge-2-vitl-normal" --mode frames
 
-# Options:
-#   --video video.mp4   Original video for RGB colors
-#   --sample-ratio 0.01 Fraction of points per frame
-#   --frame-skip 5      Use every Nth frame
-#   --no-poses          Don't use camera poses (camera-space output)
+# Export video to per-frame PLYs
+uv run --extra cuda python -m offline.cli export \
+  --input video.mp4 --output ./ply_output/ \
+  --model "depth-anything/DA3-GIANT" --mode frames
+
+# Postprocess to FreeTimeGS with motion vectors
+uv run --extra cuda python -m offline.cli postprocess \
+  --input ./ply_output/ --output scene_4d.ply \
+  --fps 30.0
 ```
 
-## Running Commands with uv run
-
-For any Python command that requires GPU support, use `uv run --extras` to ensure the correct GPU backend is active:
-
-```bash
-# Run with CUDA backend (NVIDIA GPUs)
-uv run --extra cuda python script.py
-
-# Run with XPU backend (Intel Arc/GPU)
-uv run --extra xpu python script.py
-
-# Run with CPU only (no GPU)
-uv run --extra cpu python script.py
-
-# Combine with feature extras (e.g., backend for streaming server)
-uv run --extra cuda --extra backend uvicorn backend.main:app --port 8000
-```
-
-### Environment Variables for Backend
-
-When running the streaming backend, these environment variables control behavior:
+## Environment Variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
@@ -189,47 +149,6 @@ When running the streaming backend, these environment variables control behavior
 | `VIDEO_DEPTH_MODEL_ID` | Model to use | `depth-anything/DA3METRIC-LARGE` |
 | `VIDEO_DEPTH_PROCESS_RES` | Processing resolution | `640` |
 | `VIDEO_DEPTH_LOG_LEVEL` | Logging level | `WARNING` |
-
-Example with multi-XPU:
-```bash
-VIDEO_DEPTH_MULTI_DEVICE=1 VIDEO_DEPTH_DEVICE_SPEC=xpu:0,1 VIDEO_DEPTH_LOG_LEVEL=INFO \
-  uv run --extra xpu --extra backend uvicorn backend.main:app --host 0.0.0.0 --port 8000
-```
-
-## Implementation Steps
-
-### Phase 1: Backend Integration ✅
-- [x] Copy VideoDepthViewer3D backend to `python/backend/`
-- [x] Create unified `pyproject.toml` with optional dependencies
-- [x] Define output formats in `offline/formats.py`
-
-### Phase 2: Offline Preprocessing (TODO)
-- [ ] Implement chunk-based processing wrapper for DA3
-- [ ] Add Sim3 alignment between chunks (ported from DA3-streaming)
-- [ ] Test with sample videos
-- [ ] Add loop closure support (optional)
-
-### Phase 3: C++ Viewer Updates (TODO)
-- [ ] Add "Load Preprocessed Sequence" UI option
-- [ ] Create `VdzSequenceLoader` to read multi-frame VDZ files
-- [ ] Load camera poses and apply to mesh reconstruction
-- [ ] Support seeking within preprocessed sequence
-
-### Phase 4: Unified CLI (TODO)
-- [ ] Single entry point: `vkgs-depth` with subcommands
-- [ ] Progress reporting and ETA
-- [ ] GPU memory management for long videos
-
-## Format Comparison
-
-| Feature | Real-time VDZ | Offline VDZ Sequence | DA3-streaming PLY |
-|---------|---------------|----------------------|-------------------|
-| Per-frame depth | ✅ | ✅ | ❌ (fused only) |
-| Camera poses | ❌ | ✅ | ✅ |
-| Scale consistency | ❌ | ✅ (Sim3 aligned) | ✅ |
-| Temporal coherence | ❌ | ✅ (chunk overlap) | ✅ |
-| File size | Small/frame | Medium (all frames) | Large (point cloud) |
-| Use case | Interactive | Playback + 3D | Static scene |
 
 ## Development
 
@@ -240,6 +159,9 @@ pytest
 # Format code
 ruff format .
 ruff check --fix .
+
+# Type check
+uvx ty check
 ```
 
 ## Test Videos

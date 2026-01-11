@@ -87,6 +87,70 @@ def intrinsics_to_fov(intrinsics: torch.Tensor):
     return 2 * torch.atan(0.5 / focal_x), 2 * torch.atan(0.5 / focal_y)
 
 
+def depth_to_points(depth: torch.Tensor, intrinsics: torch.Tensor = None) -> torch.Tensor:
+    """Convert depth map to 3D points in camera space.
+    
+    Args:
+        depth: (B, H, W) or (H, W) depth tensor
+        intrinsics: (B, 3, 3) or (3, 3) camera intrinsics
+        
+    Returns:
+        points: (..., H, W, 3) tensor of 3D points
+    """
+    height, width = depth.shape[-2:]
+    device, dtype = depth.device, depth.dtype
+    
+    if intrinsics is None:
+        focal_x = focal_y = torch.tensor(1.0, device=device, dtype=dtype)
+        center_x = center_y = torch.tensor(0.5, device=device, dtype=dtype)
+    else:
+        focal_x = intrinsics[..., 0, 0]
+        focal_y = intrinsics[..., 1, 1]
+        center_x = intrinsics[..., 0, 2]
+        center_y = intrinsics[..., 1, 2]
+    
+    y, x = torch.meshgrid(
+        torch.linspace(0, height - 1, height, device=device, dtype=dtype),
+        torch.linspace(0, width - 1, width, device=device, dtype=dtype),
+        indexing="ij"
+    )
+    
+    x = (x - center_x * width) / focal_x
+    y = (y - center_y * height) / focal_y
+    
+    points = torch.stack([x * depth, y * depth, depth], dim=-1)
+    return points
+
+
+def points_to_depth(points: torch.Tensor) -> torch.Tensor:
+    """Extract depth from points map."""
+    return points[..., 2]
+
+
+def points_to_normals(points: torch.Tensor, mask: torch.Tensor = None):
+    """Compute surface normals from points map."""
+    # Compute tangent vectors using finite differences
+    dx = points[..., 1:, :, :] - points[..., :-1, :, :]
+    dy = points[..., :, 1:, :] - points[..., :, :-1, :]
+    
+    # Compute normals from cross product
+    normal = torch.cross(dx[..., :-1, :, :], dy[..., 1:, :, :], dim=-1)
+    normal = normal / (torch.linalg.norm(normal, dim=-1, keepdim=True) + 1e-10)
+    
+    # Pad normals to match input size
+    pad_dims = (0, 0, 0, 1, 0, 1)  # pad last dim by 0, second-to-last by 1, third-to-last by 1
+    normal = torch.nn.functional.pad(normal, pad_dims, mode='replicate')
+    
+    if mask is not None:
+        mask_valid = (
+            mask[..., 1:, 1:] & mask[..., :-1, 1:] & mask[..., 1:, :-1] & mask[..., :-1, :-1]
+        )
+        mask_valid = torch.nn.functional.pad(mask_valid.unsqueeze(-1).float(), pad_dims, mode='constant', value=0).squeeze(-1) > 0.5
+        return normal, mask_valid
+    
+    return normal, None
+
+
 def point_map_to_depth_legacy(points: torch.Tensor):
     height, width = points.shape[-3:-1]
     diagonal = (height ** 2 + width ** 2) ** 0.5

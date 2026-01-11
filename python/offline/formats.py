@@ -1,185 +1,18 @@
 """Output format definitions for offline preprocessing.
 
 Supports multiple output formats:
-- VDZ sequence: Per-frame depth for real-time playback (existing format)
+- H.265 video: Per-frame depth encoded as lossless video
 - NPZ sequence: Per-frame depth + camera poses for 3D reconstruction
 - PLY export: Fused point cloud for static visualization
 """
 
 from __future__ import annotations
 
-import struct
-import zlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO
 
 import numpy as np
-
-
-# =============================================================================
-# VDZ Format (existing - for real-time playback)
-# =============================================================================
-
-VDZ_HEADER_STRUCT = struct.Struct("<4sHHIIIfff")  # 32 bytes
-VDZ_HEADER_SIZE = VDZ_HEADER_STRUCT.size
-
-
-@dataclass(slots=True)
-class VdzFrame:
-    """Single VDZ depth frame."""
-
-    timestamp_ms: float
-    width: int
-    height: int
-    depth: np.ndarray  # float32 metric depth
-    z_min: float
-    z_max: float
-
-
-def write_vdz_frame(f: BinaryIO, frame: VdzFrame, compress: bool = True) -> int:
-    """Write a single VDZ frame to file. Returns bytes written."""
-    z_min, z_max = frame.z_min, frame.z_max
-    if z_max <= z_min:
-        z_max = z_min + 1e-3
-
-    scale = (z_max - z_min) / 65535.0
-    depth_clipped = np.clip(frame.depth, z_min, z_max)
-    encoded = np.rint((depth_clipped - z_min) / scale).astype("<u2")
-
-    raw_bytes = encoded.tobytes()
-    if compress:
-        payload = zlib.compress(raw_bytes, level=1)
-        magic = b"VDZ2"
-    else:
-        payload = raw_bytes
-        magic = b"VDZ1"
-
-    # Clamp timestamp to valid uint32 range
-    timestamp_uint = max(0, min(int(frame.timestamp_ms), 0xFFFFFFFF))
-
-    header = VDZ_HEADER_STRUCT.pack(
-        magic,
-        1,  # version
-        1,  # data type (uint16)
-        timestamp_uint,
-        frame.width,
-        frame.height,
-        scale,
-        z_min,
-        z_max,
-    )
-
-    f.write(header)
-    f.write(payload)
-    return VDZ_HEADER_SIZE + len(payload)
-
-
-def read_vdz_frame(f: BinaryIO) -> VdzFrame | None:
-    """Read a single VDZ frame from file. Returns None on EOF."""
-    header_bytes = f.read(VDZ_HEADER_SIZE)
-    if not header_bytes:
-        return None
-
-    magic, version, data_type, timestamp_uint, width, height, scale, z_min, z_max = (
-        VDZ_HEADER_STRUCT.unpack(header_bytes)
-    )
-
-    # Calculate expected uncompressed size (width * height * 2 bytes for uint16)
-    expected_size = width * height * 2
-
-    # Read compressed payload - read until we can decompress
-    if magic == b"VDZ2":
-        # For compressed data, read chunks until we can decompress
-        chunks = []
-        current_size = 0
-        while current_size < expected_size:
-            chunk = f.read(8192)
-            if not chunk:
-                break
-            chunks.append(chunk)
-            current_size += len(chunk)
-            # Try to decompress to see if we have enough
-            try:
-                test_decompress = zlib.decompress(b"".join(chunks))
-                if len(test_decompress) >= expected_size:
-                    break
-            except zlib.error:
-                continue
-        payload = b"".join(chunks)
-    else:
-        # For uncompressed, read exactly expected_size
-        payload = f.read(expected_size)
-        if len(payload) < expected_size:
-            return None
-
-    # Decompress if needed
-    if magic == b"VDZ2":
-        payload = zlib.decompress(payload)
-
-    # Ensure we have enough data
-    if len(payload) < expected_size:
-        return None
-
-    # Decode depth
-    encoded = np.frombuffer(payload[:expected_size], dtype="<u2")
-    depth = (encoded.astype(np.float32) * scale + z_min).reshape(height, width)
-
-    return VdzFrame(
-        timestamp_ms=timestamp_uint,
-        width=width,
-        height=height,
-        depth=depth,
-        z_min=z_min,
-        z_max=z_max,
-    )
-
-
-def read_all_vdz_frames(path: Path) -> list[VdzFrame]:
-    """Read all VDZ frames from file."""
-    frames = []
-    with open(path, "rb") as f:
-        while True:
-            frame = read_vdz_frame(f)
-            if frame is None:
-                break
-            frames.append(frame)
-    return frames
-
-
-# =============================================================================
-# VDS Format (VDZ Sequence - new container for offline-processed videos)
-# =============================================================================
-
-VDS_MAGIC = b"VDS1"
-VDS_HEADER_STRUCT = struct.Struct(
-    "<4sIIIffI"
-)  # magic, version, width, height, fps, duration_s, frame_count
-
-
-@dataclass(slots=True)
-class VdsHeader:
-    """VDS sequence header."""
-
-    width: int
-    height: int
-    fps: float
-    duration_s: float
-    frame_count: int
-
-
-def write_vds_header(f: BinaryIO, header: VdsHeader) -> None:
-    """Write VDS sequence header."""
-    data = VDS_HEADER_STRUCT.pack(
-        VDS_MAGIC,
-        1,  # version
-        header.width,
-        header.height,
-        header.fps,
-        header.duration_s,
-        header.frame_count,
-    )
-    f.write(data)
 
 
 # =============================================================================
@@ -242,7 +75,7 @@ def read_camera_poses(path: Path) -> list[CameraPose]:
         poses.append(
             CameraPose(
                 frame_idx=i,
-                timestamp_ms=0.0,  # Will be filled from VDZ sequence
+                timestamp_ms=0.0,
                 intrinsics=intrinsics,
                 extrinsics=extrinsics,
             )

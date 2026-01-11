@@ -52,52 +52,7 @@ def main():
         default=4,
         help="Batch size per device for inference (default: 4)",
     )
-    depth_parser.add_argument(
-        "--format",
-        type=str,
-        default="vdz",
-        choices=["vdz", "video"],
-        help="Output format: 'vdz' for compressed depth sequence, 'video' for H.265 lossless",
-    )
     depth_parser.add_argument("-v", "--verbose", action="store_true")
-
-    # Depth extraction subcommand
-    extract_parser = subparsers.add_parser(
-        "extract-depth", help="Extract depth frames from VDZ file as images"
-    )
-    extract_parser.add_argument(
-        "--input", "-i", type=Path, required=True, help="Input VDZ depth sequence file"
-    )
-    extract_parser.add_argument(
-        "--output", "-o", type=Path, required=True, help="Output directory for depth images"
-    )
-    extract_parser.add_argument(
-        "--format",
-        type=str,
-        default="png",
-        choices=["png", "jpg", "exr"],
-        help="Output image format (default: png)",
-    )
-    extract_parser.add_argument(
-        "--colormap",
-        type=str,
-        default="viridis",
-        choices=["viridis", "magma", "plasma", "inferno", "gray", "raw"],
-        help="Colormap for depth visualization (default: viridis). Use 'raw' for metric depth.",
-    )
-    extract_parser.add_argument(
-        "--frame-range",
-        type=str,
-        default=None,
-        help="Frame range to extract (e.g., '0-100' or '50,60,70')",
-    )
-    extract_parser.add_argument(
-        "--max-width",
-        type=int,
-        default=None,
-        help="Resize output images to max width (maintains aspect ratio)",
-    )
-    extract_parser.add_argument("-v", "--verbose", action="store_true")
 
     export_parser = subparsers.add_parser("export", help="Export video to Gaussian PLYs")
     export_parser.add_argument("--input", "-i", type=Path, required=True, help="Input video file")
@@ -329,11 +284,6 @@ def main():
         from .depth import run_depth
 
         run_depth(args)
-
-    elif args.command == "extract-depth":
-        from .extract_depth import run_extract_depth
-
-        run_extract_depth(args)
 
     elif args.command == "export" or args.command == "legacy":
         export_video_to_gaussian_plys(

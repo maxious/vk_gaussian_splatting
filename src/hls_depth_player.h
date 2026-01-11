@@ -29,7 +29,7 @@
 namespace vk_viewer {
 
 struct HlsDepthMetadata {
-    std::string depthVideoPath;
+    std::filesystem::path depthVideoPath;
     int32_t frameCount = 0;
     double fps = 0.0;
     int32_t sourceWidth = 0;

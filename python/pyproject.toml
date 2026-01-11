@@ -60,8 +60,6 @@ dependencies = [
 cuda = [
     "torch>=2.7",
     "torchvision>=0.22",
-    "xformers>=0.0.28; sys_platform != 'darwin'",
-    "triton>=3.0; sys_platform == 'linux'",
     "triton-windows>=3.2; sys_platform == 'win32'",
 ]
 
@@ -201,8 +199,5 @@ pytorch-triton-xpu = [
 ]
 pytorch3d = [
     { index = "pytorch3d-wheels" },
-]
-xformers = [
-    { index = "pytorch-cuda", extra = "cuda", marker = "sys_platform != 'darwin'" },
 ]
 utils3d = { git = "https://github.com/EasternJournalist/utils3d.git", rev = "main" }

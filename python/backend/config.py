@@ -25,7 +25,6 @@ class Settings(BaseSettings):
     depth_width: int = 640
     depth_height: int = 360
     torch_dtype: str = "float16"
-    depth_header_magic: bytes = b"VDZ1"
     cors_origins: List[str] = Field(
         default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"],
         validation_alias="VIDEO_DEPTH_CORS_ORIGINS",

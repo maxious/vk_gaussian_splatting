@@ -256,7 +256,7 @@ struct FrameInfo
   float vdzZMax       DEFAULT(1.0f);   // Max depth from metadata (for colormap)
   float vdzPlaneScale DEFAULT(1.4f);   // Scale of the view plane
   float vdzAspect     DEFAULT(1.777f); // Aspect ratio (width/height) of depth texture
-  float vdzEdgeThreshold DEFAULT(1.0f);  // Max depth gradient before discarding fragment (edge detection)
+  float vdzEdgeThreshold DEFAULT(0.15f);  // Max depth gradient before discarding fragment (edge detection)
   int32_t visualize   DEFAULT(0);      // Current visualization mode
   int32_t vdzUseVideoTexture DEFAULT(0);  // 1 = use video RGB texture, 0 = use colormap
   int32_t vdzWorldSpaceMode DEFAULT(0);   // 0 = camera-attached (2.5D), 1 = world-space (VR)
@@ -278,8 +278,8 @@ struct FrameInfo
 
   // Gap filling parameters (for disocclusion handling)
   float3 vdzGapFillColor DEFAULT(float3(0.05f, 0.05f, 0.08f));  // Background color for filling gaps
-  int32_t vdzGapFillEnabled DEFAULT(0);             // 0 = discard, 1 = fill with color
-  int32_t vdzGapFillNeighbor DEFAULT(0);            // 0 = solid color, 1 = neighbor average fill
+  int32_t vdzGapFillEnabled DEFAULT(1);             // 0 = discard, 1 = fill with color
+  int32_t vdzGapFillNeighbor DEFAULT(1);            // 0 = solid color, 1 = neighbor average fill
   float  vdzGapFeather DEFAULT(0.0f);               // Edge feathering amount (0.0 = hard edge, 1.0 = soft)
   int32_t vdzGapFillRadius DEFAULT(3);              // Radius for neighbor sampling (in pixels)
 

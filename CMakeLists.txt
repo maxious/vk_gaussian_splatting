@@ -31,6 +31,9 @@ endif()
 # Add the cmake folder to the module path
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
+# Configure Vulkan SDK before anything else
+include(cmake/VulkanSDK.cmake)
+
 # Override Slang version before NvproCore2 loads it
 set(Slang_VERSION "2025.24.3" CACHE STRING "Slang version" FORCE)
 

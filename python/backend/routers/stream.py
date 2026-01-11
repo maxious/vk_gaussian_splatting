@@ -6,8 +6,6 @@ This module provides HLS streaming for processed video with:
 
 The HLS stream is standards-compliant and can be played by any HLS-compatible player.
 The depth is unpacked on the client using the metadata (z_min, z_max, scale).
-
-Note: The legacy VDZ WebSocket streaming has been removed in favor of HLS.
 """
 
 from __future__ import annotations

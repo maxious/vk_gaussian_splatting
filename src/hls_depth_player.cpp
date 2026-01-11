@@ -37,7 +37,7 @@ bool HlsDepthPlayer::open(const std::filesystem::path& playlistPath)
 
     // Open depth video
     if (!m_decoder->open(m_metadata.depthVideoPath)) {
-        LOGE("Failed to open depth video: %s\n", m_metadata.depthVideoPath.string().c_str());
+        LOGE("Failed to open depth video: %s\n", m_metadata.depthVideoPath.c_str());
         return false;
     }
 

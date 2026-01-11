@@ -624,8 +624,43 @@ bool DepthVideoLoader::decodeNextFrame()
             break;
     }
 
-    if (!frameDecoded && ret == AVERROR_EOF)
+    // Flush decoder to get any buffered frames (important for B-frame codecs like HEVC)
+    if (!frameDecoded)
     {
+        // Send flush packet
+        avcodec_send_packet(m_codecContext, nullptr);
+        
+        while (true)
+        {
+            ret = avcodec_receive_frame(m_codecContext, m_avFrame);
+            if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
+            {
+                break;
+            }
+            else if (ret < 0)
+            {
+                break;
+            }
+
+            const uint8_t* srcData[1] = { m_avFrame->data[0] };
+            int srcLinesize[1] = { m_avFrame->linesize[0] };
+            uint8_t* dstData[1] = { m_grayscaleFrame->data[0] };
+            int dstLinesize[1] = { m_grayscaleFrame->linesize[0] };
+
+            sws_scale(m_swsContext, srcData, srcLinesize, 0, m_height, dstData, dstLinesize);
+
+            size_t frameSize = m_width * m_height;
+            m_currentFrameData.resize(frameSize);
+            std::memcpy(m_currentFrameData.data(), m_grayscaleFrame->data[0], frameSize);
+
+            m_currentFrameIndex++;
+            m_currentFramePts = m_avFrame->pts * av_q2d(m_formatContext->streams[m_videoStreamIndex]->time_base);
+            m_currentTime.store(m_currentFramePts);
+
+            frameDecoded = true;
+            break;
+        }
+        
         m_eof.store(true);
     }
 

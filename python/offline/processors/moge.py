@@ -68,13 +68,24 @@ class MoGeGaussianProcessor(GaussianProcessor):
     def __init__(
         self,
         model_id: str = "Ruicheng/moge-2-vitl-normal",
-        device: str = "cuda",
+        device: str = "auto",
         process_res: int = 518,
     ):
         self.model_id = model_id
-        self.device = device
         self.process_res = process_res
         self.model = None
+        
+        # Auto-detect device
+        if device == "auto":
+            if torch.cuda.is_available():
+                self.device = "cuda"
+            elif hasattr(torch, "xpu") and torch.xpu.is_available():
+                self.device = "xpu"
+            else:
+                self.device = "cpu"
+            logger.info(f"Auto-detected device: {self.device}")
+        else:
+            self.device = device
 
     def _load_model(self):
         """Lazy load the MoGe model."""
