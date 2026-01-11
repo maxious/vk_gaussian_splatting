@@ -202,8 +202,8 @@ void VkViewerUI::guiDrawDepthStreamProperties()
       });
     }
 
-    // Playback controls (visible when streaming is active)
-    if(m_enableDepthRendering)
+    // Playback controls (visible when streaming is active - NOT offline mode)
+    if(m_enableDepthRendering && !m_videoDepthPlaybackMode)
     {
       ImGui::SeparatorText("Playback");
 
@@ -328,7 +328,7 @@ void VkViewerUI::guiDrawDepthStreamProperties()
       nvgui::tooltip("Show video RGB when enabled, depth colormap when disabled");
     }
 
-    if(m_enableDepthRendering)
+    if(m_enableDepthRendering && !m_videoDepthPlaybackMode)
     {
       PE::entry("Depth Scale", [&]() {
         return ImGui::DragFloat("##Scale", &m_depthScale, 0.01f, 0.1f, 10.0f);
@@ -342,7 +342,7 @@ void VkViewerUI::guiDrawDepthStreamProperties()
     PE::end();
   }
 
-  if(ImGui::CollapsingHeader("Offline Video+Depth", ImGuiTreeNodeFlags_DefaultOpen))
+  if(ImGui::CollapsingHeader("Offline Video+Depth", m_videoDepthPlaybackMode ? ImGuiTreeNodeFlags_DefaultOpen : 0))
   {
     PE::begin("##Offline Video+Depth");
 

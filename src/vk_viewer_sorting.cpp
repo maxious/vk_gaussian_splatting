@@ -308,17 +308,7 @@ void VkViewer::drawVdzMesh(VkCommandBuffer cmd)
 
   if(m_vdzMesh.getIndexCount() == 0 || m_graphicsPipelineVdzMesh == VK_NULL_HANDLE)
   {
-      static int logCounter = 0;
-      if(logCounter++ % 60 == 0) {
-          LOGW("drawVdzMesh skipped: indexCount=%u, pipeline=%p\n", 
-               m_vdzMesh.getIndexCount(), (void*)m_graphicsPipelineVdzMesh);
-      }
       return;
-  }
-
-  static int drawCounter = 0;
-  if(drawCounter++ % 60 == 0) {
-      LOGI("drawVdzMesh drawing: indexCount=%u\n", m_vdzMesh.getIndexCount());
   }
 
   VkDeviceSize offset{0};
@@ -339,13 +329,25 @@ void VkViewer::drawVdzMesh(VkCommandBuffer cmd)
           m_vdzModelMatrix = glm::inverse(cameraManip->getViewMatrix());
           m_vdzWorldSpaceInitialized = true;
       }
-      m_pcRaster.modelMatrix = m_vdzModelMatrix;
+      // Set in FrameInfo UBO (shader reads from frameInfo.vdzModelMatrix)
+      prmFrame.vdzModelMatrix = m_vdzModelMatrix;
   }
   else
   {
-      m_pcRaster.modelMatrix = glm::mat4(1.0f);
+      prmFrame.vdzModelMatrix = glm::mat4(1.0f);
       m_vdzWorldSpaceInitialized = false;
   }
+
+  // Update the vdzModelMatrix in the UBO (it was uploaded earlier, so we need to patch it)
+  VkDeviceSize vdzModelMatrixOffset = offsetof(shaderio::FrameInfo, vdzModelMatrix);
+  vkCmdUpdateBuffer(cmd, m_frameInfoBuffer.buffer, vdzModelMatrixOffset, sizeof(glm::mat4), &prmFrame.vdzModelMatrix);
+  
+  // Barrier to ensure the update is visible before vertex shader reads
+  VkMemoryBarrier barrier = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+  barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  barrier.dstAccessMask = VK_ACCESS_UNIFORM_READ_BIT;
+  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
+                       0, 1, &barrier, 0, nullptr, 0, nullptr);
 
   vkCmdPushConstants(cmd, m_pipelineLayout,
                      VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_MESH_BIT_EXT | VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,

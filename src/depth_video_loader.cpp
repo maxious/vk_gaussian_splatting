@@ -706,7 +706,7 @@ void VideoDepthPlaybackManager::close()
 
 void VideoDepthPlaybackManager::play()
 {
-    if (m_videoDecoder && !m_paused.load())
+    if (m_videoDecoder && m_paused.load())
     {
         m_videoDecoder->resume();
     }

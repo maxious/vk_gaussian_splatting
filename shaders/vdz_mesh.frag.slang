@@ -96,10 +96,9 @@ FragmentOutput main(FragmentInput input)
   else
   {
     // Depth-only mode: Use colormap visualization
-    // Use VDZ parameters for visualization range
-    float minD = 0.3;   // Near plane
-    float maxD = frameInfo.vdzZMaxClip > 0.0 ? frameInfo.vdzZMaxClip : 1.5;
-    
+    // Use zMin/zMax from metadata for proper range mapping
+    float minD = frameInfo.vdzZMin;
+    float maxD = frameInfo.vdzZMax > minD ? frameInfo.vdzZMax : 1.0;
     float3 colormap = depthToColormap(depth, minD, maxD);
     output.color = float4(colormap, 1.0);
   }

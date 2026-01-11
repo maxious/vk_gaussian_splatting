@@ -252,6 +252,8 @@ struct FrameInfo
   float vdzZBias      DEFAULT(2.0f);   // Global Z offset (added after scaling)
   float vdzZGamma     DEFAULT(5.0f);   // Gamma correction for depth (pow(depth, gamma))
   float vdzZMaxClip   DEFAULT(0.2f);   // Maximum depth clipping threshold
+  float vdzZMin       DEFAULT(0.0f);   // Min depth from metadata (for colormap)
+  float vdzZMax       DEFAULT(1.0f);   // Max depth from metadata (for colormap)
   float vdzPlaneScale DEFAULT(1.4f);   // Scale of the view plane
   float vdzAspect     DEFAULT(1.777f); // Aspect ratio (width/height) of depth texture
   float vdzEdgeThreshold DEFAULT(1.0f);  // Max depth gradient before discarding fragment (edge detection)

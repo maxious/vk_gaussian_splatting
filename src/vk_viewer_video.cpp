@@ -27,11 +27,6 @@ void VkViewer::updateDepthRendering(VkCommandBuffer cmd)
 #ifdef WITH_VIDEO_DECODER
   if (m_videoDepthManager && m_videoDepthManager->isPlaying())
   {
-    static int updateLogCounter = 0;
-    if(updateLogCounter++ % 120 == 0) {
-      LOGD("updateDepthRendering: videoDepthManager active, paused=%d\n", m_playbackPaused ? 1 : 0);
-    }
-    
     if(m_playbackPaused) return;
 
     VideoDecoder* videoDecoder = m_videoDepthManager->getVideoDecoder();
@@ -41,10 +36,6 @@ void VkViewer::updateDepthRendering(VkCommandBuffer cmd)
     {
         DecodedFrame videoFrame;
         bool gotFrame = videoDecoder->getNextFrame(videoFrame);
-        if(updateLogCounter % 120 == 1) {
-          LOGD("updateDepthRendering: getNextFrame=%d, frame size=%dx%d\n", 
-               gotFrame ? 1 : 0, videoFrame.width, videoFrame.height);
-        }
         if(gotFrame)
         {
             if (videoFrame.width > 0 && videoFrame.height > 0)
@@ -139,15 +130,23 @@ void VkViewer::updateDepthRendering(VkCommandBuffer cmd)
                     m_depthManager->uploadDepthFrame(uploadFrame, cmd);
                     m_lastVdzFrameIndex = depthFrame.timestampMs;
                     m_depthFrameCounter++;
-
-                    // Log frame info periodically
-                    static int frameLogCounter = 0;
-                    if (frameLogCounter++ % 30 == 0) {
-                        glm::vec3 eye, center, up;
-                        cameraManip->getLookat(eye, center, up);
-                        float distToCenter = glm::length(center - eye);
-                        LOGI("=== FRAME %u ===\n", depthFrame.timestampMs);
-                        LOGI("Camera: eye=(%.2f, %.2f, %.2f) dist=%.2f\n", eye.x, eye.y, eye.z, distToCenter);
+                    
+                    // Update shader parameters with metadata z range
+                    if(depthFrame.zMax > depthFrame.zMin && depthFrame.zMax > 0.0f)
+                    {
+                        prmFrame.vdzZMin = depthFrame.zMin;
+                        prmFrame.vdzZMax = depthFrame.zMax;
+                    }
+                    else
+                    {
+                        static bool warnedOnce = false;
+                        if(!warnedOnce)
+                        {
+                            LOGW("Depth metadata missing z_min/z_max, using defaults [0, 1]\n");
+                            warnedOnce = true;
+                        }
+                        prmFrame.vdzZMin = 0.0f;
+                        prmFrame.vdzZMax = 1.0f;
                     }
                     
                     if(m_descriptorSet != VK_NULL_HANDLE)
