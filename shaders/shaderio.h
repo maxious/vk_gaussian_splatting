@@ -262,6 +262,24 @@ struct FrameInfo
   int32_t vdzWorldSpaceMode DEFAULT(0);   // 0 = camera-attached (2.5D), 1 = world-space (VR)
   float4x4 vdzModelMatrix;                // Captured model matrix for world-space mode
 
+  // Parallax rendering parameters (Tiefling-style depth-based displacement)
+  float2 vdzParallaxOffset DEFAULT(float2(0.0f, 0.0f));   // Mouse/touch offset for parallax (normalized)
+  float  vdzParallaxStrength DEFAULT(0.5f);              // Parallax intensity multiplier (0.0 = disabled)
+  float  vdzParallaxFocus DEFAULT(0.5f);                 // Focus plane depth (0.0 = near, 1.0 = far)
+  float  vdzParallaxEdgeSoftness DEFAULT(0.02f);         // Edge softening factor to reduce artifacts at borders
+
+  // Gap filling parameters (for disocclusion handling)
+  float3 vdzGapFillColor DEFAULT(float3(0.05f, 0.05f, 0.08f));  // Background color for filling gaps
+  int32_t vdzGapFillEnabled DEFAULT(0);             // 0 = discard, 1 = fill with color
+  int32_t vdzGapFillNeighbor DEFAULT(0);            // 0 = solid color, 1 = neighbor average fill
+  float  vdzGapFeather DEFAULT(0.0f);               // Edge feathering amount (0.0 = hard edge, 1.0 = soft)
+  int32_t vdzGapFillRadius DEFAULT(3);              // Radius for neighbor sampling (in pixels)
+
+  // Bilateral filter parameters (for depth smoothing preprocessing)
+  int32_t vdzBilateralEnabled DEFAULT(0);           // 1 = apply bilateral filter to depth
+  float  vdzBilateralSigmaSpace DEFAULT(2.0f);      // Spatial sigma for bilateral filter
+  float  vdzBilateralSigmaDepth DEFAULT(0.1f);      // Depth range sigma for bilateral filter
+
   // Environment Depth Occlusion
   int32_t envDepthAvailable DEFAULT(0);   // 1 = enabled/available, 0 = disabled
   float envDepthNear DEFAULT(0.01f);

@@ -649,6 +649,11 @@ protected:
   float m_depthScale = 1.0f;
   float m_depthBias = 0.0f;
 
+  // Parallax rendering state
+  glm::vec2 m_lastMousePos = {-1.0f, -1.0f};  // Last mouse position for drag detection
+  bool m_parallaxDragActive = false;           // Whether parallax drag is active
+  float m_parallaxSensitivity = 0.001f;        // Sensitivity for parallax offset
+
   DepthStreamClient::ClientStats m_depthStats{};
   int m_depthFrameCounter = 0;  // For selective debug logging
   

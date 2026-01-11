@@ -227,6 +227,34 @@ void VkViewerUI::onPreRender()
     }
   }
 
+  // Update parallax offset based on right mouse button drag
+  if(prmFrame.vdzParallaxStrength > 0.0f)
+  {
+    ImGuiIO& io = ImGui::GetIO();
+    
+    if(io.MouseDown[1])  // Right mouse button
+    {
+      if(m_lastMousePos.x >= 0.0f)
+      {
+        glm::vec2 mouseDelta = glm::vec2(io.MouseDelta.x, io.MouseDelta.y);
+        prmFrame.vdzParallaxOffset += mouseDelta * m_parallaxSensitivity;
+        prmFrame.vdzParallaxOffset.x = std::clamp(prmFrame.vdzParallaxOffset.x, -1.0f, 1.0f);
+        prmFrame.vdzParallaxOffset.y = std::clamp(prmFrame.vdzParallaxOffset.y, -1.0f, 1.0f);
+      }
+    }
+    else
+    {
+      prmFrame.vdzParallaxOffset = glm::vec2(0.0f, 0.0f);
+    }
+    
+    m_lastMousePos = glm::vec2(io.MousePos.x, io.MousePos.y);
+  }
+  else
+  {
+    m_lastMousePos = glm::vec2(-1.0f, -1.0f);
+    prmFrame.vdzParallaxOffset = glm::vec2(0.0f, 0.0f);
+  }
+
   VkViewer::onPreRender();
 }
 

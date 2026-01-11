@@ -707,19 +707,96 @@ void VkViewerUI::guiDrawDepthStreamProperties()
     PE::SliderFloat("Edge Threshold", &prmFrame.vdzEdgeThreshold, 0.0f, 1.0f, "%.3f", 0,
                     "Depth gradient threshold for edge detection");
 
+    bool useVideoTexture = prmFrame.vdzUseVideoTexture != 0;
+    if(PE::Checkbox("Use Video Texture", &useVideoTexture,
+                    "Show video RGB when enabled, depth colormap when disabled."))
+    {
+      prmFrame.vdzUseVideoTexture = useVideoTexture ? 1 : 0;
+    }
+
+    // Parallax rendering controls
+    if(ImGui::TreeNode("Parallax Rendering"))
+    {
+      PE::SliderFloat("Strength", &prmFrame.vdzParallaxStrength, 0.0f, 2.0f, "%.2f", 0,
+                      "Parallax intensity multiplier (0.0 = disabled)");
+      PE::SliderFloat("Focus Plane", &prmFrame.vdzParallaxFocus, 0.0f, 1.0f, "%.2f", 0,
+                      "Depth of the focus plane (0=near, 1=far)");
+      PE::SliderFloat("Edge Softness", &prmFrame.vdzParallaxEdgeSoftness, 0.0f, 0.1f, "%.3f", 0,
+                      "Edge softening factor to reduce artifacts at borders");
+      
+      // Display parallax offset (for debugging)
+      ImGui::Text("Offset: %.3f, %.3f", prmFrame.vdzParallaxOffset.x, prmFrame.vdzParallaxOffset.y);
+      
+      ImGui::TreePop();
+    }
+
+    // Gap filling controls
+    if(ImGui::TreeNode("Gap Filling"))
+    {
+      bool gapFillEnabled = prmFrame.vdzGapFillEnabled != 0;
+      if(PE::Checkbox("Enable Gap Fill", &gapFillEnabled,
+                      "Fill invalid depth regions instead of discarding"))
+      {
+        prmFrame.vdzGapFillEnabled = gapFillEnabled ? 1 : 0;
+      }
+      
+      if(gapFillEnabled)
+      {
+        float gapFillColor[3] = {prmFrame.vdzGapFillColor[0], prmFrame.vdzGapFillColor[1], prmFrame.vdzGapFillColor[2]};
+        if(ImGui::ColorEdit3("Fill Color", gapFillColor, ImGuiColorEditFlags_Float))
+        {
+          prmFrame.vdzGapFillColor[0] = gapFillColor[0];
+          prmFrame.vdzGapFillColor[1] = gapFillColor[1];
+          prmFrame.vdzGapFillColor[2] = gapFillColor[2];
+        }
+        
+        bool gapFillNeighbor = prmFrame.vdzGapFillNeighbor != 0;
+        if(PE::Checkbox("Neighbor Average", &gapFillNeighbor,
+                        "Use average of neighboring pixels instead of solid color"))
+        {
+          prmFrame.vdzGapFillNeighbor = gapFillNeighbor ? 1 : 0;
+        }
+        
+        if(gapFillNeighbor)
+        {
+          PE::SliderInt("Neighbor Radius", &prmFrame.vdzGapFillRadius, 1, 8, "%d", 0,
+                        "Radius for neighbor sampling (in pixels)");
+        }
+        
+        PE::SliderFloat("Edge Feather", &prmFrame.vdzGapFeather, 0.0f, 2.0f, "%.2f", 0,
+                        "Edge feathering amount for smooth transitions");
+      }
+      
+      ImGui::TreePop();
+    }
+
+    // Bilateral filter controls
+    if(ImGui::TreeNode("Bilateral Filter"))
+    {
+      bool bilateralEnabled = prmFrame.vdzBilateralEnabled != 0;
+      if(PE::Checkbox("Enable Filter", &bilateralEnabled,
+                      "Apply edge-preserving smoothing to depth"))
+      {
+        prmFrame.vdzBilateralEnabled = bilateralEnabled ? 1 : 0;
+      }
+      
+      if(bilateralEnabled)
+      {
+        PE::SliderFloat("Spatial Sigma", &prmFrame.vdzBilateralSigmaSpace, 0.5f, 10.0f, "%.1f", 0,
+                        "Spatial sigma for bilateral filter (larger = smoother)");
+        PE::SliderFloat("Depth Sigma", &prmFrame.vdzBilateralSigmaDepth, 0.01f, 1.0f, "%.3f", 0,
+                        "Depth range sigma for preserving edges");
+      }
+      
+      ImGui::TreePop();
+    }
+
     bool worldSpace = prmFrame.vdzWorldSpaceMode != 0;
     if(PE::Checkbox("World Space / VR Mode", &worldSpace,
                     "Detach mesh from camera and place it in the world."))
     {
       prmFrame.vdzWorldSpaceMode = worldSpace ? 1 : 0;
       m_requestUpdateShaders = true;
-    }
-
-    bool useVideoTexture = prmFrame.vdzUseVideoTexture != 0;
-    if(PE::Checkbox("Use Video Texture", &useVideoTexture,
-                    "Show video RGB when enabled, depth colormap when disabled."))
-    {
-      prmFrame.vdzUseVideoTexture = useVideoTexture ? 1 : 0;
     }
 
     PE::end();

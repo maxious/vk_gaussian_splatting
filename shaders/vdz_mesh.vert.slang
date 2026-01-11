@@ -74,6 +74,31 @@ VertexOutput main(VertexInput input)
   float zDepth = clamp(depth * frameInfo.vdzZScale, 0.0, frameInfo.vdzZMaxClip);
   float z = zDepth + frameInfo.vdzZBias;
   
+  // Normalize depth to [0, 1] range for parallax calculation
+  float minD = frameInfo.vdzZMin;
+  float maxD = frameInfo.vdzZMax > minD ? frameInfo.vdzZMax : minD + 1.0;
+  float normalizedDepth = clamp((depth - minD) / (maxD - minD), 0.0, 1.0);
+  
+  // Calculate parallax displacement (Tiefling-style)
+  // Parallax factor: larger displacement for depths further from focus plane
+  float2 parallaxOffset = float2(0.0, 0.0);
+  if (frameInfo.vdzParallaxStrength > 0.0 && 
+      (abs(frameInfo.vdzParallaxOffset.x) > 0.0 || abs(frameInfo.vdzParallaxOffset.y) > 0.0))
+  {
+    float focusZ = frameInfo.vdzParallaxFocus;
+    float depthDiff = normalizedDepth - focusZ;
+    
+    // Parallax displacement: offset * strength * (depth - focus)
+    // Negative Y because Vulkan Y is down, but we want intuitive vertical parallax
+    parallaxOffset = frameInfo.vdzParallaxOffset * frameInfo.vdzParallaxStrength * depthDiff * float2(-1.0, 1.0);
+    
+    // Apply edge softening to reduce artifacts at borders
+    float edgeWidth = frameInfo.vdzParallaxEdgeSoftness;
+    vec2 edgeFactor = smoothstep(float2(0.0, 0.0), float2(edgeWidth, edgeWidth), uv) * 
+                      smoothstep(float2(1.0, 1.0), float2(1.0 - edgeWidth, 1.0 - edgeWidth), uv);
+    parallaxOffset *= edgeFactor.x * edgeFactor.y;
+  }
+  
   // Build camera-aligned plane position
   // The plane is centered at camera, scaled by planeScale and aspect ratio
   float planeScale = frameInfo.vdzPlaneScale;
@@ -81,8 +106,9 @@ VertexOutput main(VertexInput input)
   
   // X: left-to-right maps to positive-to-negative (looking into screen)
   // Y: top-to-bottom maps to positive-to-negative (Vulkan convention)
-  float x = (0.5 - uv.x) * aspect * planeScale;
-  float y = (0.5 - uv.y) * planeScale;
+  // Apply parallax offset to X,Y position
+  float x = (0.5 - uv.x) * aspect * planeScale + parallaxOffset.x;
+  float y = (0.5 - uv.y) * planeScale + parallaxOffset.y;
   
   // View-space position: camera looks down -Z
   float4 viewPos = float4(x, y, -z, 1.0);
