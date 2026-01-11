@@ -44,13 +44,21 @@ struct HlsDepthMetadata {
     float zMax = 0.0f;
     float scale = 0.0f;
 
+    // MoGe-specific fields
+    bool hasNormals = false;
+    bool sideBySide = false;
+
+    // Computed values
     int32_t width = 0;
     int32_t height = 0;
+    int32_t rgbWidth = 0;   // RGB video width (same as width for side-by-side)
+    double duration = 0.0;  // Total duration in seconds
 };
 
 struct HlsDecodedFrame {
-    std::vector<float> depthData;
-    std::vector<uint8_t> normalsData;
+    std::vector<uint8_t> rgbData;       // Reconstructed RGB video data
+    std::vector<float> depthData;       // Depth values in meters
+    std::vector<uint8_t> normalsData;   // Surface normals
     int width = 0;
     int height = 0;
     double timestamp = 0.0;
