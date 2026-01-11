@@ -313,27 +313,114 @@ void VkViewer::enableDepthRendering(const std::string& host, int port, const std
   LOGI("Depth rendering enabled for streaming session\n");
 }
 
-void VkViewer::onResize(VkCommandBuffer cmd, const VkExtent2D& size)
+void VkViewer::onResize(VkCommandBuffer cmd, const VkExtent2D& viewportSize)
 {
-  // Base implementation - subclasses can override
-  VkViewer::onResize(cmd, size);
+  m_viewSize = {viewportSize.width, viewportSize.height};
+  NVVK_CHECK(m_gBuffers.update(cmd, viewportSize));
+  updateRtDescriptorSet();
+  updateDescriptorSetPostProcessing();
+  resetFrameCounter();
 }
 
 void VkViewer::onPreRender()
 {
-  // Base implementation - subclasses can override
-  VkViewer::onPreRender();
+  m_profilerTimeline->frameAdvance();
+
+#ifdef WITH_OPENXR
+  // Clear the resize flag from previous frame
+  m_xrResizedThisFrame = false;
+
+  // Check if XR requires GBuffer resize (must happen before command buffer recording)
+  if(m_xrInitialized && m_xr && m_xr->isValid())
+  {
+    VkExtent2D xrExtent = m_xr->getFullExtent();
+    if(xrExtent.width > 0 && xrExtent.height > 0
+       && (m_viewSize.x != xrExtent.width || m_viewSize.y != xrExtent.height))
+    {
+      // Wait for GPU to finish all work before resizing
+      vkDeviceWaitIdle(m_device);
+
+      // Create a temporary command buffer for the resize operation
+      VkCommandBuffer cmd = m_app->createTempCmdBuffer();
+      m_viewSize = glm::vec2(xrExtent.width, xrExtent.height);
+      NVVK_CHECK(m_gBuffers.update(cmd, xrExtent));
+      updateRtDescriptorSet();
+      updateDescriptorSetPostProcessing();
+      resetFrameCounter();
+      m_app->submitAndWaitTempCmdBuffer(cmd);
+
+      // Skip rendering this frame to let descriptor sets stabilize
+      m_xrResizedThisFrame = true;
+    }
+  }
+#endif
 }
 
 bool VkViewer::initAll()
 {
-  // Base implementation - subclasses can override
+  vkDeviceWaitIdle(m_device);
+
+  // resize the CPU sorter indices buffer
+  m_splatIndices.resize(m_splatIndices.size());
+  // TODO: use BBox of point cloud to set far plane, eye and center
+  m_cameraSet.setCamera(Camera());
+  // record default cam for reset in UI
+  m_cameraSet.setHomePreset(m_cameraSet.getCamera());
+  // reset general parameters
+  resetRenderSettings();
+
+  m_lightSet.init(m_app, &m_alloc, &m_uploader);
+  // init a new setup
+  if(!initShaders())
+  {
+    return false;
+  }
+  initRendererBuffers();
+  m_splatSetVk.initDataStorage(m_splatSet, prmData.dataStorage, prmData.shFormat);
+  initPipelines();
+
+  // RTX specifics
+  m_splatSetVk.rtxInitSplatModel(m_splatSet, prmRtxData.useTlasInstances, prmRtxData.useAABBs, prmRtxData.compressBlas,
+                                 prmRtx.kernelDegree, prmRtx.kernelMinResponse, prmRtx.kernelAdaptiveClamping);
+
+  m_splatSetVk.rtxInitAccelerationStructures(m_splatSet);
+
+  initRtDescriptorSet();
+  initRtPipeline();
+
+  // Post processing
+  initDescriptorSetPostProcessing();
+  initPipelinePostProcessing();
+
   return true;
 }
 
 void VkViewer::deinitAll()
 {
-  // Base implementation - subclasses can override
+  vkDeviceWaitIdle(m_device);
+
+#ifdef WITH_DLSS_RR
+  shutdownDlssRR();
+#endif
+
+  m_canCollectReadback = false;
+  deinitScene();
+  m_splatSetVk.resetTransform();
+  m_splatSetVk.deinitDataStorage();
+  m_splatSetVk.rtxDeinitSplatModel();
+  m_splatSetVk.rtxDeinitAccelerationStructures();
+  m_meshSetVk.deinitDataStorage();
+  m_meshSetVk.rtxDeinitAccelerationStructures();
+  m_lightSet.deinit();
+  m_cameraSet.deinit();
+  deinitShaders();
+  deinitPipelines();
+  deinitRendererBuffers();
+  resetRenderSettings();
+  // record default cam for reset in UI
+  m_cameraSet.setCamera(Camera());
+  // record default cam for reset in UI
+  m_cameraSet.setHomePreset(m_cameraSet.getCamera());
 }
 
 void VkViewer::enableDepthVideoPlayback(const std::string& metadataPath)

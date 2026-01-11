@@ -54,7 +54,7 @@ struct VertexOutput
 // clang-format on
 
 [shader("vertex")]
-VertexOutput main(VertexInput input)
+VertexOutput main(VertexInput input, uint viewIndex : SV_ViewID)
 {
   VertexOutput output;
   
@@ -96,8 +96,8 @@ VertexOutput main(VertexInput input)
     
     // Edge softening
     float edgeWidth = frameInfo.vdzParallaxEdgeSoftness;
-    vec2 edgeFactor = smoothstep(float2(0.0, 0.0), float2(edgeWidth, edgeWidth), uv) * 
-                      smoothstep(float2(1.0, 1.0), float2(1.0 - edgeWidth, 1.0 - edgeWidth), uv);
+    float2 edgeFactor = smoothstep(float2(0.0, 0.0), float2(edgeWidth, edgeWidth), uv) * 
+                       smoothstep(float2(1.0, 1.0), float2(1.0 - edgeWidth, 1.0 - edgeWidth), uv);
     parallaxOffset *= edgeFactor.x * edgeFactor.y;
   }
   
@@ -107,7 +107,7 @@ VertexOutput main(VertexInput input)
   // So we can compute view direction in world space and use it directly
   
   // Calculate view direction from camera to vertex position
-  float3 cameraPos = frameInfo.cameraPositionArray[gl_ViewIndex];
+  float3 cameraPos = frameInfo.cameraPositionArray[viewIndex];
   
   // Build camera-aligned plane position (same as existing VDZ shader)
   float planeScale = frameInfo.vdzPlaneScale;

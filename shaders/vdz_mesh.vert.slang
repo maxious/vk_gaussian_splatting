@@ -94,8 +94,8 @@ VertexOutput main(VertexInput input)
     
     // Apply edge softening to reduce artifacts at borders
     float edgeWidth = frameInfo.vdzParallaxEdgeSoftness;
-    vec2 edgeFactor = smoothstep(float2(0.0, 0.0), float2(edgeWidth, edgeWidth), uv) * 
-                      smoothstep(float2(1.0, 1.0), float2(1.0 - edgeWidth, 1.0 - edgeWidth), uv);
+    float2 edgeFactor = smoothstep(float2(0.0, 0.0), float2(edgeWidth, edgeWidth), uv) * 
+                       smoothstep(float2(1.0, 1.0), float2(1.0 - edgeWidth, 1.0 - edgeWidth), uv);
     parallaxOffset *= edgeFactor.x * edgeFactor.y;
   }
   

@@ -63,17 +63,17 @@ float2 parallaxOcclusionMapping(float2 texCoords, float3 viewDirTS, float height
     // Adaptive layer count based on viewing angle (critical for VR!)
     // More layers at grazing angles, fewer when looking straight on
     const float minLayers = 4.0;
-    float numLayers = mix(float(maxLayers), minLayers, abs(viewDirTS.z));
+    float numLayers = lerp(float(maxLayers), minLayers, abs(viewDirTS.z));
     float layerDepth = 1.0 / numLayers;
     
     // Calculate UV offset per layer
     // P = viewDir.xy / viewDir.z * heightScale
     // This projects the view ray onto the texture plane
-    vec2 P = viewDirTS.xy / max(viewDirTS.z, 0.01) * heightScale;
-    vec2 deltaTexCoords = P / numLayers;
+    float2 P = viewDirTS.xy / max(viewDirTS.z, 0.01) * heightScale;
+    float2 deltaTexCoords = P / numLayers;
     
     // Initial values
-    vec2 currentTexCoords = texCoords;
+    float2 currentTexCoords = texCoords;
     float currentDepthMapValue = vdzDepthTexture.SampleLevel(currentTexCoords, 0).r;
     float currentLayerDepth = 0.0;
     
@@ -88,14 +88,14 @@ float2 parallaxOcclusionMapping(float2 texCoords, float3 viewDirTS, float height
     
     // Parallax Occlusion: Smooth interpolation between layers
     // This produces smoother results than steep parallax mapping
-    vec2 prevTexCoords = currentTexCoords + deltaTexCoords;
+    float2 prevTexCoords = currentTexCoords + deltaTexCoords;
     
     float afterDepth = currentDepthMapValue - currentLayerDepth;
     float beforeDepth = vdzDepthTexture.SampleLevel(prevTexCoords, 0).r - currentLayerDepth + layerDepth;
     
     // Linear interpolation between the two layer boundaries
     float weight = afterDepth / (afterDepth - beforeDepth + 0.00001);
-    vec2 finalTexCoords = prevTexCoords * weight + currentTexCoords * (1.0 - weight);
+    float2 finalTexCoords = prevTexCoords * weight + currentTexCoords * (1.0 - weight);
     
     return finalTexCoords;
 }
