@@ -63,6 +63,11 @@ struct DepthVideoMetadata {
     float zMin = 0.0f;
     float zMax = 0.0f;
 
+    // Side-by-side depth + normals support
+    bool hasNormals = false;      // Whether normals are available
+    bool sideBySide = false;      // Whether video is side-by-side (depth | normals)
+    int32_t normalsWidth = 0;     // Width of normals portion (same as depthWidth if side-by-side)
+
     // Computed values
     int32_t depthWidth = 0;
     int32_t depthHeight = 0;

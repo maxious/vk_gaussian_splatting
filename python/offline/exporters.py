@@ -542,6 +542,10 @@ def export_images_to_gaussian_plys(
 
     if "matrix3d" in model_id.lower():
         processor = Matrix3DGaussianProcessor(device=device)
+    elif "moge" in model_id.lower():
+        from .processors.moge import MoGeGaussianProcessor
+
+        processor = MoGeGaussianProcessor(model_id=model_id, device=device)
     elif "sharp" in model_id.lower():
         # Heuristic: if model_id contains "sharp", use Sharp processor
         model_path = (

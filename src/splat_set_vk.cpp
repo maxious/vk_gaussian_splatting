@@ -22,6 +22,7 @@
 #include "utilities.h"
 
 #include <chrono>
+#include <cinttypes>
 
 // mathematics
 #include <glm/vec3.hpp>
@@ -1090,8 +1091,8 @@ void SplatSetVk::rtxInitAccelerationStructures(SplatSet& splatSet)
       uint64_t primitiveCount = m_rtxUseAABBs ? m_splatModel.nbAABB : (m_splatModel.nbIndices / 3);
       if(primitiveCount > m_accelStructProps.maxPrimitiveCount)
       {
-        LOGW("Primitive count (%llu) exceeds maxPrimitiveCount (%llu). Disabling RTX.\n", primitiveCount,
-             (unsigned long long)m_accelStructProps.maxPrimitiveCount);
+        LOGW("Primitive count (%" PRIu64 ") exceeds maxPrimitiveCount (%" PRIu64 "). Disabling RTX.\n", primitiveCount,
+              m_accelStructProps.maxPrimitiveCount);
         rtxValid = false;
         rtxDeinitAccelerationStructures();
         return;

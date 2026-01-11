@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
@@ -20,7 +21,9 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
-class DA3DeviceWorker(BaseDeviceWorker[np.ndarray, tuple[np.ndarray, float, float]]):
+class DA3DeviceWorker(
+    BaseDeviceWorker[np.ndarray, tuple[np.ndarray, float, float, np.ndarray | None]]
+):
     INTERNAL_MODEL = None
 
     def __init__(
@@ -70,7 +73,7 @@ class DA3DeviceWorker(BaseDeviceWorker[np.ndarray, tuple[np.ndarray, float, floa
         arr = tensor.permute(1, 2, 0).numpy()
         return (arr * 255).astype(np.uint8)
 
-    def process_item(self, item: np.ndarray) -> tuple[np.ndarray, float, float]:
+    def process_item(self, item: np.ndarray) -> tuple[np.ndarray, float, float, np.ndarray | None]:
         prediction = self.model.inference(
             [item],
             process_res=self.process_res,
@@ -88,9 +91,12 @@ class DA3DeviceWorker(BaseDeviceWorker[np.ndarray, tuple[np.ndarray, float, floa
             z_min = 0.5
             z_max = 10.0
 
-        return (depth, z_min, z_max)
+        # Return 4-tuple for compatibility with MoGe worker
+        return (depth, z_min, z_max, None)
 
-    def process_batch(self, items: list[np.ndarray]) -> list[tuple[np.ndarray, float, float]]:
+    def process_batch(
+        self, items: list[np.ndarray]
+    ) -> list[tuple[np.ndarray, float, float, np.ndarray | None]]:
         """Process batch of frames using model batch inference.
 
         Passes all frames to model.inference() at once for better throughput.
@@ -118,7 +124,7 @@ class DA3DeviceWorker(BaseDeviceWorker[np.ndarray, tuple[np.ndarray, float, floa
                 z_min = 0.5
                 z_max = 10.0
 
-            results.append((depth, z_min, z_max))
+            results.append((depth, z_min, z_max, None))
 
         return results
 
@@ -128,7 +134,7 @@ class DA3DeviceWorker(BaseDeviceWorker[np.ndarray, tuple[np.ndarray, float, floa
         timestamps_ms: list[float],
         batch_size: int = 4,
         num_workers: int = 4,
-    ) -> list[tuple[np.ndarray, float, float]]:
+    ) -> list[tuple[np.ndarray, float, float, np.ndarray | None]]:
         """Process frames using DataLoader for parallel loading and pinned memory.
 
         Uses TRUE batch inference - all frames in a batch are processed at once

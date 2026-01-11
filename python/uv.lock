@@ -5761,12 +5761,11 @@ wheels = [
 
 [[package]]
 name = "utils3d"
-version = "0.0.2"
-source = { git = "https://github.com/EasternJournalist/utils3d.git?rev=9a4eb15e4021b67b12c460c7057d642626897ec8#9a4eb15e4021b67b12c460c7057d642626897ec8" }
+version = "1.6"
+source = { git = "https://github.com/EasternJournalist/utils3d.git?rev=main#e2bb46a199b10645f19477108f3358fbb8818df2" }
 dependencies = [
     { name = "moderngl" },
     { name = "numpy" },
-    { name = "plyfile" },
     { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' or (extra == 'extra-27-vk-gaussian-splatting-tools-cpu' and extra == 'extra-27-vk-gaussian-splatting-tools-cuda') or (extra == 'extra-27-vk-gaussian-splatting-tools-cpu' and extra == 'extra-27-vk-gaussian-splatting-tools-xpu') or (extra == 'extra-27-vk-gaussian-splatting-tools-cuda' and extra == 'extra-27-vk-gaussian-splatting-tools-xpu')" },
     { name = "scipy", version = "1.16.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' or (extra == 'extra-27-vk-gaussian-splatting-tools-cpu' and extra == 'extra-27-vk-gaussian-splatting-tools-cuda') or (extra == 'extra-27-vk-gaussian-splatting-tools-cpu' and extra == 'extra-27-vk-gaussian-splatting-tools-xpu') or (extra == 'extra-27-vk-gaussian-splatting-tools-cuda' and extra == 'extra-27-vk-gaussian-splatting-tools-xpu')" },
 ]
@@ -6017,7 +6016,7 @@ requires-dist = [
     { name = "triton", marker = "sys_platform == 'linux' and extra == 'cuda'", specifier = ">=3.0" },
     { name = "triton-windows", marker = "sys_platform == 'win32' and extra == 'cuda'", specifier = ">=3.2" },
     { name = "ty", marker = "extra == 'dev'", specifier = ">=0.0.8" },
-    { name = "utils3d", git = "https://github.com/EasternJournalist/utils3d.git?rev=9a4eb15e4021b67b12c460c7057d642626897ec8" },
+    { name = "utils3d", git = "https://github.com/EasternJournalist/utils3d.git?rev=main" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'backend'", specifier = ">=0.30" },
     { name = "xatlas", specifier = ">=0.0.9" },
     { name = "xformers", marker = "sys_platform != 'darwin' and extra == 'cuda'", specifier = ">=0.0.28", index = "https://download.pytorch.org/whl/cu130", conflict = { package = "vk-gaussian-splatting-tools", extra = "cuda" } },

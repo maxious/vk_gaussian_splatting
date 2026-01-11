@@ -544,8 +544,8 @@ void VkViewer::deinitScene()
 void VkViewer::benchmarkAdvance()
 {
   LOGI("BENCHMARK_ADV %d {\n", m_benchmarkId);
-  LOGI(" Memory Scene; Host used \t%zu; Device Used \t%zu; Device Allocated \t%zu; (bytes)\n",
-       m_splatSetVk.memoryStats.srcAll, m_splatSetVk.memoryStats.odevAll, m_splatSetVk.memoryStats.devAll);
+  LOGI(" Memory Scene; Host used \t%u; Device Used \t%u; Device Allocated \t%u; (bytes)\n",
+        m_splatSetVk.memoryStats.srcAll, m_splatSetVk.memoryStats.odevAll, m_splatSetVk.memoryStats.devAll);
   LOGI(" Memory Rasterization; Host used \t%zu; Device Used \t%zu; Device Allocated \t%zu; (bytes)\n",
        m_renderMemoryStats.rasterHostTotal, m_renderMemoryStats.rasterDeviceUsedTotal,
        m_renderMemoryStats.rasterDeviceAllocTotal);

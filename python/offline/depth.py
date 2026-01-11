@@ -18,6 +18,20 @@ from offline.formats import VdzFrame, write_vdz_frame
 logger = logging.getLogger(__name__)
 
 
+def _normalize_normals(normals: np.ndarray) -> np.ndarray:
+    """Convert normals from [-1, 1] range to [0, 255] uint8 for visualization.
+
+    Args:
+        normals: (H, W, 3) array in [-1, 1] range
+
+    Returns:
+        (H, W, 3) uint8 array
+    """
+    # Convert from [-1, 1] to [0, 255]
+    normalized = ((normals + 1.0) * 127.5).clip(0, 255).astype(np.uint8)
+    return normalized
+
+
 def run_depth(args) -> None:
     """Run depth extraction on video."""
     # Suppress verbose DA3 logs
@@ -67,6 +81,7 @@ def run_depth(args) -> None:
         depth_tensors = []
         z_mins = []
         z_maxs = []
+        has_normals = False
 
         for batch_start in range(0, len(frames), args.batch_size):
             batch_end = min(batch_start + args.batch_size, len(frames))
@@ -81,8 +96,12 @@ def run_depth(args) -> None:
             for depth_pred in results:
                 depth = depth_pred.depth
                 z_min, z_max = depth_pred.z_min, depth_pred.z_max
+                normals = depth_pred.normals
                 z_mins.append(z_min)
                 z_maxs.append(z_max)
+
+                if normals is not None:
+                    has_normals = True
 
                 # Normalize to 0-255
                 if z_max > z_min:
@@ -90,9 +109,18 @@ def run_depth(args) -> None:
                 else:
                     normalized = np.zeros_like(depth, dtype=np.uint8)
 
-                # Convert to tensor (H, W) -> (1, H, W) then RGB
-                tensor = torch.from_numpy(normalized).unsqueeze(0).unsqueeze(0)
-                tensor = tensor.repeat(1, 3, 1, 1)
+                if has_normals and normals is not None:
+                    # Create side-by-side: depth on left, normals on right
+                    normal_viz = _normalize_normals(normals)
+                    # Concatenate horizontally
+                    combined = np.concatenate([normalized, normal_viz], axis=1)
+                    # Convert to tensor (H, W) -> (1, H, W) then RGB
+                    tensor = torch.from_numpy(combined).unsqueeze(0).unsqueeze(0)
+                    tensor = tensor.repeat(1, 3, 1, 1)
+                else:
+                    # Just depth
+                    tensor = torch.from_numpy(normalized).unsqueeze(0).unsqueeze(0)
+                    tensor = tensor.repeat(1, 3, 1, 1)
                 depth_tensors.append(tensor)
 
         # Stack all frames
@@ -125,6 +153,8 @@ def run_depth(args) -> None:
             "format": "hevc_lossless",
             "z_min": min(z_mins),
             "z_max": max(z_maxs),
+            "has_normals": has_normals,
+            "side_by_side": has_normals,
         }
         with open(args.output / "metadata.json", "w") as f:
             json.dump(metadata, f, indent=2)
