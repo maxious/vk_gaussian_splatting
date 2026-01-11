@@ -178,6 +178,8 @@ endif()
 
 #####
 # Include Vulkan Radix Sort (header-only library)
+# Ensure Slang is found before vrdx (vrdx needs Slang_SLANGC_EXECUTABLE)
+find_package(Slang REQUIRED)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/vrdx)
 
 # vk_radix_sort is now an INTERFACE library, only set folder for shader targets

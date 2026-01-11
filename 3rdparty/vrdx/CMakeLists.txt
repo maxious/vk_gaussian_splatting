@@ -7,6 +7,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 find_package(Vulkan REQUIRED)
 
+# Find Python3 for shader compilation script
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
 # We use SLANG from external resolution in ${Slang_SLANGC_EXECUTABLE}
 
 # adds -fPIC, works for linux, when building shared library
@@ -36,7 +39,7 @@ function(build_shader)
   add_custom_target(${OUTPUT} ALL
     COMMAND
       ${CMAKE_COMMAND} -E env "SLANGC_CMD=${_SLANGC_STR}"
-      /usr/bin/python3 ${CMAKE_CURRENT_SOURCE_DIR}/tools/slangc_to_header.py
+      ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/slangc_to_header.py
       -target spirv
       -fvk-t-shift 0 0
       -fvk-u-shift 0 0
