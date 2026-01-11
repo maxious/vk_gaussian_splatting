@@ -205,8 +205,20 @@ bool loadDepthVideoMetadata(const std::filesystem::path& metadataPath, DepthVide
     outMetadata.zMin = getFloat("z_min");
     outMetadata.zMax = getFloat("z_max");
 
-    outMetadata.depthWidth = outMetadata.sourceWidth;
-    outMetadata.depthHeight = outMetadata.sourceHeight;
+    // Parse MoGe-specific fields
+    outMetadata.hasNormals = getString("has_normals") == "true";
+    outMetadata.sideBySide = getString("side_by_side") == "true";
+
+    // For side-by-side videos, the video width is doubled (depth | normals)
+    if (outMetadata.sideBySide) {
+        outMetadata.depthWidth = outMetadata.sourceWidth / 2;  // Left half is depth
+        outMetadata.normalsWidth = outMetadata.sourceWidth / 2; // Right half is normals
+        outMetadata.depthHeight = outMetadata.sourceHeight;
+    } else {
+        outMetadata.depthWidth = outMetadata.sourceWidth;
+        outMetadata.depthHeight = outMetadata.sourceHeight;
+        outMetadata.normalsWidth = 0;
+    }
 
     std::filesystem::path basePath = jsonPath.parent_path();
     LOGI("Resolving paths relative to: %s\n", basePath.string().c_str());
@@ -229,6 +241,14 @@ bool loadDepthVideoMetadata(const std::filesystem::path& metadataPath, DepthVide
     LOGI("  Frames: %d, FPS: %.2f\n", outMetadata.frameCount, outMetadata.fps);
     LOGI("  Resolution: %dx%d\n", outMetadata.sourceWidth, outMetadata.sourceHeight);
     LOGI("  Z Range: [%.2f, %.2f] m\n", outMetadata.zMin, outMetadata.zMax);
+    LOGI("  Side-by-side: %s, Has normals: %s\n",
+         outMetadata.sideBySide ? "yes" : "no",
+         outMetadata.hasNormals ? "yes" : "no");
+    if (outMetadata.sideBySide) {
+        LOGI("  Depth portion: %dx%d, Normals portion: %dx%d\n",
+             outMetadata.depthWidth, outMetadata.depthHeight,
+             outMetadata.normalsWidth, outMetadata.depthHeight);
+    }
 
     return true;
 }
@@ -615,20 +635,44 @@ bool DepthVideoLoader::decodeNextFrame()
 void DepthVideoLoader::convertToMetricDepth(const uint8_t* grayscaleData, int width, int height, DepthVideoFrame& outputFrame)
 {
     outputFrame.timestampMs = static_cast<uint32_t>(m_currentFramePts * 1000.0);
-    outputFrame.width = static_cast<uint32_t>(width);
-    outputFrame.height = static_cast<uint32_t>(height);
     outputFrame.zMin = m_metadata.zMin;
     outputFrame.zMax = m_metadata.zMax;
 
-    size_t numPixels = static_cast<size_t>(width) * height;
-    outputFrame.data.resize(numPixels);
+    // Handle side-by-side videos (depth | normals)
+    if (m_metadata.sideBySide) {
+        // For side-by-side videos, extract only the left half (depth portion)
+        int depthWidth = width / 2;
+        outputFrame.width = static_cast<uint32_t>(depthWidth);
+        outputFrame.height = static_cast<uint32_t>(height);
 
-    float zRange = m_metadata.zMax - m_metadata.zMin;
+        size_t numDepthPixels = static_cast<size_t>(depthWidth) * height;
+        outputFrame.data.resize(numDepthPixels);
 
-    for (size_t i = 0; i < numPixels; i++)
-    {
-        float normalized = grayscaleData[i] / 255.0f;
-        outputFrame.data[i] = m_metadata.zMin + normalized * zRange;
+        float zRange = m_metadata.zMax - m_metadata.zMin;
+
+        // Extract left half of the frame (depth data)
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < depthWidth; x++) {
+                size_t inputIdx = y * width + x;  // Left half
+                size_t outputIdx = y * depthWidth + x;
+                float normalized = grayscaleData[inputIdx] / 255.0f;
+                outputFrame.data[outputIdx] = m_metadata.zMin + normalized * zRange;
+            }
+        }
+    } else {
+        // Regular depth-only video
+        outputFrame.width = static_cast<uint32_t>(width);
+        outputFrame.height = static_cast<uint32_t>(height);
+
+        size_t numPixels = static_cast<size_t>(width) * height;
+        outputFrame.data.resize(numPixels);
+
+        float zRange = m_metadata.zMax - m_metadata.zMin;
+
+        for (size_t i = 0; i < numPixels; i++) {
+            float normalized = grayscaleData[i] / 255.0f;
+            outputFrame.data[i] = m_metadata.zMin + normalized * zRange;
+        }
     }
 }
 

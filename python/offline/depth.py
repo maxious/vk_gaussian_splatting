@@ -112,11 +112,12 @@ def run_depth(args) -> None:
                 if has_normals and normals is not None:
                     # Create side-by-side: depth on left, normals on right
                     normal_viz = _normalize_normals(normals)
+                    # Expand depth to have channel dimension for concatenation
+                    depth_expanded = np.stack([normalized] * 3, axis=2)  # (H, W) -> (H, W, 3)
                     # Concatenate horizontally
-                    combined = np.concatenate([normalized, normal_viz], axis=1)
-                    # Convert to tensor (H, W) -> (1, H, W) then RGB
-                    tensor = torch.from_numpy(combined).unsqueeze(0).unsqueeze(0)
-                    tensor = tensor.repeat(1, 3, 1, 1)
+                    combined = np.concatenate([depth_expanded, normal_viz], axis=1)
+                    # Convert to tensor (H, W, 3) -> (1, 3, H, W) for video encoding
+                    tensor = torch.from_numpy(combined).permute(2, 0, 1).unsqueeze(0)
                 else:
                     # Just depth
                     tensor = torch.from_numpy(normalized).unsqueeze(0).unsqueeze(0)

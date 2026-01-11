@@ -14,6 +14,139 @@ import torch.version
 import utils3d
 from huggingface_hub import hf_hub_download
 
+from ..utils.geometry_torch import normalized_view_plane_uv, recover_focal_shift, angle_diff_vec3
+from .utils import (
+    wrap_dinov2_attention_with_sdpa,
+    wrap_module_with_gradient_checkpointing,
+    unwrap_module_with_gradient_checkpointing,
+)
+from .modules import DINOv2Encoder, MLP, ConvStack
+
+
+class MoGeModel(nn.Module):
+    encoder: DINOv2Encoder
+    neck: ConvStack
+    points_head: ConvStack
+    mask_head: ConvStack
+    scale_head: MLP
+    onnx_compatible_mode: bool
+
+    def __init__(
+        self,
+        encoder: Dict[str, Any],
+        neck: Dict[str, Any],
+        points_head: Dict[str, Any] = None,
+        mask_head: Dict[str, Any] = None,
+        normal_head: Dict[str, Any] = None,
+        scale_head: Dict[str, Any] = None,
+        remap_output: Literal["linear", "sinh", "exp", "sinh_exp"] = "linear",
+        num_tokens_range: List[int] = [1200, 3600],
+        **deprecated_kwargs,
+    ):
+        super(MoGeModel, self).__init__()
+        if deprecated_kwargs:
+            warnings.warn(
+                f"The following deprecated/invalid arguments are ignored: {deprecated_kwargs}"
+            )
+
+        self.remap_output = remap_output
+        self.num_tokens_range = num_tokens_range
+
+        self.encoder = DINOv2Encoder(**encoder)
+        self.neck = ConvStack(**neck)
+        if points_head is not None:
+            self.points_head = ConvStack(**points_head)
+        if mask_head is not None:
+            self.mask_head = ConvStack(**mask_head)
+        if normal_head is not None:
+            self.normal_head = ConvStack(**normal_head)
+        if scale_head is not None:
+            self.scale_head = MLP(**scale_head)
+
+    @property
+    def device(self) -> torch.device:
+        return next(self.parameters()).device
+
+    @property
+    def dtype(self) -> torch.dtype:
+        return next(self.parameters()).dtype
+
+    @property
+    def onnx_compatible_mode(self) -> bool:
+        return getattr(self, "_onnx_compatible_mode", False)
+
+    @onnx_compatible_mode.setter
+    def onnx_compatible_mode(self, value: bool):
+        self._onnx_compatible_mode = value
+        self.encoder.onnx_compatible_mode = value
+
+    @classmethod
+    def from_pretrained(
+        cls,
+        pretrained_model_name_or_path: Union[str, Path, IO[bytes]],
+        model_kwargs: Optional[Dict[str, Any]] = None,
+        **hf_kwargs,
+    ) -> "MoGeModel":
+        """
+        Load a model from a checkpoint file.
+
+        ### Parameters:
+        - `pretrained_model_name_or_path`: path to the checkpoint file or repo id.
+        - `compiled`
+        - `model_kwargs`: additional keyword arguments to override the parameters in the checkpoint.
+        - `hf_kwargs`: additional keyword arguments to pass to the `hf_hub_download` function. Ignored if `pretrained_model_name_or_path` is a local path.
+
+        ### Returns:
+        - A new instance of `MoGe` with the parameters loaded from the checkpoint.
+        """
+        if Path(pretrained_model_name_or_path).exists():
+            checkpoint_path = pretrained_model_name_or_path
+        else:
+            checkpoint_path = hf_hub_download(
+                repo_id=pretrained_model_name_or_path,
+                repo_type="model",
+                filename="model.pt",
+                **hf_kwargs,
+            )
+        checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+
+        model_config = checkpoint["model_config"]
+        if model_kwargs is not None:
+            model_config.update(model_kwargs)
+        model = cls(**model_config)
+        model.load_state_dict(checkpoint["model"], strict=False)
+
+        return model
+
+    def init_weights(self):
+        self.encoder.init_weights()
+
+    def enable_gradient_checkpointing(self):
+        self.encoder.enable_gradient_checkpointing()
+        self.neck.enable_gradient_checkpointing()
+        for head in ["points_head", "normal_head", "mask_head"]:
+            if hasattr(self, head):
+                getattr(self, head).enable_gradient_checkpointing()
+
+    def enable_pytorch_native_sdpa(self):
+        self.encoder.enable_pytorch_native_sdpa()
+
+    def _remap_points(self, points: torch.Tensor) -> torch.Tensor:
+        if self.remap_output == "linear":
+            pass
+        elif self.remap_output == "sinh":
+            points = torch.sinh(points)
+        elif self.remap_output == "exp":
+            xy, z = points.split([2, 1], dim=-1)
+            z = torch.exp(z)
+            points = torch.cat([xy * z, z], dim=-1)
+        elif self.remap_output == "sinh_exp":
+            xy, z = points.split([2, 1], dim=-1)
+            points = torch.cat([torch.sinh(xy), torch.exp(z)], dim=-1)
+        else:
+            raise ValueError(f"Invalid remap output type: {self.remap_output}")
+        return points
+
     def forward(
         self, image: torch.Tensor, num_tokens: Union[int, torch.LongTensor]
     ) -> Dict[str, torch.Tensor]:
@@ -197,7 +330,7 @@ from huggingface_hub import hf_hub_download
 
             # If projection constraint is forced, recompute the point map using the actual depth map & intrinsics
             if force_projection and depth is not None:
-                points = utils3d.torch.maps.depth_map_to_point_map(depth, intrinsics=intrinsics)
+                points = utils3d.depth_map_to_point_map(depth, intrinsics=intrinsics)
 
             # Apply metric scale
             if metric_scale is not None:
