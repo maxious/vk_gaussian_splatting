@@ -21,9 +21,9 @@
 
 // clang-format off
 [[vk::binding(BINDING_FRAME_INFO_UBO, 0)]] ConstantBuffer<FrameInfo> frameInfo;
-[[vk::binding(BINDING_VDZ_VIDEO_TEXTURE, 0)]] Texture2D<float4> vdzVideoTexture : register(t25);
-[[vk::binding(BINDING_VDZ_DEPTH_TEXTURE, 0)]] Texture2D<float> vdzDepthTexture : register(t26);
-[[vk::binding(BINDING_VDZ_VIDEO_SAMPLER, 0)]] SamplerState vdzSampler : register(s25);
+// Combined image samplers - sampler is embedded with texture
+[[vk::binding(BINDING_VDZ_VIDEO_TEXTURE, 0)]] Sampler2D<float4> vdzVideoTexture;
+[[vk::binding(BINDING_VDZ_DEPTH_TEXTURE, 0)]] Sampler2D<float> vdzDepthTexture;
 
 struct FragmentInput
 {
@@ -64,7 +64,7 @@ FragmentOutput main(FragmentInput input)
   float2 sampleUv = input.uv;
   
   // Sample depth for edge detection
-  float depth = vdzDepthTexture.Sample(vdzSampler, sampleUv);
+  float depth = vdzDepthTexture.Sample(sampleUv);
   
   // Detect depth discontinuities using screen-space derivatives
   // Large gradients indicate triangle spanning a depth edge
@@ -90,7 +90,7 @@ FragmentOutput main(FragmentInput input)
   if (frameInfo.vdzUseVideoTexture != 0)
   {
     // Video+Depth mode: Use video RGB texture
-    float4 videoColor = vdzVideoTexture.Sample(vdzSampler, sampleUv);
+    float4 videoColor = vdzVideoTexture.Sample(sampleUv);
     output.color = float4(videoColor.rgb, 1.0);
   }
   else

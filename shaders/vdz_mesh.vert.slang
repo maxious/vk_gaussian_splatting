@@ -21,8 +21,8 @@
 
 // clang-format off
 [[vk::binding(BINDING_FRAME_INFO_UBO, 0)]] ConstantBuffer<FrameInfo> frameInfo;
-[[vk::binding(BINDING_VDZ_DEPTH_TEXTURE, 0)]] Texture2D<float> vdzDepthTexture : register(t26);
-[[vk::binding(BINDING_VDZ_DEPTH_SAMPLER, 0)]] SamplerState vdzSampler : register(s26);
+// Combined image sampler - sampler is embedded with texture
+[[vk::binding(BINDING_VDZ_DEPTH_TEXTURE, 0)]] Sampler2D<float> vdzDepthTexture;
 [[vk::push_constant]] ConstantBuffer<PushConstant> pcRaster;
 
 struct VertexInput
@@ -48,7 +48,7 @@ VertexOutput main(VertexInput input)
 
   // Sample depth from VDZ texture (no flip needed - direct mapping)
   float2 sampleUv = uv;
-  float depth = vdzDepthTexture.SampleLevel(vdzSampler, sampleUv, 0);
+  float depth = vdzDepthTexture.SampleLevel(sampleUv, 0);
   
   // Apply gamma correction
   depth = max(depth, 0.0);
