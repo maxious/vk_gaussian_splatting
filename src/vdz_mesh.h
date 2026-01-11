@@ -28,6 +28,14 @@
 
 namespace vk_viewer {
 
+// Depth rendering mode for VDZ content
+enum class VdzRenderMode
+{
+    DividedMesh = 0,  // Original divided mesh approach (128x72 default)
+    PomOnly = 1,      // POM only on simple quad
+    Hybrid = 2        // Low-res divided mesh + POM for best quality
+};
+
 struct VdzMeshVertex
 {
   glm::vec3 position;
@@ -40,10 +48,24 @@ public:
   bool initialize(VkDevice device, nvvk::ResourceAllocator* alloc, uint32_t gridWidth = 128, uint32_t gridHeight = 72);
   void cleanup();
 
+  // Reinitialize with new grid size (useful for switching modes)
+  bool reinitialize(uint32_t gridWidth, uint32_t gridHeight);
+
+  // Generate mesh for hybrid mode (lower resolution, combined with POM)
+  void generateHybridGrid(uint32_t width, uint32_t height);
+
+  // Generate simple quad for POM-only mode
+  void generateQuad();
+
   VkBuffer getVertexBuffer() const { return m_vertexBuffer.buffer; }
   VkBuffer getIndexBuffer() const { return m_indexBuffer.buffer; }
   uint32_t getIndexCount() const { return m_indexCount; }
   uint32_t getVertexCount() const { return m_vertexCount; }
+
+  // Get current mesh dimensions
+  uint32_t getGridWidth() const { return m_gridWidth; }
+  uint32_t getGridHeight() const { return m_gridHeight; }
+  VdzRenderMode getRenderMode() const { return m_renderMode; }
 
   static VkVertexInputBindingDescription getBindingDescription();
   static std::vector<VkVertexInputAttributeDescription> getAttributeDescriptions();
@@ -58,6 +80,9 @@ private:
   nvvk::Buffer              m_indexBuffer;
   uint32_t                  m_indexCount  = 0;
   uint32_t                  m_vertexCount = 0;
+  uint32_t                  m_gridWidth   = 128;  // Store current grid dimensions
+  uint32_t                  m_gridHeight  = 72;
+  VdzRenderMode             m_renderMode  = VdzRenderMode::DividedMesh;
 
   std::vector<VdzMeshVertex> m_vertices;
   std::vector<uint32_t>      m_indices;

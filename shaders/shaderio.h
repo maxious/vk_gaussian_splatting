@@ -268,6 +268,14 @@ struct FrameInfo
   float  vdzParallaxFocus DEFAULT(0.5f);                 // Focus plane depth (0.0 = near, 1.0 = far)
   float  vdzParallaxEdgeSoftness DEFAULT(0.02f);         // Edge softening factor to reduce artifacts at borders
 
+  // Hybrid mode: Combined mesh displacement + POM
+  // 0 = divided mesh only, 1 = POM only, 2 = hybrid (mesh + POM)
+  int32_t vdzHybridMode DEFAULT(0);
+  float  vdzHybridMeshStrength DEFAULT(1.0f);  // Strength of mesh displacement (0-1)
+  float  vdzHybridPomStrength DEFAULT(0.5f);   // Strength of POM effect (0-1)
+  int32_t vdzHybridPomLayers DEFAULT(16);      // Number of POM layers (8-32)
+  float  vdzHybridPomDepthScale DEFAULT(0.02f); // Height scale for POM (in texture UV space)
+
   // Gap filling parameters (for disocclusion handling)
   float3 vdzGapFillColor DEFAULT(float3(0.05f, 0.05f, 0.08f));  // Background color for filling gaps
   int32_t vdzGapFillEnabled DEFAULT(0);             // 0 = discard, 1 = fill with color

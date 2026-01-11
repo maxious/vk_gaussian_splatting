@@ -151,6 +151,9 @@ public:
   // public so that it can be accessed by main
   std::shared_ptr<nvutils::CameraManipulator> cameraManip{};
 
+  // VDZ mesh accessor for hybrid rendering mode switching
+  VdzMesh& getVdzMesh() { return m_vdzMesh; }
+
 protected:
   VkViewer(nvutils::ProfilerManager* profilerManager, nvutils::ParameterRegistry* parameterRegistry);
 
@@ -544,6 +547,9 @@ protected:
     // VDZ depth mesh rendering
     VkShaderModule vdzMeshVertexShader{};
     VkShaderModule vdzMeshFragmentShader{};
+    // VDZ hybrid rendering (mesh + POM)
+    VkShaderModule vdzHybridVertexShader{};
+    VkShaderModule vdzHybridFragmentShader{};
     // Hand mesh rendering (XR)
     VkShaderModule handMeshVertexShader{};
     VkShaderModule handMeshFragmentShader{};
@@ -561,8 +567,10 @@ protected:
   VkPipeline m_graphicsPipeline3dgutMesh = VK_NULL_HANDLE;  // The graphic pipeline to rasterize 3DGUT splats using mesh shaders
   // 3D Meshes Pipelines
   VkPipeline m_graphicsPipelineMesh = VK_NULL_HANDLE;  // The graphic pipeline to rasterize meshes
-  // VDZ depth mesh pipeline
-  VkPipeline m_graphicsPipelineVdzMesh = VK_NULL_HANDLE;
+    // VDZ depth mesh pipeline
+    VkPipeline m_graphicsPipelineVdzMesh = VK_NULL_HANDLE;
+    // VDZ hybrid pipeline (mesh + POM)
+    VkPipeline m_graphicsPipelineVdzHybrid = VK_NULL_HANDLE;
   // Hand mesh pipeline (XR skinned hands)
   VkPipeline m_graphicsPipelineHandMesh = VK_NULL_HANDLE;
 #ifdef WITH_OPENXR

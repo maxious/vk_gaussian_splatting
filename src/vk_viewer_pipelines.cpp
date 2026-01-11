@@ -496,6 +496,44 @@ void VkViewer::initPipelines()
     NVVK_DBG_NAME(m_graphicsPipelineVdzMesh);
   }
 
+  // Create the VDZ hybrid rasterization pipeline (mesh + POM)
+  {
+    nvvk::GraphicsPipelineState pipelineState;
+    pipelineState.rasterizationState.cullMode = VK_CULL_MODE_NONE;
+
+    // No blending for VDZ hybrid
+    pipelineState.colorBlendEnables[0] = VK_FALSE;
+
+    // No depth testing for camera-attached mesh
+    pipelineState.depthStencilState.depthWriteEnable = VK_FALSE;
+    pipelineState.depthStencilState.depthTestEnable  = VK_FALSE;
+
+    // VDZ hybrid mesh vertex layout: position (vec3) + uv (vec2)
+    pipelineState.vertexBindings   = {{.binding = 0,
+                                       .stride  = sizeof(float) * 3 + sizeof(float) * 2,
+                                       .inputRate = VK_VERTEX_INPUT_RATE_VERTEX}};
+                                       
+    pipelineState.vertexAttributes = {{.location = 0,
+                                       .binding  = 0,
+                                       .format   = VK_FORMAT_R32G32B32_SFLOAT,
+                                       .offset   = 0},
+                                      {.location = 1,
+                                       .binding  = 0,
+                                       .format   = VK_FORMAT_R32G32_SFLOAT,
+                                       .offset   = sizeof(float) * 3}};
+
+    nvvk::GraphicsPipelineCreator creator;
+    creator.pipelineInfo.layout                  = m_pipelineLayout;
+    creator.colorFormats                         = {m_colorFormat};
+    creator.renderingState.depthAttachmentFormat = m_depthFormat;
+
+    creator.addShader(VK_SHADER_STAGE_VERTEX_BIT, "main", m_shaders.vdzHybridVertexShader);
+    creator.addShader(VK_SHADER_STAGE_FRAGMENT_BIT, "main", m_shaders.vdzHybridFragmentShader);
+
+    creator.createGraphicsPipeline(m_device, nullptr, pipelineState, &m_graphicsPipelineVdzHybrid);
+    NVVK_DBG_NAME(m_graphicsPipelineVdzHybrid);
+  }
+
   // Create the hand mesh pipeline (XR skinned hands)
   {
     nvvk::GraphicsPipelineState pipelineState;
@@ -571,6 +609,7 @@ void VkViewer::deinitPipelines()
   TEST_DESTROY_AND_RESET(m_graphicsPipeline3dgutMesh, vkDestroyPipeline(m_device, m_graphicsPipeline3dgutMesh, nullptr));
   TEST_DESTROY_AND_RESET(m_graphicsPipelineMesh, vkDestroyPipeline(m_device, m_graphicsPipelineMesh, nullptr));
   TEST_DESTROY_AND_RESET(m_graphicsPipelineVdzMesh, vkDestroyPipeline(m_device, m_graphicsPipelineVdzMesh, nullptr));
+  TEST_DESTROY_AND_RESET(m_graphicsPipelineVdzHybrid, vkDestroyPipeline(m_device, m_graphicsPipelineVdzHybrid, nullptr));
   TEST_DESTROY_AND_RESET(m_graphicsPipelineHandMesh, vkDestroyPipeline(m_device, m_graphicsPipelineHandMesh, nullptr));
   TEST_DESTROY_AND_RESET(m_computePipelineGsDistCull, vkDestroyPipeline(m_device, m_computePipelineGsDistCull, nullptr));
 #ifdef WITH_OPENXR

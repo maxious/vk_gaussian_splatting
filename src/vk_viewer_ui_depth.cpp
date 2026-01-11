@@ -784,6 +784,54 @@ void VkViewerUI::guiDrawDepthStreamProperties()
       ImGui::TreePop();
     }
 
+    // Hybrid rendering controls (mesh + POM)
+    if(ImGui::TreeNode("Hybrid Rendering (Mesh + POM)"))
+    {
+      const char* modeNames[] = {"Divided Mesh", "POM Only", "Hybrid (Mesh + POM)"};
+      int currentMode = prmFrame.vdzHybridMode;
+      
+      if(ImGui::Combo("Rendering Mode", &currentMode, modeNames, 3))
+      {
+        prmFrame.vdzHybridMode = currentMode;
+        
+        // Reinitialize mesh based on mode
+        if(currentMode == 1)  // POM Only - use simple quad
+        {
+          m_app->getVdzMesh().generateQuad();
+        }
+        else if(currentMode == 2)  // Hybrid - use lower resolution grid
+        {
+          // Hybrid mode uses lower resolution grid (32x18) for better performance
+          m_app->getVdzMesh().generateHybridGrid(32, 18);
+        }
+        else  // Divided Mesh - use standard resolution
+        {
+          m_app->getVdzMesh().reinitialize(128, 72);
+        }
+      }
+      
+      nvgui::tooltip("Divided Mesh: Original approach with high-resolution grid\n"
+                     "POM Only: Simple quad with parallax occlusion mapping\n"
+                     "Hybrid: Low-res mesh + POM for best quality/performance");
+      
+      if(prmFrame.vdzHybridMode == 2)  // Hybrid mode controls
+      {
+        ImGui::Separator();
+        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Hybrid Settings:");
+        
+        PE::SliderFloat("Mesh Strength", &prmFrame.vdzHybridMeshStrength, 0.0f, 1.0f, "%.2f", 0,
+                        "Strength of mesh vertex displacement (0-1)");
+        PE::SliderFloat("POM Strength", &prmFrame.vdzHybridPomStrength, 0.0f, 1.0f, "%.2f", 0,
+                        "Strength of POM effect (0-1)");
+        PE::SliderInt("POM Layers", &prmFrame.vdzHybridPomLayers, 4, 32, "%d", 0,
+                      "Number of POM ray-march layers (higher = better quality, more GPU cost)");
+        PE::SliderFloat("POM Depth Scale", &prmFrame.vdzHybridPomDepthScale, 0.001f, 0.1f, "%.3f", 0,
+                        "Height scale for POM in UV space");
+      }
+      
+      ImGui::TreePop();
+    }
+
     // Gap filling controls
     if(ImGui::TreeNode("Gap Filling"))
     {

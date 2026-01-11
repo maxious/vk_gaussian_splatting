@@ -306,14 +306,31 @@ void VkViewer::drawVdzMesh(VkCommandBuffer cmd)
 {
   NVVK_DBG_SCOPE(cmd);
 
-  if(m_vdzMesh.getIndexCount() == 0 || m_graphicsPipelineVdzMesh == VK_NULL_HANDLE)
+  if(m_vdzMesh.getIndexCount() == 0)
   {
       return;
   }
 
   VkDeviceSize offset{0};
 
-  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipelineVdzMesh);
+  // Select pipeline based on hybrid mode
+  VkPipeline pipeline;
+  if(prmFrame.vdzHybridMode == 2 && m_graphicsPipelineVdzHybrid != VK_NULL_HANDLE)
+  {
+    // Hybrid mode (mesh + POM)
+    pipeline = m_graphicsPipelineVdzHybrid;
+  }
+  else if(m_graphicsPipelineVdzMesh != VK_NULL_HANDLE)
+  {
+    // Standard divided mesh mode
+    pipeline = m_graphicsPipelineVdzMesh;
+  }
+  else
+  {
+    return;
+  }
+
+  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
   // Bind descriptor set with dynamic offsets
   // Order: [FrameInfo, Indirect]
   uint32_t indirectOffset = static_cast<uint32_t>(m_frameIndex * m_indirectStride);

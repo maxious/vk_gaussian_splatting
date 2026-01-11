@@ -130,6 +130,9 @@ bool VkViewer::initShaders(void)
   // VDZ depth mesh
   success &= compileSlangShader("vdz_mesh.vert.slang", m_shaders.vdzMeshVertexShader);
   success &= compileSlangShader("vdz_mesh.frag.slang", m_shaders.vdzMeshFragmentShader);
+  // VDZ hybrid rendering (mesh + POM)
+  success &= compileSlangShader("vdz_hybrid.vert.slang", m_shaders.vdzHybridVertexShader);
+  success &= compileSlangShader("vdz_hybrid.frag.slang", m_shaders.vdzHybridFragmentShader);
   // Hand mesh (XR skinned hands)
   success &= compileSlangShader("hand_mesh.vert.slang", m_shaders.handMeshVertexShader);
   success &= compileSlangShader("hand_mesh.frag.slang", m_shaders.handMeshFragmentShader);
