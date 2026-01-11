@@ -363,12 +363,39 @@ void VkViewerUI::guiDrawDepthStreamProperties()
     }
     else
     {
-      // Show offline playback frame counter
 #ifdef WITH_VIDEO_DECODER
       if(m_videoDepthManager)
       {
         const auto& metadata = m_videoDepthManager->getMetadata();
-        ImGui::Text("Depth Frames: %d / %d", m_depthFrameCounter, metadata.frameCount);
+        
+        float bufferedRatio = m_videoDepthManager->getBufferedRatio();
+        double bufferedSec = m_videoDepthManager->getBufferedDuration();
+        double totalSec = m_videoDepthManager->getDuration();
+        
+        if(m_videoDepthManager->isBuffering())
+        {
+          ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Buffering: %.0f%%", bufferedRatio * 100.0f);
+          ImGui::ProgressBar(bufferedRatio, ImVec2(-FLT_MIN, 0.0f));
+        }
+        else
+        {
+          ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "✓ Buffered");
+        }
+        
+        ImGui::Text("Frames: %d / %d", m_depthFrameCounter, metadata.frameCount);
+        
+        double currentTime = m_videoDepthManager->getCurrentTime();
+        float sliderMax = static_cast<float>(bufferedSec > 0.0 ? bufferedSec : totalSec);
+        float tFloat = static_cast<float>(currentTime);
+        
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 100.0f);
+        if(ImGui::SliderFloat("##offline_timeline", &tFloat, 0.0f, sliderMax, ""))
+        {
+          m_videoDepthManager->seek(static_cast<double>(tFloat));
+          m_lastVdzFrameIndex = SIZE_MAX;
+        }
+        ImGui::SameLine();
+        ImGui::Text("%.1fs / %.1fs", currentTime, totalSec);
       }
 #endif
       
@@ -382,62 +409,46 @@ void VkViewerUI::guiDrawDepthStreamProperties()
       
       PE::entry("Playback", [this]() {
         bool changed = false;
+#ifdef WITH_VIDEO_DECODER
+        if(!m_videoDepthManager) return false;
+        
+        bool atEnd = m_videoDepthManager->isAtEnd();
+        
+        if(atEnd && !m_playbackPaused)
+        {
+          ImGui::Text("Finished");
+          ImGui::SameLine();
+        }
+        
         if(m_playbackPaused)
         {
-          if(ImGui::Button("Play"))
+          if(ImGui::Button(ICON_MS_PLAY_ARROW " Play"))
           {
             m_playbackPaused = false;
-#ifdef WITH_VIDEO_DECODER
-            if(m_videoDecoder)
-            {
-              m_videoDecoder->resume();
-            }
-            if(m_videoDepthManager)
-            {
-              m_videoDepthManager->play();
-            }
-#endif
-            m_playbackStartTime = std::chrono::steady_clock::now();
+            m_videoDepthManager->play();
             changed = true;
           }
         }
         else
         {
-          if(ImGui::Button("Pause"))
+          if(ImGui::Button(ICON_MS_PAUSE " Pause"))
           {
             m_playbackPaused = true;
-#ifdef WITH_VIDEO_DECODER
-            if(m_videoDecoder)
-            {
-              m_videoDecoder->pause();
-            }
-            if(m_videoDepthManager)
-            {
-              m_videoDepthManager->pause();
-            }
-#endif
+            m_videoDepthManager->pause();
             changed = true;
           }
         }
+        
         ImGui::SameLine();
-        if(ImGui::Button("Restart"))
+        if(ImGui::Button(ICON_MS_RESTART_ALT " Restart"))
         {
-#ifdef WITH_VIDEO_DECODER
-          if(m_videoDecoder)
-          {
-            m_videoDecoder->seekToTime(0.0);
-          }
-          if(m_videoDepthManager)
-          {
-            m_videoDepthManager->seek(0.0);
-            m_videoDepthManager->play();
-          }
-#endif
+          m_videoDepthManager->seek(0.0);
+          m_videoDepthManager->play();
           m_lastVdzFrameIndex = SIZE_MAX;
-          m_playbackStartTime = std::chrono::steady_clock::now();
           m_playbackPaused = false;
           changed = true;
         }
+#endif
         return changed;
       });
 
@@ -446,10 +457,6 @@ void VkViewerUI::guiDrawDepthStreamProperties()
         m_enableDepthRendering = false;
         m_videoDepthPlaybackMode = false;
 #ifdef WITH_VIDEO_DECODER
-        if(m_videoDecoder)
-        {
-          m_videoDecoder.reset();
-        }
         if(m_videoDepthManager)
         {
           m_videoDepthManager.reset();
@@ -488,6 +495,13 @@ void VkViewerUI::guiDrawDepthStreamProperties()
     {
       prmFrame.vdzWorldSpaceMode = worldSpace ? 1 : 0;
       m_requestUpdateShaders = true;
+    }
+
+    bool useVideoTexture = prmFrame.vdzUseVideoTexture != 0;
+    if(PE::Checkbox("Use Video Texture", &useVideoTexture,
+                    "Show video RGB when enabled, depth colormap when disabled."))
+    {
+      prmFrame.vdzUseVideoTexture = useVideoTexture ? 1 : 0;
     }
 
     PE::end();

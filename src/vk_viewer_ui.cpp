@@ -1394,15 +1394,14 @@ void VkViewerUI::guiDrawDepthStreamTree()
   {
     // Show video layer if in video+depth mode
 #ifdef WITH_VIDEO_DECODER
-    if(m_videoDepthPlaybackMode && m_videoDecoder)
+    if(m_videoDepthPlaybackMode && m_videoDepthManager)
     {
       ImGuiTreeNodeFlags videoFlags = leaf_flags;
       if(m_selectedAsset == GUI_DEPTH_STREAM && m_selectedItemIndex == 1)
         videoFlags |= ImGuiTreeNodeFlags_Selected;
       
-      int vw, vh;
-      m_videoDecoder->getDimensions(vw, vh);
-      std::string videoLabel = fmt::format(ICON_MS_VIDEOCAM " Video ({}x{})", vw, vh);
+      const auto& metadata = m_videoDepthManager->getMetadata();
+      std::string videoLabel = fmt::format(ICON_MS_VIDEOCAM " Video ({}x{})", metadata.sourceWidth, metadata.sourceHeight);
       ImGui::TreeNodeEx(videoLabel.c_str(), videoFlags);
       if(ImGui::IsItemClicked())
       {

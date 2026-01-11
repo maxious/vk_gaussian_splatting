@@ -26,6 +26,8 @@
 #include <mutex>
 #include <atomic>
 #include <memory>
+#include <thread>
+#include <chrono>
 
 #include "video_decoder.h"
 
@@ -96,6 +98,62 @@ struct DecodedVideoFrame {
  * @return true if successfully loaded
  */
 bool loadDepthVideoMetadata(const std::filesystem::path& metadataPath, DepthVideoMetadata& outMetadata);
+
+/**
+ * @brief Synchronized RGB+Depth frame for buffered playback
+ * 
+ * Contains both RGB video data and metric depth data for a single frame,
+ * enabling instant random-access seeking once buffered.
+ */
+struct PlaybackFrame
+{
+    double timestampSec = 0.0;
+    uint32_t frameIndex = 0;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    
+    std::vector<uint8_t> rgbRGBA;      // RGBA8 video data
+    std::vector<float> depthMeters;    // Per-pixel depth in meters
+    
+    float zMin = 0.0f;
+    float zMax = 1.0f;
+};
+
+/**
+ * @brief Thread-safe buffer for synchronized video+depth frames
+ * 
+ * Used by VideoDepthPlaybackManager to enable instant random-access
+ * seeking within buffered regions. Frames are appended by a background
+ * thread and can be read by the render thread.
+ */
+class SynchronizedFrameBuffer
+{
+public:
+    void init(double totalDurationSec, uint32_t frameCount, double fps);
+    void clear();
+    
+    void pushFrame(PlaybackFrame&& frame);
+    
+    size_t getBufferedFrameCount() const { return m_bufferedCount.load(); }
+    double getBufferedDurationSec() const;
+    double getTotalDurationSec() const { return m_totalDurationSec; }
+    uint32_t getTotalFrameCount() const { return m_totalFrameCount; }
+    double getFps() const { return m_fps; }
+    
+    float getBufferedRatio() const;
+    bool isFullyBuffered() const;
+    
+    bool getFrameAtTime(double tSec, PlaybackFrame& out) const;
+    bool getFrameByIndex(uint32_t index, PlaybackFrame& out) const;
+    
+private:
+    std::vector<PlaybackFrame> m_frames;
+    std::atomic<size_t> m_bufferedCount{0};
+    double m_totalDurationSec = 0.0;
+    uint32_t m_totalFrameCount = 0;
+    double m_fps = 30.0;
+    mutable std::mutex m_mutex;
+};
 
 /**
  * @brief FFmpeg-based depth video loader for offline preprocessed sequences
@@ -248,11 +306,11 @@ private:
 };
 
 /**
- * @brief Combined video + depth playback manager
+ * @brief Combined video + depth playback manager with buffered frames
  *
  * Manages both video and depth video playback with synchronization.
- * This replaces the need to separately load video via VideoDecoder
- * and depth via DepthVideoLoader.
+ * Uses a buffered approach: frames are decoded into memory first,
+ * then playback and seeking operate on the local buffer.
  */
 class VideoDepthPlaybackManager {
 public:
@@ -277,16 +335,6 @@ public:
     bool isPlaying() const { return m_isPlaying.load(); }
 
     /**
-     * @brief Get video decoder (for texture upload)
-     */
-    VideoDecoder* getVideoDecoder() const { return m_videoDecoder.get(); }
-
-    /**
-     * @brief Get depth loader
-     */
-    DepthVideoLoader* getDepthLoader() const { return m_depthLoader.get(); }
-
-    /**
      * @brief Get metadata
      */
     const DepthVideoMetadata& getMetadata() const { return m_metadata; }
@@ -307,29 +355,78 @@ public:
     void togglePlayPause();
 
     /**
-     * @brief Seek to timestamp
+     * @brief Seek to timestamp (clamped to buffered region)
      * @param timestamp Timestamp in seconds
      */
     void seek(double timestamp);
 
     /**
-     * @brief Get current playback time
+     * @brief Get current playback time (based on clock, not decoder)
      */
-    double getCurrentTime() const { return m_currentTime.load(); }
+    double getCurrentTime() const;
 
     /**
      * @brief Check if paused
      */
     bool isPaused() const { return m_paused.load(); }
 
+    /**
+     * @brief Check if playback reached end of buffered content
+     */
+    bool isAtEnd() const;
+    
+    /**
+     * @brief Get total duration from metadata
+     */
+    double getDuration() const;
+    
+    /**
+     * @brief Get buffered duration (how much is ready for playback)
+     */
+    double getBufferedDuration() const;
+    
+    /**
+     * @brief Get buffer fill ratio (0.0 to 1.0)
+     */
+    float getBufferedRatio() const;
+    
+    /**
+     * @brief Check if fully buffered
+     */
+    bool isFullyBuffered() const;
+    
+    /**
+     * @brief Check if buffering is in progress
+     */
+    bool isBuffering() const { return m_bufferingActive.load(); }
+    
+    /**
+     * @brief Get frame at specified time from buffer
+     * @param tSec Time in seconds
+     * @param out Output frame
+     * @return true if frame available
+     */
+    bool getFrameAtTime(double tSec, PlaybackFrame& out) const;
+
 private:
+    void prebufferThread();
+    void updatePlaybackTime();
+    
     std::unique_ptr<VideoDecoder> m_videoDecoder;
     std::unique_ptr<DepthVideoLoader> m_depthLoader;
     DepthVideoMetadata m_metadata;
+    
+    SynchronizedFrameBuffer m_buffer;
+    std::thread m_prebufferThread;
+    std::atomic<bool> m_bufferingActive{false};
+    std::atomic<bool> m_stopBuffering{false};
 
     std::atomic<bool> m_isPlaying{false};
-    std::atomic<bool> m_paused{false};
-    std::atomic<double> m_currentTime{0.0};
+    std::atomic<bool> m_paused{true};
+    
+    std::chrono::steady_clock::time_point m_playbackStartTime;
+    double m_seekOffsetSec = 0.0;
+    mutable std::mutex m_timeMutex;
 };
 
 } // namespace vk_viewer

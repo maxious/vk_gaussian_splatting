@@ -322,13 +322,10 @@ bool DepthVideoLoader::getNextFrame(DepthVideoFrame& frame)
     if (m_currentFrameData.empty())
     {
         if (!decodeNextFrame())
-        {
             return false;
-        }
     }
 
     convertToMetricDepth(m_currentFrameData.data(), m_width, m_height, frame);
-
     m_currentFrameData.clear();
 
     return true;
@@ -552,7 +549,7 @@ bool DepthVideoLoader::decodeNextFrame()
     if (!m_isOpen.load() || m_eof.load())
         return false;
 
-    std::lock_guard<std::mutex> lock(m_frameMutex);
+    // Note: caller must already hold m_frameMutex
 
     int ret = 0;
     bool frameDecoded = false;
@@ -637,6 +634,102 @@ void DepthVideoLoader::convertToMetricDepth(const uint8_t* grayscaleData, int wi
 
 #endif // WITH_VIDEO_DECODER
 
+// SynchronizedFrameBuffer implementation
+
+void SynchronizedFrameBuffer::init(double totalDurationSec, uint32_t frameCount, double fps)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_totalDurationSec = totalDurationSec;
+    m_totalFrameCount = frameCount;
+    m_fps = fps;
+    m_frames.clear();
+    m_frames.resize(frameCount);
+    m_bufferedCount.store(0);
+}
+
+void SynchronizedFrameBuffer::clear()
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_frames.clear();
+    m_bufferedCount.store(0);
+    m_totalDurationSec = 0.0;
+    m_totalFrameCount = 0;
+}
+
+void SynchronizedFrameBuffer::pushFrame(PlaybackFrame&& frame)
+{
+    size_t index = frame.frameIndex;
+    if (index >= m_frames.size())
+    {
+        LOGW("Frame index %u out of bounds (max %zu)\n", frame.frameIndex, m_frames.size());
+        return;
+    }
+    
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_frames[index] = std::move(frame);
+    }
+    
+    size_t expected = index;
+    while (m_bufferedCount.compare_exchange_weak(expected, index + 1))
+    {
+        if (expected >= index + 1) break;
+        expected = index;
+    }
+    if (expected < index + 1)
+    {
+        m_bufferedCount.store(index + 1);
+    }
+}
+
+double SynchronizedFrameBuffer::getBufferedDurationSec() const
+{
+    size_t count = m_bufferedCount.load();
+    if (count == 0 || m_fps <= 0.0) return 0.0;
+    return static_cast<double>(count) / m_fps;
+}
+
+float SynchronizedFrameBuffer::getBufferedRatio() const
+{
+    if (m_totalDurationSec <= 0.0) return 0.0f;
+    return static_cast<float>(getBufferedDurationSec() / m_totalDurationSec);
+}
+
+bool SynchronizedFrameBuffer::isFullyBuffered() const
+{
+    return m_bufferedCount.load() >= m_totalFrameCount;
+}
+
+bool SynchronizedFrameBuffer::getFrameAtTime(double tSec, PlaybackFrame& out) const
+{
+    if (m_fps <= 0.0) return false;
+    
+    int64_t frameIndex = static_cast<int64_t>(tSec * m_fps);
+    if (frameIndex < 0) frameIndex = 0;
+    
+    size_t buffered = m_bufferedCount.load();
+    if (buffered == 0) return false;
+    
+    if (static_cast<size_t>(frameIndex) >= buffered)
+    {
+        frameIndex = static_cast<int64_t>(buffered) - 1;
+    }
+    
+    return getFrameByIndex(static_cast<uint32_t>(frameIndex), out);
+}
+
+bool SynchronizedFrameBuffer::getFrameByIndex(uint32_t index, PlaybackFrame& out) const
+{
+    size_t buffered = m_bufferedCount.load();
+    if (index >= buffered) return false;
+    
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (index >= m_frames.size()) return false;
+    
+    out = m_frames[index];
+    return true;
+}
+
 // VideoDepthPlaybackManager implementation
 
 VideoDepthPlaybackManager::~VideoDepthPlaybackManager()
@@ -672,12 +765,22 @@ bool VideoDepthPlaybackManager::openFromMetadata(const std::filesystem::path& me
         return false;
     }
 
+    double totalDuration = m_metadata.frameCount > 0 && m_metadata.fps > 0.0 
+        ? static_cast<double>(m_metadata.frameCount) / m_metadata.fps 
+        : 0.0;
+    m_buffer.init(totalDuration, m_metadata.frameCount, m_metadata.fps);
+
     m_isPlaying.store(false);
     m_paused.store(true);
-    m_currentTime.store(0.0);
+    m_seekOffsetSec = 0.0;
+    m_playbackStartTime = std::chrono::steady_clock::now();
+    
+    m_stopBuffering.store(false);
+    m_bufferingActive.store(true);
+    m_prebufferThread = std::thread(&VideoDepthPlaybackManager::prebufferThread, this);
 
-    LOGI("VideoDepthPlaybackManager initialized: %s + %s\n",
-         m_metadata.videoPath.c_str(), m_metadata.depthVideoPath.c_str());
+    LOGI("VideoDepthPlaybackManager initialized: %s + %s (buffering %d frames)\n",
+         m_metadata.videoPath.c_str(), m_metadata.depthVideoPath.c_str(), m_metadata.frameCount);
     return true;
 #else
     LOGE("Video decoder not available - rebuild with ENABLE_VIDEO_DECODER=ON\n");
@@ -685,8 +788,65 @@ bool VideoDepthPlaybackManager::openFromMetadata(const std::filesystem::path& me
 #endif
 }
 
+void VideoDepthPlaybackManager::prebufferThread()
+{
+#ifdef WITH_VIDEO_DECODER
+    LOGI("Prebuffer thread started\n");
+    
+    uint32_t frameIndex = 0;
+    while (!m_stopBuffering.load() && frameIndex < static_cast<uint32_t>(m_metadata.frameCount))
+    {
+        DecodedFrame videoFrame;
+        if (!m_videoDecoder->getNextFrame(videoFrame))
+        {
+            LOGD("Video decoder finished at frame %u\n", frameIndex);
+            break;
+        }
+
+        DepthVideoFrame depthFrame;
+        if (!m_depthLoader->getNextFrame(depthFrame))
+        {
+            LOGD("Depth loader finished at frame %u\n", frameIndex);
+            break;
+        }
+
+        PlaybackFrame pf;
+        pf.frameIndex = frameIndex;
+        pf.timestampSec = videoFrame.timestamp;
+        pf.width = static_cast<uint32_t>(videoFrame.width);
+        pf.height = static_cast<uint32_t>(videoFrame.height);
+        pf.rgbRGBA = std::move(videoFrame.data);
+        pf.depthMeters = std::move(depthFrame.data);
+        pf.zMin = m_metadata.zMin;
+        pf.zMax = m_metadata.zMax;
+
+        m_buffer.pushFrame(std::move(pf));
+        frameIndex++;
+
+        if (frameIndex % 30 == 0)
+        {
+            LOGD("Buffered %u / %d frames (%.1f%%)\n", 
+                 frameIndex, m_metadata.frameCount, 
+                 100.0f * m_buffer.getBufferedRatio());
+        }
+    }
+
+    m_bufferingActive.store(false);
+    LOGI("Prebuffer thread finished: %zu frames buffered\n", m_buffer.getBufferedFrameCount());
+#endif
+}
+
 void VideoDepthPlaybackManager::close()
 {
+    m_stopBuffering.store(true);
+    
+    if (m_prebufferThread.joinable())
+    {
+        m_prebufferThread.join();
+    }
+    
+    m_buffer.clear();
+
     if (m_depthLoader)
     {
         m_depthLoader->close();
@@ -701,25 +861,35 @@ void VideoDepthPlaybackManager::close()
     }
 
     m_isPlaying.store(false);
-    m_paused.store(false);
+    m_paused.store(true);
+    m_bufferingActive.store(false);
 }
 
 void VideoDepthPlaybackManager::play()
 {
-    if (m_videoDecoder && m_paused.load())
+    std::lock_guard<std::mutex> lock(m_timeMutex);
+    
+    if (m_paused.load())
     {
-        m_videoDecoder->resume();
+        m_playbackStartTime = std::chrono::steady_clock::now() - 
+            std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                std::chrono::duration<double>(m_seekOffsetSec));
     }
+    
     m_isPlaying.store(true);
     m_paused.store(false);
 }
 
 void VideoDepthPlaybackManager::pause()
 {
-    if (m_videoDecoder)
+    std::lock_guard<std::mutex> lock(m_timeMutex);
+    
+    if (!m_paused.load())
     {
-        m_videoDecoder->pause();
+        auto now = std::chrono::steady_clock::now();
+        m_seekOffsetSec = std::chrono::duration<double>(now - m_playbackStartTime).count();
     }
+    
     m_paused.store(true);
 }
 
@@ -737,15 +907,71 @@ void VideoDepthPlaybackManager::togglePlayPause()
 
 void VideoDepthPlaybackManager::seek(double timestamp)
 {
-    if (m_depthLoader)
+    std::lock_guard<std::mutex> lock(m_timeMutex);
+    
+    double maxTime = m_buffer.getBufferedDurationSec();
+    if (timestamp < 0.0) timestamp = 0.0;
+    if (timestamp > maxTime) timestamp = maxTime;
+    
+    m_seekOffsetSec = timestamp;
+    m_playbackStartTime = std::chrono::steady_clock::now() - 
+        std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+            std::chrono::duration<double>(m_seekOffsetSec));
+}
+
+double VideoDepthPlaybackManager::getCurrentTime() const
+{
+    std::lock_guard<std::mutex> lock(m_timeMutex);
+    
+    if (m_paused.load())
     {
-        m_depthLoader->seekToTime(timestamp);
+        return m_seekOffsetSec;
     }
-    if (m_videoDecoder)
+    
+    auto now = std::chrono::steady_clock::now();
+    double elapsed = std::chrono::duration<double>(now - m_playbackStartTime).count();
+    
+    double maxTime = m_buffer.getBufferedDurationSec();
+    if (elapsed > maxTime) elapsed = maxTime;
+    
+    return elapsed;
+}
+
+bool VideoDepthPlaybackManager::isAtEnd() const
+{
+    double current = getCurrentTime();
+    double buffered = m_buffer.getBufferedDurationSec();
+    
+    if (!m_bufferingActive.load() && buffered > 0.0)
     {
-        m_videoDecoder->seekToTime(timestamp);
+        return current >= buffered - (1.0 / m_metadata.fps);
     }
-    m_currentTime.store(timestamp);
+    return false;
+}
+
+double VideoDepthPlaybackManager::getDuration() const
+{
+    return m_buffer.getTotalDurationSec();
+}
+
+double VideoDepthPlaybackManager::getBufferedDuration() const
+{
+    return m_buffer.getBufferedDurationSec();
+}
+
+float VideoDepthPlaybackManager::getBufferedRatio() const
+{
+    return m_buffer.getBufferedRatio();
+}
+
+bool VideoDepthPlaybackManager::isFullyBuffered() const
+{
+    return m_buffer.isFullyBuffered();
+}
+
+bool VideoDepthPlaybackManager::getFrameAtTime(double tSec, PlaybackFrame& out) const
+{
+    return m_buffer.getFrameAtTime(tSec, out);
 }
 
 } // namespace vk_viewer

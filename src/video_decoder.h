@@ -114,6 +114,11 @@ public:
     bool isRunning() const { return m_running.load(); }
 
     /**
+     * @brief Check if decoder reached end of stream
+     */
+    bool isAtEnd() const { return !m_running.load() && !m_stopRequested; }
+
+    /**
      * @brief Get current decoding position in seconds
      */
     double getCurrentTime() const;

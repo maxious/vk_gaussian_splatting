@@ -27,148 +27,135 @@ void VkViewer::updateDepthRendering(VkCommandBuffer cmd)
 #ifdef WITH_VIDEO_DECODER
   if (m_videoDepthManager && m_videoDepthManager->isPlaying())
   {
-    if(m_playbackPaused) return;
+    if(m_playbackPaused) 
+        return;
 
-    VideoDecoder* videoDecoder = m_videoDepthManager->getVideoDecoder();
-    DepthVideoLoader* depthLoader = m_videoDepthManager->getDepthLoader();
+    double t = m_videoDepthManager->getCurrentTime();
+    PlaybackFrame pf;
+    if(!m_videoDepthManager->getFrameAtTime(t, pf))
+        return;
 
-    if(videoDecoder && depthLoader)
+    if (pf.width > 0 && pf.height > 0 && !pf.rgbRGBA.empty())
     {
-        DecodedFrame videoFrame;
-        bool gotFrame = videoDecoder->getNextFrame(videoFrame);
-        if(gotFrame)
+        bool updateDescriptor = false;
+        if(m_videoTexture.width != pf.width || m_videoTexture.height != pf.height || m_videoTexture.image.image == VK_NULL_HANDLE)
         {
-            if (videoFrame.width > 0 && videoFrame.height > 0)
+            vkDeviceWaitIdle(m_device);
+            if(m_videoTexture.view != VK_NULL_HANDLE) { vkDestroyImageView(m_device, m_videoTexture.view, nullptr); m_videoTexture.view = VK_NULL_HANDLE; }
+            if(m_videoTexture.image.image != VK_NULL_HANDLE) { m_alloc.destroyImage(m_videoTexture.image); m_videoTexture.image = {}; }
+
+            VkImageCreateInfo info = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+            info.imageType = VK_IMAGE_TYPE_2D;
+            info.format = VK_FORMAT_R8G8B8A8_UNORM;
+            info.extent = {pf.width, pf.height, 1};
+            info.mipLevels = 1;
+            info.arrayLayers = 1;
+            info.samples = VK_SAMPLE_COUNT_1_BIT;
+            info.tiling = VK_IMAGE_TILING_OPTIMAL;
+            info.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+            info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            
+            m_alloc.createImage(m_videoTexture.image, info);
+
+            VkImageViewCreateInfo viewInfo = {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+            viewInfo.image = m_videoTexture.image.image;
+            viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+            viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            vkCreateImageView(m_device, &viewInfo, nullptr, &m_videoTexture.view);
+            
+            m_videoTexture.width = pf.width;
+            m_videoTexture.height = pf.height;
+            updateDescriptor = true;
+        }
+
+        VkImageMemoryBarrier barrier = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.srcAccessMask = 0;
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.image = m_videoTexture.image.image;
+        barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+        VkDeviceSize imageSize = pf.rgbRGBA.size();
+        m_uploader.appendImage(m_videoTexture.image, imageSize, pf.rgbRGBA.data());
+        m_uploader.cmdUploadAppended(cmd);
+
+        barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+        if(updateDescriptor && m_descriptorSet != VK_NULL_HANDLE)
+        {
+            VkDescriptorImageInfo imageInfo{};
+            imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            imageInfo.imageView = m_videoTexture.view;
+            imageInfo.sampler = m_sampler;
+
+            VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+            write.dstSet = m_descriptorSet;
+            write.dstBinding = BINDING_VDZ_VIDEO_TEXTURE;
+            write.dstArrayElement = 0;
+            write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            write.descriptorCount = 1;
+            write.pImageInfo = &imageInfo;
+            vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
+        }
+    }
+
+    if(m_depthManager && !pf.depthMeters.empty() && m_lastVdzFrameIndex != static_cast<size_t>(pf.frameIndex))
+    {
+        DepthFrame uploadFrame;
+        uploadFrame.timestampMs = static_cast<uint32_t>(pf.timestampSec * 1000.0);
+        uploadFrame.width = pf.width;
+        uploadFrame.height = pf.height;
+        uploadFrame.data = pf.depthMeters;
+        uploadFrame.scale = 1.0f;
+        uploadFrame.bias = 0.0f;
+        uploadFrame.zMax = pf.zMax;
+
+        m_depthManager->uploadDepthFrame(uploadFrame, cmd);
+        m_lastVdzFrameIndex = pf.frameIndex;
+        m_depthFrameCounter++;
+        
+        if(pf.zMax > pf.zMin && pf.zMax > 0.0f)
+        {
+            prmFrame.vdzZMin = pf.zMin;
+            prmFrame.vdzZMax = pf.zMax;
+        }
+        else
+        {
+            static bool warnedOnce = false;
+            if(!warnedOnce)
             {
-                bool updateDescriptor = false;
-                if(m_videoTexture.width != videoFrame.width || m_videoTexture.height != videoFrame.height || m_videoTexture.image.image == VK_NULL_HANDLE)
-                {
-                    vkDeviceWaitIdle(m_device);
-                    if(m_videoTexture.view != VK_NULL_HANDLE) { vkDestroyImageView(m_device, m_videoTexture.view, nullptr); m_videoTexture.view = VK_NULL_HANDLE; }
-                    if(m_videoTexture.image.image != VK_NULL_HANDLE) { m_alloc.destroyImage(m_videoTexture.image); m_videoTexture.image = {}; }
-
-                    VkImageCreateInfo info = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
-                    info.imageType = VK_IMAGE_TYPE_2D;
-                    info.format = VK_FORMAT_R8G8B8A8_UNORM;
-                    info.extent = {static_cast<uint32_t>(videoFrame.width), static_cast<uint32_t>(videoFrame.height), 1};
-                    info.mipLevels = 1;
-                    info.arrayLayers = 1;
-                    info.samples = VK_SAMPLE_COUNT_1_BIT;
-                    info.tiling = VK_IMAGE_TILING_OPTIMAL;
-                    info.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-                    info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-                    info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-                    
-                    m_alloc.createImage(m_videoTexture.image, info);
-
-                    VkImageViewCreateInfo viewInfo = {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-                    viewInfo.image = m_videoTexture.image.image;
-                    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-                    viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
-                    viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-                    vkCreateImageView(m_device, &viewInfo, nullptr, &m_videoTexture.view);
-                    
-                    m_videoTexture.width = videoFrame.width;
-                    m_videoTexture.height = videoFrame.height;
-                    updateDescriptor = true;
-                }
-
-                // Barrier: Undefined/ShaderRead -> TransferDst
-                VkImageMemoryBarrier barrier = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-                barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-                barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-                barrier.srcAccessMask = 0;
-                barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-                barrier.image = m_videoTexture.image.image;
-                barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-                vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
-
-                VkDeviceSize imageSize = videoFrame.data.size();
-                m_uploader.appendImage(m_videoTexture.image, imageSize, videoFrame.data.data());
-                m_uploader.cmdUploadAppended(cmd);
-
-                // Barrier: TransferDst -> ShaderRead
-                barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-                barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-                barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-                barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-                vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
-
-                if(updateDescriptor && m_descriptorSet != VK_NULL_HANDLE)
-                {
-                    VkDescriptorImageInfo imageInfo{};
-                    imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-                    imageInfo.imageView = m_videoTexture.view;
-                    imageInfo.sampler = m_sampler;
-
-                    VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-                    write.dstSet = m_descriptorSet;
-                    write.dstBinding = BINDING_VDZ_VIDEO_TEXTURE;
-                    write.dstArrayElement = 0;
-                    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-                    write.descriptorCount = 1;
-                    write.pImageInfo = &imageInfo;
-                    vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
-                }
+                LOGW("Depth metadata missing z_min/z_max, using defaults [0, 1]\n");
+                warnedOnce = true;
             }
-
-            uint32_t videoTimestampMs = static_cast<uint32_t>(videoFrame.timestamp * 1000.0);
-            DepthVideoFrame depthFrame;
-            if(depthLoader->getFrameByTimestamp(videoTimestampMs, depthFrame))
+            prmFrame.vdzZMin = 0.0f;
+            prmFrame.vdzZMax = 1.0f;
+        }
+        
+        if(m_descriptorSet != VK_NULL_HANDLE)
+        {
+            const auto& depthTexture = m_depthManager->getCurrentTexture();
+            if(depthTexture.image.descriptor.imageView)
             {
-                if(m_depthManager && m_lastVdzFrameIndex != static_cast<size_t>(depthFrame.timestampMs))
-                {
-                    DepthFrame uploadFrame;
-                    uploadFrame.timestampMs = depthFrame.timestampMs;
-                    uploadFrame.width = depthFrame.width;
-                    uploadFrame.height = depthFrame.height;
-                    uploadFrame.data = std::move(depthFrame.data);
-                    uploadFrame.scale = 1.0f;
-                    uploadFrame.bias = 0.0f;
-                    uploadFrame.zMax = depthFrame.zMax;
+                VkDescriptorImageInfo depthImageInfo{};
+                depthImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                depthImageInfo.imageView = depthTexture.image.descriptor.imageView;
+                depthImageInfo.sampler = m_sampler;
 
-                    m_depthManager->uploadDepthFrame(uploadFrame, cmd);
-                    m_lastVdzFrameIndex = depthFrame.timestampMs;
-                    m_depthFrameCounter++;
-                    
-                    // Update shader parameters with metadata z range
-                    if(depthFrame.zMax > depthFrame.zMin && depthFrame.zMax > 0.0f)
-                    {
-                        prmFrame.vdzZMin = depthFrame.zMin;
-                        prmFrame.vdzZMax = depthFrame.zMax;
-                    }
-                    else
-                    {
-                        static bool warnedOnce = false;
-                        if(!warnedOnce)
-                        {
-                            LOGW("Depth metadata missing z_min/z_max, using defaults [0, 1]\n");
-                            warnedOnce = true;
-                        }
-                        prmFrame.vdzZMin = 0.0f;
-                        prmFrame.vdzZMax = 1.0f;
-                    }
-                    
-                    if(m_descriptorSet != VK_NULL_HANDLE)
-                    {
-                        const auto& depthTexture = m_depthManager->getCurrentTexture();
-                        if(depthTexture.image.descriptor.imageView)
-                        {
-                            VkDescriptorImageInfo depthImageInfo{};
-                            depthImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-                            depthImageInfo.imageView = depthTexture.image.descriptor.imageView;
-                            depthImageInfo.sampler = m_sampler;
-
-                            VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-                            write.dstSet = m_descriptorSet;
-                            write.dstBinding = BINDING_VDZ_DEPTH_TEXTURE;
-                            write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-                            write.descriptorCount = 1;
-                            write.pImageInfo = &depthImageInfo;
-                            vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
-                        }
-                    }
-                }
+                VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+                write.dstSet = m_descriptorSet;
+                write.dstBinding = BINDING_VDZ_DEPTH_TEXTURE;
+                write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                write.descriptorCount = 1;
+                write.pImageInfo = &depthImageInfo;
+                vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
             }
         }
     }

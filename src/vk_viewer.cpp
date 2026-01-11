@@ -477,54 +477,26 @@ void VkViewer::enableDepthVideoPlayback(const std::string& metadataPath)
     return;
   }
 
-  // Get video decoder and start decoding
-  VideoDecoder* videoDecoder = m_videoDepthManager->getVideoDecoder();
-  if(videoDecoder)
-  {
-    // Setup video texture if needed
-    int vidWidth, vidHeight;
-    videoDecoder->getDimensions(vidWidth, vidHeight);
+  const auto& metadata = m_videoDepthManager->getMetadata();
+  
+  m_videoTexture.width = metadata.sourceWidth;
+  m_videoTexture.height = metadata.sourceHeight;
 
-    m_videoTexture.width = vidWidth;
-    m_videoTexture.height = vidHeight;
-  }
+  prmFrame.vdzZMin = metadata.zMin;
+  prmFrame.vdzZMax = metadata.zMax;
+  prmFrame.vdzAspect = metadata.sourceWidth > 0 && metadata.sourceHeight > 0 
+      ? static_cast<float>(metadata.sourceWidth) / static_cast<float>(metadata.sourceHeight) 
+      : 1.777f;
+  prmFrame.vdzZScale = 10.0f;
+  prmFrame.vdzZBias = 2.0f;
+  prmFrame.vdzZGamma = 5.0f;
+  prmFrame.vdzZMaxClip = 0.2f;
+  prmFrame.vdzPlaneScale = 1.4f;
+  prmFrame.vdzEdgeThreshold = 1.0f;
 
-  // Get first depth frame for initialization
-  DepthVideoLoader* depthLoader = m_videoDepthManager->getDepthLoader();
-  if(depthLoader && depthLoader->isOpen())
-  {
-    DepthVideoFrame firstFrame;
-    if(depthLoader->getFrame(0, firstFrame))
-    {
-      VkCommandBuffer cmd = m_app->createTempCmdBuffer();
-
-      // Convert DepthVideoFrame to DepthFrame for upload
-      DepthFrame uploadFrame;
-      uploadFrame.timestampMs = firstFrame.timestampMs;
-      uploadFrame.width = firstFrame.width;
-      uploadFrame.height = firstFrame.height;
-      uploadFrame.data = std::move(firstFrame.data);
-      uploadFrame.scale = 1.0f;
-      uploadFrame.bias = 0.0f;
-      uploadFrame.zMax = firstFrame.zMax;
-
-      m_depthManager->uploadDepthFrame(uploadFrame, cmd);
-      m_app->submitAndWaitTempCmdBuffer(cmd);
-
-      // Set VDZ rendering parameters
-      prmFrame.vdzZMaxClip = firstFrame.zMax > 0.0f ? firstFrame.zMax : 2.0f;
-      prmFrame.vdzAspect = static_cast<float>(firstFrame.width) / static_cast<float>(firstFrame.height);
-      prmFrame.vdzZScale = 10.0f;
-      prmFrame.vdzZBias = 2.0f;
-      prmFrame.vdzZGamma = 5.0f;
-      prmFrame.vdzZMaxClip = 0.2f;
-      prmFrame.vdzPlaneScale = 1.4f;
-      prmFrame.vdzEdgeThreshold = 1.0f;
-
-      LOGI("First depth frame uploaded: %ux%u, zMax=%.2f, aspect=%.3f\n",
-           firstFrame.width, firstFrame.height, firstFrame.zMax, prmFrame.vdzAspect);
-    }
-  }
+  LOGI("Depth video initialized: %dx%d, fps=%.2f, frames=%d, z=[%.2f, %.2f]\n",
+       metadata.sourceWidth, metadata.sourceHeight, metadata.fps, 
+       metadata.frameCount, metadata.zMin, metadata.zMax);
 
   // Ensure shaders and pipelines are initialized
   // Also reinitialize if VDZ pipeline is missing (can happen if splats were unloaded)
@@ -559,7 +531,6 @@ void VkViewer::enableDepthVideoPlayback(const std::string& metadataPath)
 
   prmFrame.vdzUseVideoTexture = 1;
 
-  const auto& metadata = m_videoDepthManager->getMetadata();
   LOGI("Depth video playback enabled from metadata: %s\n", metadataPath.c_str());
   LOGI("  Video: %s\n", metadata.videoPath.c_str());
   LOGI("  Depth: %s\n", metadata.depthVideoPath.c_str());
