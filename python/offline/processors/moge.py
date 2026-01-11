@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 import sys
 from pathlib import Path
-from typing import Union
 
 import cv2
 import numpy as np
@@ -17,51 +16,6 @@ from .base import GaussianProcessor
 logger = logging.getLogger(__name__)
 
 
-def rotation_matrix_from_vectors(vec1, vec2):
-    """Find the rotation matrix that aligns vec1 to vec2.
-    :param vec1: A 3d "source" vector
-    :param vec2: A 3d "destination" vector
-    :return mat: A transform matrix (3x3) which when applied to vec1, aligns it with vec2.
-    """
-    a, b = (vec1 / np.linalg.norm(vec1)).reshape(3), (vec2 / np.linalg.norm(vec2)).reshape(3)
-    v = np.cross(a, b)
-    c = np.dot(a, b)
-    s = np.linalg.norm(v)
-    kmat = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
-    rotation_matrix = np.eye(3) + kmat + kmat.dot(kmat) * ((1 - c) / (s**2 + 1e-8))
-    return rotation_matrix
-
-
-def rotation_matrix_to_quaternion(R):
-    """Convert 3x3 rotation matrix to quaternion (w, x, y, z)."""
-    tr = R[0, 0] + R[1, 1] + R[2, 2]
-    if tr > 0:
-        S = np.sqrt(tr + 1.0) * 2
-        w = 0.25 * S
-        x = (R[2, 1] - R[1, 2]) / S
-        y = (R[0, 2] - R[2, 0]) / S
-        z = (R[1, 0] - R[0, 1]) / S
-    elif (R[0, 0] > R[1, 1]) and (R[0, 0] > R[2, 2]):
-        S = np.sqrt(1.0 + R[0, 0] - R[1, 1] - R[2, 2]) * 2
-        w = (R[2, 1] - R[1, 2]) / S
-        x = 0.25 * S
-        y = (R[0, 1] + R[1, 0]) / S
-        z = (R[0, 2] + R[2, 0]) / S
-    elif R[1, 1] > R[2, 2]:
-        S = np.sqrt(1.0 + R[1, 1] - R[0, 0] - R[2, 2]) * 2
-        w = (R[0, 2] - R[2, 0]) / S
-        x = (R[0, 1] + R[1, 0]) / S
-        y = 0.25 * S
-        z = (R[1, 2] + R[2, 1]) / S
-    else:
-        S = np.sqrt(1.0 + R[2, 2] - R[0, 0] - R[1, 1]) * 2
-        w = (R[1, 0] - R[0, 1]) / S
-        x = (R[0, 2] + R[2, 0]) / S
-        y = (R[1, 2] + R[2, 1]) / S
-        z = 0.25 * S
-    return np.array([w, x, y, z])
-
-
 class MoGeGaussianProcessor(GaussianProcessor):
     """Process video frames to Gaussian splats using MoGe."""
 
@@ -69,12 +23,12 @@ class MoGeGaussianProcessor(GaussianProcessor):
         self,
         model_id: str = "Ruicheng/moge-2-vitl-normal",
         device: str = "auto",
-        process_res: int = 518,
+        debug_output_dir: Path | None = None,
     ):
         self.model_id = model_id
-        self.process_res = process_res
         self.model = None
-        
+        self.debug_output_dir = Path(debug_output_dir) if debug_output_dir else None
+
         # Auto-detect device
         if device == "auto":
             if torch.cuda.is_available():
@@ -120,6 +74,73 @@ class MoGeGaussianProcessor(GaussianProcessor):
         )
         self.dtype = torch.float32  # MoGe usually runs in fp32 or fp16
         logger.info("MoGe model ready")
+
+    def _export_debug_outputs(
+        self,
+        frame_idx: int,
+        frame_name: str,
+        points: np.ndarray,
+        normals: np.ndarray,
+        mask_valid: np.ndarray,
+        img_rgb: np.ndarray,
+        depth: np.ndarray,
+        intrinsics: np.ndarray,
+    ) -> None:
+        """Export debug PLY point cloud and GLB textured mesh."""
+        if self.debug_output_dir is None:
+            return
+
+        try:
+            import utils3d
+            from moge.utils.io import save_glb, save_ply
+        except ImportError as e:
+            logger.warning(f"Could not import debug export dependencies: {e}")
+            return
+
+        self.debug_output_dir.mkdir(parents=True, exist_ok=True)
+        H, W = mask_valid.shape
+
+        # Clean mask by removing depth edges
+        mask_cleaned = mask_valid & ~utils3d.np.depth_map_edge(depth, rtol=0.04)
+
+        # Build mesh from depth map
+        if normals is not None and "normal" in dir(utils3d.np):
+            faces, vertices, vertex_colors, vertex_uvs, vertex_normals = utils3d.np.build_mesh_from_map(
+                points,
+                img_rgb.astype(np.float32) / 255,
+                utils3d.np.uv_map(H, W),
+                normals,
+                mask=mask_cleaned,
+                tri=True,
+            )
+        else:
+            faces, vertices, vertex_colors, vertex_uvs = utils3d.np.build_mesh_from_map(
+                points,
+                img_rgb.astype(np.float32) / 255,
+                utils3d.np.uv_map(H, W),
+                mask=mask_cleaned,
+                tri=True,
+            )
+            vertex_normals = None
+
+        # OpenGL coordinate conventions: x right, y up, z backward
+        vertices_gl = vertices * [1, -1, -1]
+        vertex_uvs_gl = vertex_uvs * [1, -1] + [0, 1]
+        if vertex_normals is not None:
+            vertex_normals_gl = vertex_normals * [1, -1, -1]
+        else:
+            vertex_normals_gl = None
+
+        # Export GLB (textured mesh)
+        glb_path = self.debug_output_dir / f"{frame_name}_mesh.glb"
+        save_glb(glb_path, vertices_gl, faces, vertex_uvs_gl, img_rgb, vertex_normals_gl)
+        logger.info(f"Exported debug mesh: {glb_path}")
+
+        # Export PLY (point cloud with vertex colors)
+        ply_path = self.debug_output_dir / f"{frame_name}_pointcloud.ply"
+        empty_faces = np.zeros((0, 3), dtype=np.int32)
+        save_ply(ply_path, vertices_gl, empty_faces, vertex_colors, vertex_normals_gl)
+        logger.info(f"Exported debug point cloud: {ply_path}")
 
     def process_frames(
         self,
@@ -185,14 +206,30 @@ class MoGeGaussianProcessor(GaussianProcessor):
                 normals = np.zeros_like(points)
                 normals[..., 2] = 1.0
 
-            # Flatten
+            # Verify shape alignment between MoGe output and input image
             H, W, _ = points.shape
+            assert points.shape[:2] == mask_valid.shape, "MoGe output points/mask shape mismatch"
+            assert H == img_rgb.shape[0] and W == img_rgb.shape[1], (
+                f"MoGe output resolution {H}x{W} differs from input {img_rgb.shape[0]}x{img_rgb.shape[1]}"
+            )
 
-            # Subsample for point cloud (optional, or use all pixels)
-            # Using all pixels might be too heavy (e.g. 1-2M points)
-            # Let's use a stride or keep all? 3DGS usually handles 1M+ fine.
-            # But let's mask invalid points
+            # Extract depth and intrinsics for debug export
+            depth = points[:, :, 2]
+            intrinsics = output["intrinsics"].cpu().numpy()
 
+            # Export debug outputs (PLY point cloud and GLB mesh) if enabled
+            self._export_debug_outputs(
+                frame_idx=i,
+                frame_name=path.stem,
+                points=points,
+                normals=normals,
+                mask_valid=mask_valid > 0.5,
+                img_rgb=img_rgb,
+                depth=depth,
+                intrinsics=intrinsics,
+            )
+
+            # Build valid mask from MoGe confidence and optionally filter dark pixels
             valid_mask = mask_valid > 0.5
             if remove_black_splats:
                 brightness = np.max(img_rgb, axis=2)
@@ -202,70 +239,73 @@ class MoGeGaussianProcessor(GaussianProcessor):
             normals_flat = normals[valid_mask]
             colors_flat = img_rgb[valid_mask] / 255.0
 
+            # Filter out points with non-positive depth (behind camera)
+            depths_flat = points_flat[:, 2]
+            valid_depth = depths_flat > 0.0
+            if not np.all(valid_depth):
+                points_flat = points_flat[valid_depth]
+                normals_flat = normals_flat[valid_depth]
+                colors_flat = colors_flat[valid_depth]
+                depths_flat = depths_flat[valid_depth]
+
             num_points = len(points_flat)
             if num_points == 0:
+                logger.warning(f"Frame {i}: no valid points after filtering")
                 continue
 
-            # Compute scales using metric depth and intrinsics
-            # Heuristic: splat size should cover ~2 pixels to avoid holes
-            # Scale ~ 2 * Depth / Focal_Length
-
-            # Extract focal length from intrinsics
+            # Extract and validate focal length from intrinsics
             intrinsics = output["intrinsics"].cpu().numpy()
             fx = intrinsics[0, 0]
             fy = intrinsics[1, 1]
             f_avg = (fx + fy) / 2.0
+            if not np.isfinite(f_avg) or f_avg <= 1e-6:
+                logger.warning(f"Invalid focal length: fx={fx}, fy={fy}, defaulting to 500")
+                f_avg = 500.0
 
-            # Depth is z coordinate of points
-            depths_flat = points_flat[:, 2]
-
-            # Base scale factor (tunable, 1.5-2.0 pixels usually good)
+            # Compute scales using metric depth and intrinsics
+            # Heuristic: splat size should cover ~2 pixels to avoid holes
+            # Scale ~ 2 * Depth / Focal_Length
             pixel_scale = 2.0
 
-            # Compute metric scale per point
-            # Avoid division by zero or negative depths
+            # Clamp depths to avoid ultra-tiny splats
             depths_safe = np.maximum(depths_flat, 0.1)
             metric_scales = (depths_safe / f_avg) * pixel_scale
 
-            # Expand to (N, 3)
-            # We want flat disks aligned with normal
-            # x, y = metric_scale, z = metric_scale * 0.1 (thin)
+            # Expand to (N, 3): flat disks aligned with normal
+            # x, y = metric_scale, z = metric_scale * 0.2 (thin)
             scales_flat_linear = np.stack(
                 [metric_scales, metric_scales, metric_scales * 0.2], axis=1
             )
             scales_flat = np.log(np.maximum(scales_flat_linear, 1e-8))
 
-            # Compute rotations
-            # Vectorized normal to quaternion
-            # Normal is (N, 3). Target is (0, 0, 1).
-            # We can use a simplified "shortest arc" rotation.
-            # q = (1 + dot(u, v), cross(u, v)). Normalized.
-            # u = (0,0,1). v = normal.
-            # dot = nz. cross = (-ny, nx, 0).
-            # q = (1 + nz, -ny, nx, 0)
-            # Then normalize.
+            # Normalize normals before quaternion construction
+            norm_len = np.linalg.norm(normals_flat, axis=1, keepdims=True)
+            degenerate = (norm_len < 1e-6).flatten()
+            normals_unit = normals_flat / np.maximum(norm_len, 1e-6)
+            normals_unit[degenerate] = np.array([0.0, 0.0, 1.0], dtype=normals_unit.dtype)
 
-            nz = normals_flat[:, 2]
-            nx = normals_flat[:, 0]
-            ny = normals_flat[:, 1]
+            # Compute rotations via shortest-arc quaternion from (0,0,1) to normal
+            # q = (1 + dot(u, v), cross(u, v)) where u = (0,0,1), v = normal
+            # dot = nz, cross = (-ny, nx, 0)
+            nx = normals_unit[:, 0]
+            ny = normals_unit[:, 1]
+            nz = normals_unit[:, 2]
 
             qw = 1.0 + nz
             qx = -ny
             qy = nx
             qz = np.zeros_like(nx)
 
-            # Handle antiparallel case (nz = -1)
-            # If nz is close to -1, we rotate 180 deg around X.
-            # q = (0, 1, 0, 0)
-            antiparallel = qw < 1e-6
-            qw[antiparallel] = 0
-            qx[antiparallel] = 1
-            qy[antiparallel] = 0
-            qz[antiparallel] = 0
+            # Handle antiparallel case (nz ≈ -1): rotate 180° around X
+            antiparallel = qw < 1e-3
+            qw[antiparallel] = 0.0
+            qx[antiparallel] = 1.0
+            qy[antiparallel] = 0.0
+            qz[antiparallel] = 0.0
 
             quats = np.stack([qw, qx, qy, qz], axis=1)
-            norm = np.linalg.norm(quats, axis=1, keepdims=True)
-            quats = quats / (norm + 1e-8)
+            quat_norm = np.linalg.norm(quats, axis=1, keepdims=True)
+            quats = quats / (quat_norm + 1e-8)
 
             # Colors: SH DC (0.282...)
             # SH_C0 = 0.28209479177387814

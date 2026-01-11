@@ -243,6 +243,12 @@ def main():
         default="auto",
         help="Device: 'auto', 'cuda', 'xpu', 'cpu', 'mps' (auto-detects best available)",
     )
+    images_parser.add_argument(
+        "--debug-output-dir",
+        type=Path,
+        default=None,
+        help="Directory for debug outputs (PLY point cloud, GLB mesh). Only for MoGe model.",
+    )
     images_parser.add_argument("-v", "--verbose", action="store_true")
 
     legacy_parser = subparsers.add_parser("legacy", help="Legacy CLI (deprecated)")
@@ -333,6 +339,7 @@ def main():
             mask_first_frame=not getattr(args, "no_mask_first_frame", False),
             remove_black_splats=not getattr(args, "no_remove_black_splats", False),
             flip_y=getattr(args, "flip_y", False),
+            debug_output_dir=getattr(args, "debug_output_dir", None),
         )
 
 
