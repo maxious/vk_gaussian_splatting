@@ -125,6 +125,13 @@ private:
                            const LccMeta&              meta,
                            std::vector<LccIndexEntry>& entries);
 
+    // Parse data.bin for single-LOD scenes (sequential data layout)
+    static bool parseSingleLodData(const LccMeta&        meta,
+                                   const uint8_t*        data,
+                                   uint32_t              splatCount,
+                                   SplatSet&             output,
+                                   std::function<void(float)> progressCallback);
+
     // Parse data.bin and convert to SplatSet
     static bool parseData(const LccMeta&        meta,
                           const uint8_t*        data,

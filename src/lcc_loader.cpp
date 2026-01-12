@@ -47,6 +47,9 @@ std::vector<uint8_t> readFile(const std::filesystem::path& path)
     return buffer;
 }
 
+// LCC splat size in bytes (Portable mode)
+constexpr size_t SPLAT_SIZE = 32;
+
 }  // namespace
 
 bool LccLoader::canLoad(const std::filesystem::path& path)
@@ -550,24 +553,15 @@ bool LccLoader::parseIndex(const std::filesystem::path& indexPath,
         entry.indexX = indexVal & 0xFFFF;
         entry.indexY = (indexVal >> 16) & 0xFFFF;
 
-        // Parse per-LOD data (up to 7 levels)
-        const uint32_t* lodPtr = reinterpret_cast<const uint32_t*>(entryPtr + 4);
-        for(int i = 0; i < 7; i++)
-        {
-            entry.pointsCount[i] = lodPtr[i];
-        }
-
-        const uint64_t* offsetPtr = reinterpret_cast<const uint64_t*>(entryPtr + 4 + 28);
-        for(int i = 0; i < 7; i++)
-        {
-            entry.lodOffset[i] = offsetPtr[i];
-        }
-
-        const uint32_t* sizePtr = reinterpret_cast<const uint32_t*>(entryPtr + 4 + 28 + 56);
-        for(int i = 0; i < 7; i++)
-        {
-            entry.lodSize[i] = sizePtr[i];
-        }
+    // Parse per-LOD data (4 bytes count + 8 bytes offset + 4 bytes size = 16 bytes per LOD)
+    const uint8_t* lodPtr = entryPtr + 4;
+    for(int i = 0; i < 7 && i < meta.totalLevel; i++)
+    {
+        entry.pointsCount[i] = *reinterpret_cast<const uint32_t*>(lodPtr);
+        entry.lodOffset[i]   = *reinterpret_cast<const uint64_t*>(lodPtr + 4);
+        entry.lodSize[i]     = *reinterpret_cast<const uint32_t*>(lodPtr + 12);
+        lodPtr += 16;  // Move to next LOD entry (count + offset + size)
+    }
 
         entries.push_back(entry);
     }
@@ -588,16 +582,40 @@ bool LccLoader::parseData(const LccMeta&        meta,
         return false;
     }
 
-    // 32 bytes per splat (Portable mode)
-    constexpr size_t SPLAT_SIZE = 32;
-    size_t           expectedSize = static_cast<size_t>(splatCount) * SPLAT_SIZE;
+    // Single-LOD scenes: data is stored sequentially without chunking
+    // Multi-LOD scenes: data is stored in chunks per spatial cell
+    bool isSingleLod = (meta.totalLevel <= 1);
 
-    if(dataSize < expectedSize)
+    if(isSingleLod)
     {
-        LOGE("data.bin too small: expected %zu bytes, got %zu\n", expectedSize, dataSize);
+        // Single-LOD: load all data directly
+        // Data starts at offset 28 (header in index points to this)
+        // But the actual splat data starts at offset 0
+        size_t expectedSize = static_cast<size_t>(splatCount) * SPLAT_SIZE;
+        if(dataSize < expectedSize)
+        {
+            LOGE("data.bin too small: expected %zu bytes, got %zu\n", expectedSize, dataSize);
+            return false;
+        }
+
+        return parseSingleLodData(meta, data, splatCount, output, progressCallback);
+    }
+    else
+    {
+        // Multi-LOD: data is chunked by spatial cells
+        // This path is used when called from loadWithLod()
+        // For initial load of multi-LOD scenes, use loadWithLod() instead
+        LOGE("Use loadWithLod() for multi-LOD scenes\n");
         return false;
     }
+}
 
+bool LccLoader::parseSingleLodData(const LccMeta&        meta,
+                                   const uint8_t*        data,
+                                   uint32_t              splatCount,
+                                   SplatSet&             output,
+                                   std::function<void(float)> progressCallback)
+{
     // Reserve space in output
     output.positions.resize(splatCount * 3);
     output.f_dc.resize(splatCount * 3);
@@ -621,7 +639,7 @@ bool LccLoader::parseData(const LccMeta&        meta,
         float    color[3];
         float    opacity;
         decodeColor(colorVal, color, opacity);
-        output.f_dc[i * 3 + 0] = (color[0] - 0.5f) / 0.28209479177387814f;  // Convert RGB to SH coeff
+        output.f_dc[i * 3 + 0] = (color[0] - 0.5f) / 0.28209479177387814f;
         output.f_dc[i * 3 + 1] = (color[1] - 0.5f) / 0.28209479177387814f;
         output.f_dc[i * 3 + 2] = (color[2] - 0.5f) / 0.28209479177387814f;
         output.opacity[i]      = opacity;
@@ -636,19 +654,10 @@ bool LccLoader::parseData(const LccMeta&        meta,
         uint32_t rotVal = *reinterpret_cast<const uint32_t*>(ptr + 22);
         float    quat[4];
         decodeRotation(rotVal, quat);
-        output.rotation[i * 4 + 0] = quat[0];  // w
-        output.rotation[i * 4 + 1] = quat[1];  // x
-        output.rotation[i * 4 + 2] = quat[2];  // y
-        output.rotation[i * 4 + 3] = quat[3];  // z
-
-        // Debug output for first few splats
-        if(i < 3)
-        {
-            LOGD("LCC splat %u: pos=(%.2f, %.2f, %.2f) color=(%.2f, %.2f, %.2f) opacity=%.2f scale=(%.4f, %.4f, %.4f) rot=(%.4f, %.4f, %.4f, %.4f)\n",
-                 i, pos[0], pos[1], pos[2], color[0], color[1], color[2], opacity,
-                 output.scale[i*3+0], output.scale[i*3+1], output.scale[i*3+2],
-                 quat[0], quat[1], quat[2], quat[3]);
-        }
+        output.rotation[i * 4 + 0] = quat[0];
+        output.rotation[i * 4 + 1] = quat[1];
+        output.rotation[i * 4 + 2] = quat[2];
+        output.rotation[i * 4 + 3] = quat[3];
 
         ptr += SPLAT_SIZE;
 

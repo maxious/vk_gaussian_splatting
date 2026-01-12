@@ -641,14 +641,28 @@ bool SplatLoaderAsync::innerLoad(std::filesystem::path filename, SplatSet& outpu
     bool success;
     if(m_lodReloadPending)
     {
-      // Load at specific LOD level
+      // Load at specific LOD level (for LOD slider changes)
       success = LccLoader::loadWithLod(filename, output, m_targetLod, nullptr, nullptr,
                                         [this](float progress) { setProgress(progress); });
       m_lodReloadPending = false;
     }
     else
     {
-      success = LccLoader::load(filename, output, [this](float progress) { setProgress(progress); });
+      // Default to LOD 1 for faster initial load (per LCC spec)
+      // Only if the scene has multiple LOD levels
+      uint32_t lodCount = LccLoader::getLodCount(filename);
+      if(lodCount > 1)
+      {
+        // Multi-LOD scene: load at LOD 1 for faster initial load
+        int targetLod = 1;
+        success = LccLoader::loadWithLod(filename, output, targetLod, nullptr, nullptr,
+                                          [this](float progress) { setProgress(progress); });
+      }
+      else
+      {
+        // Single-LOD scene: load all data directly
+        success = LccLoader::load(filename, output, [this](float progress) { setProgress(progress); });
+      }
     }
 
     if(success)

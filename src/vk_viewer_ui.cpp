@@ -995,7 +995,8 @@ void VkViewerUI::onUIRender()
         entry.splatCount = newSplatCount;
         entry.visible = true;
         entry.isLcc = LccLoader::canLoad(m_pendingLoadFilename);
-        entry.lodLevel = 0;
+        // Set initial LOD based on what was loaded (LOD 1 if multi-LOD scene, else 0)
+        entry.lodLevel = entry.isLcc ? ((LccLoader::getLodCount(m_pendingLoadFilename) > 1) ? 1 : 0) : 0;
         m_radianceFields.push_back(entry);
         
         LOGI("Added radiance field: %s (offset=%zu, count=%zu, total=%zu)\n",
@@ -1727,8 +1728,8 @@ void VkViewerUI::guiDrawSplatSetProperties()
                     "This can help reduce point count and improve performance without visible quality loss.");
 
       // LCC LOD Control
-      static int s_currentLodLevel = 0;
-      static int s_previousLodLevel = 0;
+      static int s_currentLodLevel = 1;  // Start at LOD 1 (will be adjusted for single-LOD scenes)
+      static int s_previousLodLevel = 1;
       static uint32_t s_lodCount = 0;
       static bool s_isLccScene = false;
 
@@ -1739,6 +1740,24 @@ void VkViewerUI::guiDrawSplatSetProperties()
         {
           s_lodCount = LccLoader::getLodCount(m_radianceFields[0].filename);
           s_isLccScene = true;
+
+          // For single-LOD scenes, start at LOD 0
+          if(s_lodCount <= 1)
+          {
+            s_currentLodLevel = 0;
+            s_previousLodLevel = 0;
+          }
+          else if(m_radianceFields[0].lodLevel == 0)
+          {
+            // If currently at LOD 0 (initial load), switch to LOD 1 for faster loading
+            s_currentLodLevel = 1;
+            s_previousLodLevel = 1;
+          }
+          else
+          {
+            s_currentLodLevel = m_radianceFields[0].lodLevel;
+            s_previousLodLevel = s_currentLodLevel;
+          }
         }
 
           if(s_lodCount > 1)
