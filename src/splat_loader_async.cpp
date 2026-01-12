@@ -32,6 +32,7 @@
 //
 #include "splat_loader_async.h"
 #include "sog_loader.h"
+#include "lod_loader.h"
 #include "fourdv_loader.h"
 #include "npz_loader.h"
 #include "utilities.h"
@@ -496,6 +497,20 @@ bool SplatLoaderAsync::innerLoad(std::filesystem::path filename, SplatSet& outpu
     LOGE("URL loading is currently only supported on Windows.\n");
     return false;
 #endif
+  }
+
+  // LOD format (lod-meta.json with octree + multi-level SOG files)
+  // Reference: https://developer.playcanvas.com/user-manual/gaussian-splatting/editing/splat-transform/
+  if(filename.filename() == "lod-meta.json")
+  {
+    bool success = LodScene::loadAtLevel(filename, 0, output, [this](float progress) { setProgress(progress); });
+    if(success)
+    {
+      auto      endTime  = std::chrono::high_resolution_clock::now();
+      long long loadTime = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
+      LOGI("LOD scene loaded in %lldms (%zu splats)\n", loadTime, output.size());
+    }
+    return success;
   }
 
   // SOG format (bundled .sog or unbundled meta.json)
