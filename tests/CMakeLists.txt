@@ -5,11 +5,13 @@ cmake_minimum_required(VERSION 3.22)
 add_executable(unit_tests
     main.cpp
     test_depth.cpp
+    test_npz_loader.cpp
 )
 
 # Add source files we need to test
 target_sources(unit_tests PRIVATE
     ../src/depth_parser.cpp
+    ../src/npz_loader.cpp
 )
 
 # Include directories for src files and tests
@@ -17,6 +19,7 @@ target_include_directories(unit_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../src
     ${CMAKE_CURRENT_SOURCE_DIR}/../3rdparty/miniply
+    ${CMAKE_CURRENT_SOURCE_DIR}/../3rdparty/spz/src/cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../nvpro_core2/third_party
 )
 

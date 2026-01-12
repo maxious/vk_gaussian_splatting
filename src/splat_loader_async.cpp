@@ -33,6 +33,7 @@
 #include "splat_loader_async.h"
 #include "sog_loader.h"
 #include "fourdv_loader.h"
+#include "npz_loader.h"
 #include "utilities.h"
 
 #ifdef _WIN32
@@ -573,6 +574,26 @@ bool SplatLoaderAsync::innerLoad(std::filesystem::path filename, SplatSet& outpu
       LOGI("4DV file loaded in %lldms\n", loadTime);
     }
     return success;
+  }
+
+  // NPZ Loader (SplatAD format)
+  if(hasExtension(filename, ".npz") && NpzLoader::canLoad(filename))
+  {
+    bool success = NpzLoader::load(filename, output, [this](float progress) { setProgress(progress); });
+    if(success)
+    {
+      size_t timestepCount = NpzLoader::getTimestepCount(filename);
+      bool hasTemporal = timestepCount > 1;
+      LOGI("NPZ file loaded: %zu splats, %zu timesteps%s\n", output.size(), timestepCount,
+           hasTemporal ? " [temporal]" : "");
+      output.convertCoordinates(spz::CoordinateSystem::RDF, spz::CoordinateSystem::RUB);
+      auto      endTime  = std::chrono::high_resolution_clock::now();
+      long long loadTime = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
+      LOGI("NPZ file loaded in %lldms\n", loadTime);
+      return true;
+    }
+    LOGE("Error: NPZ loader failed for file: %s\n", filename.string().c_str());
+    return false;
   }
 
   if(hasExtension(filename, ".ply") && SplatLoaderFast::canLoad(filename))

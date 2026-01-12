@@ -125,6 +125,11 @@ endif()
 # additions of 3rdparty
 
 #####
+# cnpy for NPZ format support (header-only, uses zlib)
+# FetchContent or use existing zlib from nvpro_core2
+message(STATUS "cnpy NPZ loader enabled (uses zlib)")
+
+#####
 # libwebp for SOG format support
 include(FetchContent)
 FetchContent_Declare(
