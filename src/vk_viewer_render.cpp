@@ -50,13 +50,19 @@ void VkViewer::onRender(VkCommandBuffer cmd)
   }
 
   // Phase 2: Determine what content we have and output mode
-  const size_t prevSplatCount = m_splatSet.size();
+  const size_t prevSplatCount = isLccStreamingActive() && m_lccTileManager->isPackedMode() 
+                                ? m_lccPackedSplatCount : m_splatSet.size();
   buildContentState(ctx);
 
-  if(isLccStreamingActive() && m_splatSet.size() != prevSplatCount)
+  if(isLccStreamingActive())
   {
-    // Update GPU buffers only when splat count actually changed
-    m_requestUpdateSplatData = true;
+    // Check if splat count changed (use appropriate count based on mode)
+    size_t currentSplatCount = m_lccTileManager->isPackedMode() ? m_lccPackedSplatCount : m_splatSet.size();
+    if(currentSplatCount != prevSplatCount && currentSplatCount > 0)
+    {
+      // Update GPU buffers only when splat count actually changed
+      m_requestUpdateSplatData = true;
+    }
   }
 
   // Process update requests (shader rebuilds, buffer updates)
@@ -291,11 +297,38 @@ void VkViewer::processUpdateRequests(void)
     if(m_requestUpdateSplatData)
     {
       m_splatSetVk.deinitDataStorage();
-      m_splatSetVk.initDataStorage(m_splatSet, prmData.dataStorage, prmData.shFormat);
+      
+      // Track previous storage mode to detect changes requiring shader rebuild
+      const uint32_t prevDataStorage = prmData.dataStorage;
+      
+      // Check if using LCC packed mode for GPU-side decompression
+      if(isLccStreamingActive() && m_lccTileManager->isPackedMode() && m_lccPackedSplatCount > 0)
+      {
+        // GPU-side decompression: upload raw packed data directly
+        m_splatSetVk.initLccPackedStorage(m_lccPackedData.data(), m_lccPackedSplatCount);
+        prmData.dataStorage = STORAGE_LCC_PACKED;
+        
+        LOGD("LCC packed upload: %u splats, %zu bytes\n", m_lccPackedSplatCount, m_lccPackedData.size());
+      }
+      else
+      {
+        // Standard path: CPU-decoded data or non-LCC files
+        m_splatSetVk.initDataStorage(m_splatSet, prmData.dataStorage, prmData.shFormat);
+      }
+      
+      // If storage mode changed, force shader rebuild
+      if(prmData.dataStorage != prevDataStorage)
+      {
+        LOGI("Data storage mode changed from %u to %u, forcing shader rebuild\n", prevDataStorage, prmData.dataStorage);
+        needsShaderRebuild = true;
+        deinitPipelines();
+        deinitShaders();
+      }
 
       // Re-initialize renderer buffers if capacity is insufficient (streaming optimization)
       // initRendererBuffers() will skip if buffers are already large enough
-      const uint32_t splatCount = (uint32_t)m_splatSet.size();
+      const uint32_t splatCount = (prmData.dataStorage == STORAGE_LCC_PACKED) 
+                                  ? m_lccPackedSplatCount : (uint32_t)m_splatSet.size();
       if(splatCount > m_rendererBufferCapacity)
       {
         deinitRendererBuffers();

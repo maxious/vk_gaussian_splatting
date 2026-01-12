@@ -28,6 +28,7 @@
 // type of model storage
 #define STORAGE_BUFFERS 0
 #define STORAGE_TEXTURES 1
+#define STORAGE_LCC_PACKED 2  // LCC format: raw packed bytes, GPU-side decompression
 
 // format for SH storage
 #define FORMAT_FLOAT32 0
@@ -143,6 +144,9 @@
 
 // Mesh texture binding (for textured mesh rendering)
 #define BINDING_MESH_TEXTURES 32
+
+// LCC packed storage bindings (for STORAGE_LCC_PACKED mode)
+#define BINDING_LCC_PACKED_BUFFER 33  // Raw 32-byte packed LCC splat data
 
 // location for vertex attributes
 // (only for vertex shader mode)
@@ -294,6 +298,10 @@ struct FrameInfo
   float envDepthFar DEFAULT(100.0f);
   float4x4 envDepthViewMatrixArray[2];
   float4x4 envDepthProjectionMatrixArray[2];
+
+  // LCC packed storage parameters (for GPU-side decompression)
+  float3 lccScaleMin DEFAULT(float3(0.00001f, 0.00001f, 0.00001f));  // Scale attribute min bounds
+  float3 lccScaleMax DEFAULT(float3(5.0f, 5.0f, 5.0f));              // Scale attribute max bounds
 };
 
 // Push constant for raster

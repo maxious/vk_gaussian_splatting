@@ -373,6 +373,11 @@ protected:
 
   // LCC tiled streaming manager (nullptr when not streaming)
   std::unique_ptr<LccTileManager> m_lccTileManager;
+  // LCC metadata (scale ranges for GPU decompression)
+  LccLoader::LccMeta m_lccMeta{};
+  // Raw packed LCC data for GPU-side decompression
+  std::vector<uint8_t> m_lccPackedData;
+  uint32_t m_lccPackedSplatCount = 0;
   // Temporary SplatSet for streaming (filled each frame with visible tiles)
   SplatSet m_streamingSplatSet;
 

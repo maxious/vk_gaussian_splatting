@@ -195,21 +195,35 @@ void VkViewer::buildContentState(FrameRenderContext& ctx)
   ctx.splatCount = 0;
   if(m_splatLoader.getStatus() == SplatLoaderAsync::State::STATE_READY)
   {
-    if(isLccStreamingActive() && !m_streamingSplatSet.positions.empty())
+    if(isLccStreamingActive())
     {
-      // Only update m_splatSet when streaming data has actually changed
-      m_splatSet.clear();
-      m_splatSet.positions = std::move(m_streamingSplatSet.positions);
-      m_splatSet.f_dc = std::move(m_streamingSplatSet.f_dc);
-      m_splatSet.f_rest = std::move(m_streamingSplatSet.f_rest);
-      m_splatSet.opacity = std::move(m_streamingSplatSet.opacity);
-      m_splatSet.scale = std::move(m_streamingSplatSet.scale);
-      m_splatSet.rotation = std::move(m_streamingSplatSet.rotation);
-      m_splatSet.has_time_data = m_streamingSplatSet.has_time_data;
-      m_splatSet.minTime = m_streamingSplatSet.minTime;
-      m_splatSet.maxTime = m_streamingSplatSet.maxTime;
+      if(m_lccTileManager->isPackedMode() && m_lccPackedSplatCount > 0)
+      {
+        // GPU-side decompression: use packed splat count directly
+        // m_splatSet is not used for rendering, but we need to set the count
+        // for the rest of the pipeline (sorting, etc.)
+        ctx.splatCount = m_lccPackedSplatCount;
+      }
+      else if(!m_streamingSplatSet.positions.empty())
+      {
+        // CPU-side decompression: move data from streaming set
+        m_splatSet.clear();
+        m_splatSet.positions = std::move(m_streamingSplatSet.positions);
+        m_splatSet.f_dc = std::move(m_streamingSplatSet.f_dc);
+        m_splatSet.f_rest = std::move(m_streamingSplatSet.f_rest);
+        m_splatSet.opacity = std::move(m_streamingSplatSet.opacity);
+        m_splatSet.scale = std::move(m_streamingSplatSet.scale);
+        m_splatSet.rotation = std::move(m_streamingSplatSet.rotation);
+        m_splatSet.has_time_data = m_streamingSplatSet.has_time_data;
+        m_splatSet.minTime = m_streamingSplatSet.minTime;
+        m_splatSet.maxTime = m_streamingSplatSet.maxTime;
+        ctx.splatCount = (uint32_t)m_splatSet.size();
+      }
     }
-    ctx.splatCount = (uint32_t)m_splatSet.size();
+    else
+    {
+      ctx.splatCount = (uint32_t)m_splatSet.size();
+    }
   }
   
   ctx.hasSplats = (ctx.splatCount > 0);

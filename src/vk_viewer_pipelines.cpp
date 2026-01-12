@@ -57,6 +57,9 @@ void VkViewer::initPipelines()
     bindings.addBinding(BINDING_SH_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
     bindings.addBinding(BINDING_MOTION_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
     bindings.addBinding(BINDING_TIME_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
+    
+    // LCC packed storage buffer (for GPU-side decompression)
+    bindings.addBinding(BINDING_LCC_PACKED_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
   }
 
   // Obj Mesh objectDescriptions
@@ -151,9 +154,17 @@ void VkViewer::initPipelines()
       writeContainer.append(bindings.getWriteSet(BINDING_MOTION_TEXTURE, m_descriptorSet), m_splatSetVk.motionMap);
       writeContainer.append(bindings.getWriteSet(BINDING_TIME_TEXTURE, m_descriptorSet), m_splatSetVk.timeMap);
     }
+    else if(prmData.dataStorage == STORAGE_LCC_PACKED)
+    {
+      // LCC packed storage: single buffer with raw 32-byte packed splat data
+      if(m_splatSetVk.lccPackedBuffer.buffer != VK_NULL_HANDLE)
+      {
+        writeContainer.append(bindings.getWriteSet(BINDING_LCC_PACKED_BUFFER, m_descriptorSet), m_splatSetVk.lccPackedBuffer);
+      }
+    }
     else
     {
-      // add data buffers
+      // add data buffers (STORAGE_BUFFERS mode)
       writeContainer.append(bindings.getWriteSet(BINDING_CENTERS_BUFFER, m_descriptorSet), m_splatSetVk.centersBuffer);
       writeContainer.append(bindings.getWriteSet(BINDING_SCALES_BUFFER, m_descriptorSet), m_splatSetVk.scalesBuffer);
       writeContainer.append(bindings.getWriteSet(BINDING_ROTATIONS_BUFFER, m_descriptorSet), m_splatSetVk.rotationsBuffer);
@@ -651,7 +662,9 @@ void VkViewer::deinitPipelines()
 
 void VkViewer::initRendererBuffers()
 {
-  const auto splatCount = (uint32_t)m_splatSet.size();
+  // Use packed splat count when in LCC packed mode, otherwise use m_splatSet size
+  const auto splatCount = (prmData.dataStorage == STORAGE_LCC_PACKED && m_lccPackedSplatCount > 0)
+                          ? m_lccPackedSplatCount : (uint32_t)m_splatSet.size();
 
   // Skip reallocation if current capacity is sufficient (streaming optimization)
   if(m_rendererBufferCapacity >= splatCount && m_splatIndicesDevice.buffer != VK_NULL_HANDLE)

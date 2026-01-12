@@ -84,8 +84,15 @@ public:
             float min = 0.0f;
             float max = 1.0f;
         };
+        // Per-component scale range (for GPU-side LCC decompression)
+        struct ScaleRange
+        {
+            glm::vec3 min{0.00001f};
+            glm::vec3 max{5.0f};
+        };
         AttrRange position;
-        AttrRange scale;
+        ScaleRange scaleVec3;  // Per-component scale range
+        AttrRange scale;       // Legacy scalar (uses X component)
         AttrRange shcoef;
         AttrRange opacity;
         AttrRange normal;

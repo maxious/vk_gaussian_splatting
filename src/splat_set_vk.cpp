@@ -99,8 +99,79 @@ void SplatSetVk::initDataStorage(SplatSet& splatSet, uint32_t storage, uint32_t 
   {
     initDataTextures(splatSet);
   }
+  else if(m_storage == STORAGE_LCC_PACKED)
+  {
+    // LCC packed storage is initialized via initLccPackedStorage()
+    LOGI("STORAGE_LCC_PACKED mode: use initLccPackedStorage() for raw data upload\n");
+  }
   else
     LOGE("Invalid storage format");
+}
+
+void SplatSetVk::initLccPackedStorage(const uint8_t* rawData, uint32_t splatCount)
+{
+  if(!rawData || splatCount == 0)
+  {
+    LOGE("Invalid LCC packed data\n");
+    return;
+  }
+
+  auto startTime = std::chrono::high_resolution_clock::now();
+
+  // LCC Portable format: 32 bytes per splat
+  constexpr size_t LCC_SPLAT_SIZE = 32;
+  const size_t totalBytes = static_cast<size_t>(splatCount) * LCC_SPLAT_SIZE;
+
+  VkCommandBuffer cmd = m_app->createTempCmdBuffer();
+
+  // Host buffer flags (for staging)
+  VkBufferUsageFlagBits2   hostBufferUsageFlags = VK_BUFFER_USAGE_2_TRANSFER_SRC_BIT;
+  VmaMemoryUsage           hostMemoryUsageFlags = VMA_MEMORY_USAGE_AUTO_PREFER_HOST;
+  VmaAllocationCreateFlags hostAllocCreateFlags = VMA_ALLOCATION_CREATE_MAPPED_BIT
+                                                  | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT;
+
+  // Device buffer flags
+  VkBufferUsageFlagBits2 deviceBufferUsageFlags =
+      VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT
+      | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT;
+  VmaMemoryUsage deviceMemoryUsageFlags = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
+
+  // Create host staging buffer
+  nvvk::Buffer hostBuffer;
+  m_alloc->createBuffer(hostBuffer, totalBytes, hostBufferUsageFlags, hostMemoryUsageFlags, hostAllocCreateFlags);
+
+  // Create device buffer for LCC packed data
+  m_alloc->createBuffer(lccPackedBuffer, totalBytes, deviceBufferUsageFlags, deviceMemoryUsageFlags);
+
+  // Copy raw data to host staging buffer
+  memcpy(hostBuffer.mapping, rawData, totalBytes);
+
+  // Copy from host to device
+  VkBufferCopy copyRegion{.srcOffset = 0, .dstOffset = 0, .size = totalBytes};
+  vkCmdCopyBuffer(cmd, hostBuffer.buffer, lccPackedBuffer.buffer, 1, &copyRegion);
+
+  // Add barrier for shader reads
+  VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+  barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, 0, 1, &barrier, 0,
+                       nullptr, 0, nullptr);
+
+  m_app->submitAndWaitTempCmdBuffer(cmd);
+
+  // Free staging buffer
+  m_alloc->destroyBuffer(hostBuffer);
+
+  // Update memory stats
+  memoryStats.devAll = static_cast<uint32_t>(totalBytes);
+  memoryStats.odevAll = static_cast<uint32_t>(totalBytes);
+
+  auto endTime = std::chrono::high_resolution_clock::now();
+  auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
+  LOGI("LCC packed storage initialized: %u splats, %zu bytes in %lld ms\n",
+       splatCount, totalBytes, static_cast<long long>(duration.count()));
+
+  m_storage = STORAGE_LCC_PACKED;
 }
 
 void SplatSetVk::deinitDataStorage()
@@ -112,6 +183,15 @@ void SplatSetVk::deinitDataStorage()
   else if(m_storage == STORAGE_TEXTURES)
   {
     deinitDataTextures();
+  }
+  else if(m_storage == STORAGE_LCC_PACKED)
+  {
+    // Deinit LCC packed buffer
+    if(lccPackedBuffer.buffer != VK_NULL_HANDLE)
+    {
+      m_alloc->destroyBuffer(lccPackedBuffer);
+      lccPackedBuffer = {};
+    }
   }
   else
     LOGE("Invalid storage format");

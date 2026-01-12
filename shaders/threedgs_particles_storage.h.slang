@@ -21,7 +21,10 @@
 #define _THREEDGS_PARTICLE_STORAGE_H_
 
 // clang-format off
-#if DATA_STORAGE == STORAGE_TEXTURES
+#if DATA_STORAGE == STORAGE_LCC_PACKED
+  // LCC packed format: raw 32-byte packed data, GPU-side decompression
+  #include "lcc_packed_storage.h.slang"
+#elif DATA_STORAGE == STORAGE_TEXTURES
   // textures map describing the 3DGS model
   [[vk::binding(BINDING_CENTERS_TEXTURE, 0)]] Sampler2D centersTexture;
   [[vk::binding(BINDING_SCALES_TEXTURE, 0)]] Sampler2D scalesTexture;
@@ -81,7 +84,13 @@ int2 getDataPosF(in uint splatIndex, in float stride, in uint offset, in int2 di
   return int2(fullOffset % dimensions.x, fullOffset / dimensions.x);
 }
 
-#if DATA_STORAGE == STORAGE_TEXTURES
+#if DATA_STORAGE == STORAGE_LCC_PACKED
+// fetch center value from LCC packed buffer (GPU decompression)
+float3 fetchCenter(in uint splatIndex)
+{
+  return fetchCenterLcc(splatIndex);
+}
+#elif DATA_STORAGE == STORAGE_TEXTURES
 // fetch center value from texture map
 float3 fetchCenter(in uint splatIndex)
 {
@@ -97,7 +106,14 @@ float3 fetchCenter(in uint splatIndex)
 }
 #endif
 
-#if DATA_STORAGE == STORAGE_TEXTURES
+#if DATA_STORAGE == STORAGE_LCC_PACKED
+// fetch scale value from LCC packed buffer (GPU decompression)
+// Note: frameInfo.lccScaleMin/Max must be set from LCC metadata
+float3 fetchScale(in uint splatIndex)
+{
+  return fetchScaleLcc(splatIndex, frameInfo.lccScaleMin, frameInfo.lccScaleMax);
+}
+#elif DATA_STORAGE == STORAGE_TEXTURES
 // fetch scale value from texture map
 float3 fetchScale(in uint splatIndex)
 {
@@ -113,7 +129,13 @@ float3 fetchScale(in uint splatIndex)
 }
 #endif
 
-#if DATA_STORAGE == STORAGE_TEXTURES
+#if DATA_STORAGE == STORAGE_LCC_PACKED
+// fetch rotation value from LCC packed buffer (GPU decompression)
+float4 fetchRotation(in uint splatIndex)
+{
+  return fetchRotationLcc(splatIndex);
+}
+#elif DATA_STORAGE == STORAGE_TEXTURES
 // fetch rotation value from texture map
 float4 fetchRotation(in uint splatIndex)
 {
@@ -130,7 +152,17 @@ float4 fetchRotation(in uint splatIndex)
 }
 #endif
 
-#if DATA_STORAGE == STORAGE_TEXTURES
+#if DATA_STORAGE == STORAGE_LCC_PACKED
+// LCC doesn't have motion/time data, return zeros
+float3 fetchMotion(in uint splatIndex)
+{
+  return float3(0.0, 0.0, 0.0);
+}
+float2 fetchTime(in uint splatIndex)
+{
+  return float2(0.0, 0.0);
+}
+#elif DATA_STORAGE == STORAGE_TEXTURES
 // fetch motion value from texture map
 float3 fetchMotion(in uint splatIndex)
 {
@@ -172,7 +204,13 @@ float fetchOpacity(in uint splatIndex)
 #endif
 }*/
 
-#if DATA_STORAGE == STORAGE_TEXTURES
+#if DATA_STORAGE == STORAGE_LCC_PACKED
+// fetchColor for LCC packed format (GPU decompression)
+float4 fetchColor(in uint splatIndex)
+{
+  return fetchColorLcc(splatIndex);
+}
+#elif DATA_STORAGE == STORAGE_TEXTURES
 // fetchColor replaces fetchSH0 since non view dependent color is precomputed on CPU
 float4 fetchColor(in uint splatIndex)
 {
@@ -189,7 +227,42 @@ float4 fetchColor(in uint splatIndex)
 }
 #endif
 
-#if DATA_STORAGE == STORAGE_TEXTURES
+#if DATA_STORAGE == STORAGE_LCC_PACKED
+// LCC Portable format doesn't have full SH coefficients, return zeros
+void fetchSh(in uint    splatIndex,
+             out float3 shd1[3]
+#if MAX_SH_DEGREE >= 2
+             ,
+             out float3 shd2[5]
+#endif
+#if MAX_SH_DEGREE >= 3
+             ,
+             out float3 shd3[7]
+#endif
+)
+{
+  // LCC Portable mode only has DC color, no higher-order SH
+  shd1[0] = float3(0.0, 0.0, 0.0);
+  shd1[1] = float3(0.0, 0.0, 0.0);
+  shd1[2] = float3(0.0, 0.0, 0.0);
+#if MAX_SH_DEGREE >= 2
+  shd2[0] = float3(0.0, 0.0, 0.0);
+  shd2[1] = float3(0.0, 0.0, 0.0);
+  shd2[2] = float3(0.0, 0.0, 0.0);
+  shd2[3] = float3(0.0, 0.0, 0.0);
+  shd2[4] = float3(0.0, 0.0, 0.0);
+#endif
+#if MAX_SH_DEGREE >= 3
+  shd3[0] = float3(0.0, 0.0, 0.0);
+  shd3[1] = float3(0.0, 0.0, 0.0);
+  shd3[2] = float3(0.0, 0.0, 0.0);
+  shd3[3] = float3(0.0, 0.0, 0.0);
+  shd3[4] = float3(0.0, 0.0, 0.0);
+  shd3[5] = float3(0.0, 0.0, 0.0);
+  shd3[6] = float3(0.0, 0.0, 0.0);
+#endif
+}
+#elif DATA_STORAGE == STORAGE_TEXTURES
 // fetch from data textures
 void fetchSh(in uint    splatIndex,
              out float3 shd1[3]
@@ -426,7 +499,47 @@ void fetchSh(in uint    splatIndex,
 }
 #endif
 
-#if DATA_STORAGE == STORAGE_TEXTURES
+// Helper to compute 3D covariance matrix from scale and rotation
+// Used by LCC packed storage which stores scale/rotation rather than pre-computed covariance
+float3x3 computeCovariance3D(float3 scale, float4 quat)
+{
+  // Reconstruct rotation matrix from quaternion (q.x=w, q.y=x, q.z=y, q.w=z)
+  float w = quat.x, x = quat.y, y = quat.z, z = quat.w;
+  
+  float3x3 R;
+  R[0][0] = 1.0 - 2.0*(y*y + z*z);
+  R[0][1] = 2.0*(x*y - w*z);
+  R[0][2] = 2.0*(x*z + w*y);
+  R[1][0] = 2.0*(x*y + w*z);
+  R[1][1] = 1.0 - 2.0*(x*x + z*z);
+  R[1][2] = 2.0*(y*z - w*x);
+  R[2][0] = 2.0*(x*z - w*y);
+  R[2][1] = 2.0*(y*z + w*x);
+  R[2][2] = 1.0 - 2.0*(x*x + y*y);
+  
+  // Scale matrix (diagonal): S = exp(scale) for log-scale
+  float3 s = exp(scale);
+  float3x3 S = float3x3(s.x, 0.0, 0.0,
+                         0.0, s.y, 0.0,
+                         0.0, 0.0, s.z);
+  
+  // Covariance = R * S * S^T * R^T = R * S^2 * R^T
+  // Since S is diagonal, S^2 is just squared diagonal
+  float3x3 RS = mul(R, S);
+  float3x3 cov = mul(RS, transpose(RS));
+  
+  return cov;
+}
+
+#if DATA_STORAGE == STORAGE_LCC_PACKED
+float3x3 fetchCovariance(in uint splatIndex)
+{
+  // LCC packed storage: compute covariance from scale and rotation
+  float3 scale = fetchScale(splatIndex);
+  float4 rotation = fetchRotation(splatIndex);
+  return computeCovariance3D(scale, rotation);
+}
+#elif DATA_STORAGE == STORAGE_TEXTURES
 float3x3 fetchCovariance(in uint splatIndex)
 {
   // Use RGBA texture map to store sets of 3 elements requires some offset shifting depending on splatIndex

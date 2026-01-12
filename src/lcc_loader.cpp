@@ -390,6 +390,10 @@ bool LccLoader::parseMeta(const std::filesystem::path& metaPath, LccMeta& meta)
                 }
                 else if(name == "scale" && minArr.size() == 3 && maxArr.size() == 3)
                 {
+                    // Per-component scale range (for GPU-side decompression)
+                    meta.scaleVec3.min = glm::vec3(minArr[0], minArr[1], minArr[2]);
+                    meta.scaleVec3.max = glm::vec3(maxArr[0], maxArr[1], maxArr[2]);
+                    // Legacy scalar (uses X component for CPU-side decoding)
                     meta.scale.min = minArr[0];
                     meta.scale.max = maxArr[0];
                 }

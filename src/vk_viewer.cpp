@@ -677,11 +677,18 @@ bool VkViewer::initializeLccStreaming(const std::filesystem::path& scenePath)
   }
 
   m_lccTileManager->setLodCount(meta.totalLevel);
+  
+  // Store metadata for GPU-side decompression (scale min/max ranges)
+  m_lccMeta = meta;
+  
+  // Enable packed mode for GPU-side decompression (much faster than CPU decode)
+  m_lccTileManager->setPackedMode(true);
 
-  LOGI("LCC streaming initialized: %s (tiles=%u, lodLevels=%u)\n",
+  LOGI("LCC streaming initialized: %s (tiles=%u, lodLevels=%u, packedMode=%d)\n",
        sceneDir.string().c_str(),
        m_lccTileManager->getTotalTileCount(),
-       meta.totalLevel);
+       meta.totalLevel,
+       m_lccTileManager->isPackedMode() ? 1 : 0);
 
   return true;
 }
@@ -704,7 +711,45 @@ void VkViewer::updateLccStreaming(const glm::mat4& viewProj, const glm::vec3& ca
   }
 
   m_lccTileManager->update(viewProj, cameraPos, dt);
-  m_lccTileManager->getVisibleSplats(m_streamingSplatSet);
+  
+  if(m_lccTileManager->isPackedMode())
+  {
+    // GPU-side decompression: get raw packed data
+    uint32_t splatCount = 0;
+    const uint8_t* packedData = m_lccTileManager->getVisiblePackedData(splatCount);
+    
+    if(packedData && splatCount > 0)
+    {
+      const bool wasEmpty = (m_lccPackedSplatCount == 0);
+      const bool tilesChanged = m_lccTileManager->hasVisibleTilesChanged();
+      
+      if(wasEmpty || tilesChanged)
+      {
+        // Store packed data for upload in processUpdateRequests
+        m_lccPackedData.assign(packedData, packedData + splatCount * 32);
+        m_lccPackedSplatCount = splatCount;
+        
+        // Create a minimal SplatSet just to hold the count (for existing code paths)
+        m_streamingSplatSet.clear();
+        m_streamingSplatSet.positions.resize(splatCount * 3, 0.0f);  // Placeholder
+        
+        // Trigger data update to use the new packed data
+        m_requestUpdateSplatData = true;
+        
+        if(wasEmpty)
+        {
+          LOGI("LCC packed data now available: %u splats\n", splatCount);
+        }
+      }
+    }
+  }
+  else
+  {
+    // CPU-side decompression (legacy path)
+    m_lccTileManager->getVisibleSplats(m_streamingSplatSet);
+    m_lccPackedData.clear();
+    m_lccPackedSplatCount = 0;
+  }
 }
 void VkViewer::benchmarkAdvance()
 {

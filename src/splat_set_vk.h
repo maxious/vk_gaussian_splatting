@@ -90,9 +90,14 @@ public:
   }
 
   // uploads the splatSet into VRAM
-  // storage in [STORAGE_BUFFERS, STORAGE_TEXTURES]
+  // storage in [STORAGE_BUFFERS, STORAGE_TEXTURES, STORAGE_LCC_PACKED]
   // format in  [FORMAT_FLOAT32, FORMAT_FLOAT16, FORMAT_UINT8]
   void initDataStorage(SplatSet& splatSet, uint32_t storage, uint32_t format);
+
+  // uploads raw LCC packed data to VRAM (for STORAGE_LCC_PACKED mode)
+  // rawData: pointer to packed LCC data (32 bytes per splat)
+  // splatCount: number of splats
+  void initLccPackedStorage(const uint8_t* rawData, uint32_t splatCount);
 
   // destroy all buffers from VRAM
   // a new initDataStorage can be invoked afterward
@@ -156,6 +161,9 @@ public:
   
   nvvk::Buffer motionBuffer;
   nvvk::Buffer timeBuffer;
+
+  // LCC packed buffer (for STORAGE_LCC_PACKED mode)
+  nvvk::Buffer lccPackedBuffer;    // Raw 32-byte packed LCC splat data
 
   ////////////////////////
   // Ray tracing specifics

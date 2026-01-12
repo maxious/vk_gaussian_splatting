@@ -53,6 +53,7 @@ struct LccTile
     uint32_t    lodSize[7] = {0};
 
     SplatSet    splatSet;
+    std::vector<uint8_t> packedData;  // Raw LCC packed data (32 bytes per splat)
     bool        isLoaded = false;
     bool        isLoading = false;
     bool        isDirty = false;
@@ -90,8 +91,17 @@ public:
     // Update based on camera position and view
     void update(const glm::mat4& viewProj, const glm::vec3& cameraPos, float dt);
 
-    // Get the current visible tiles as a merged SplatSet
+    // Get the current visible tiles as a merged SplatSet (CPU-decoded, legacy mode)
     void getVisibleSplats(SplatSet& output);
+
+    // Get raw packed data for GPU-side decompression (recommended for performance)
+    // Returns pointer to packed data and sets splatCount
+    // Caller should upload this data directly to GPU using initLccPackedStorage()
+    const uint8_t* getVisiblePackedData(uint32_t& splatCount);
+
+    // Check if using packed mode
+    bool isPackedMode() const { return m_usePackedMode; }
+    void setPackedMode(bool enabled) { m_usePackedMode = enabled; }
 
     // Get statistics
     uint32_t getLoadedTileCount() const { return m_loadedTileCount.load(); }
@@ -166,6 +176,10 @@ private:
     // For frustum culling
     glm::mat4                           m_lastViewProj;
     glm::vec3                           m_lastCameraPos;
+
+    // Packed mode (GPU-side decompression)
+    bool                                m_usePackedMode{true};  // Default to packed mode for performance
+    std::vector<uint8_t>                m_mergedPackedData;     // Merged packed data from visible tiles
 };
 
 }  // namespace vk_viewer

@@ -189,14 +189,12 @@ void LccTileManager::updateVisibleTiles(const glm::mat4& viewProj, const glm::ve
     size_t prevVisibleCount = m_visibleTiles.size();
     m_visibleTiles.clear();
 
-    // DEBUG: Only load the first tile at LOD 3 to minimize data
-    bool first = true;
     for(auto& tile : m_allTiles)
     {
-        if(first) // && isInFrustum(tile, viewProj))
+        if(isInFrustum(tile, viewProj))
         {
             float dist = glm::length(tile.center - cameraPos);
-            uint32_t targetLod = getLodForDistance(dist); // Will return 3 (from previous hack)
+            uint32_t targetLod = getLodForDistance(dist);
 
             // Check if tile needs to be (re)loaded
             bool needsLoad = !tile.isLoaded && !tile.isLoading;
@@ -224,13 +222,10 @@ void LccTileManager::updateVisibleTiles(const glm::mat4& viewProj, const glm::ve
             {
                 m_visibleTiles.push_back(&tile);
             }
-            
-            // Just one tile for now!
-            first = false;
         }
         else
         {
-            // Unload everything else
+            // Unload tiles outside frustum to free memory
             if(tile.isLoaded && !tile.isLoading)
             {
                 unloadTile(tile);
@@ -272,12 +267,25 @@ bool LccTileManager::loadTile(LccTile& tile, uint32_t targetLod)
     constexpr size_t SPLAT_SIZE = 32;
     uint32_t splatCount = tile.dataSize / SPLAT_SIZE;
 
-    tile.splatSet.positions.resize(splatCount * 3);
-    tile.splatSet.f_dc.resize(splatCount * 3);
-    tile.splatSet.opacity.resize(splatCount);
-    tile.splatSet.scale.resize(splatCount * 3);
-    tile.splatSet.rotation.resize(splatCount * 4);
+    // Store raw packed data for GPU-side decompression (packed mode)
+    if(m_usePackedMode)
+    {
+        tile.packedData = std::move(data);
+        tile.splatCount = splatCount;
+    }
+    else
+    {
+        // Legacy CPU-side decompression (for debugging/fallback)
+        tile.splatSet.positions.resize(splatCount * 3);
+        tile.splatSet.f_dc.resize(splatCount * 3);
+        tile.splatSet.opacity.resize(splatCount);
+        tile.splatSet.scale.resize(splatCount * 3);
+        tile.splatSet.rotation.resize(splatCount * 4);
+    }
 
+    // Only do CPU decoding in legacy mode
+    if(!m_usePackedMode)
+    {
     const uint8_t* ptr = data.data();
     for(uint32_t i = 0; i < splatCount; i++)
     {
@@ -344,6 +352,7 @@ bool LccTileManager::loadTile(LccTile& tile, uint32_t targetLod)
         tile.splatSet.rotation[j + 2] *= c.flipQ[1];
         tile.splatSet.rotation[j + 3] *= c.flipQ[2];
     }
+    }  // End of legacy CPU decoding mode
 
     tile.isLoaded = true;
     tile.isLoading = false;
@@ -360,6 +369,8 @@ void LccTileManager::unloadTile(LccTile& tile)
         return;
 
     tile.splatSet.clear();
+    tile.packedData.clear();
+    tile.packedData.shrink_to_fit();
     tile.isLoaded = false;
     tile.isLoading = false;
     m_memoryUsed -= tile.dataSize;
@@ -522,6 +533,55 @@ void LccTileManager::getVisibleSplats(SplatSet& output)
     }
     
     m_visibleTilesDirty = false;
+}
+
+const uint8_t* LccTileManager::getVisiblePackedData(uint32_t& splatCount)
+{
+    // Skip rebuild if nothing has changed
+    if(!m_visibleTilesDirty.load())
+    {
+        splatCount = static_cast<uint32_t>(m_mergedPackedData.size() / 32);
+        return m_mergedPackedData.empty() ? nullptr : m_mergedPackedData.data();
+    }
+
+    m_mergedPackedData.clear();
+
+    constexpr size_t SPLAT_SIZE = 32;
+    size_t totalBytes = 0;
+
+    // Calculate total size
+    for(auto* tile : m_visibleTiles)
+    {
+        if(tile->isLoaded && !tile->packedData.empty())
+        {
+            totalBytes += tile->packedData.size();
+        }
+    }
+
+    if(totalBytes == 0)
+    {
+        splatCount = 0;
+        m_visibleTilesDirty = false;
+        return nullptr;
+    }
+
+    // Reserve and merge
+    m_mergedPackedData.reserve(totalBytes);
+
+    for(auto* tile : m_visibleTiles)
+    {
+        if(tile->isLoaded && !tile->packedData.empty())
+        {
+            m_mergedPackedData.insert(m_mergedPackedData.end(),
+                                       tile->packedData.begin(),
+                                       tile->packedData.end());
+        }
+    }
+
+    splatCount = static_cast<uint32_t>(m_mergedPackedData.size() / SPLAT_SIZE);
+    m_visibleTilesDirty = false;
+
+    return m_mergedPackedData.data();
 }
 
 void LccTileManager::invalidateAll()

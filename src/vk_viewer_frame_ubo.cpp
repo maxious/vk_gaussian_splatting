@@ -89,6 +89,14 @@ void VkViewer::updateAndUploadFrameInfoUBO(VkCommandBuffer cmd, const uint32_t s
 
   // prmFrame.multiviewEnabled is now managed by the caller (onRender)
   // Do not reset it here, as it might have been set for OpenXR
+  
+  // LCC packed storage: set scale min/max for GPU-side decompression
+  if(prmData.dataStorage == STORAGE_LCC_PACKED && isLccStreamingActive())
+  {
+    // Use per-component scale ranges for accurate GPU decompression
+    prmFrame.lccScaleMin = m_lccMeta.scaleVec3.min;
+    prmFrame.lccScaleMax = m_lccMeta.scaleVec3.max;
+  }
 
   // the buffer is small so we use vkCmdUpdateBuffer for the transfer
   vkCmdUpdateBuffer(cmd, m_frameInfoBuffer.buffer, 0, sizeof(shaderio::FrameInfo), &prmFrame);
