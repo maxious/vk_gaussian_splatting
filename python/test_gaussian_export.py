@@ -100,6 +100,55 @@ def test_freetimegs_ply_export():
     return True
 
 
+def test_delta_compressed_ply_export():
+    """Test exporting to delta-compressed FreeTimeGS PLY format."""
+    import numpy as np
+    from offline.ply_io import write_delta_compressed_freetimegs_ply
+
+    output_dir = Path("../_downloaded_resources/test_gaussian_export")
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    n_points = 100
+    means = np.random.randn(n_points, 3).astype(np.float32) * 0.5
+    scales = np.random.randn(n_points, 3).astype(np.float32) * 0.1
+    rotations = np.random.randn(n_points, 4).astype(np.float32)
+    rotations /= np.linalg.norm(rotations, axis=1, keepdims=True)
+    colors = np.random.rand(n_points, 3).astype(np.float32)
+    opacities = np.random.randn(n_points).astype(np.float32)
+    # Simulate compressed deltas (Int16)
+    deltas = (np.random.randn(n_points, 3).astype(np.float32) * 1000).astype(np.int16)
+    time_center = np.random.rand(n_points).astype(np.float32)
+    time_scale = np.random.randn(n_points).astype(np.float32) * 0.5
+    compression_scale = 0.001  # Example scale factor
+
+    ply_path = output_dir / "test_delta_compressed.ply"
+    write_delta_compressed_freetimegs_ply(
+        ply_path,
+        means,
+        scales,
+        rotations,
+        colors,
+        opacities,
+        deltas,
+        time_center,
+        time_scale,
+        compression_scale=compression_scale,
+        use_int8=False,
+    )
+
+    assert ply_path.exists(), "Delta-compressed PLY file not created"
+    assert ply_path.stat().st_size > 0, "Delta-compressed PLY file is empty"
+
+    with open(ply_path, "rb") as f:
+        header = f.read(1024).decode("utf-8", errors="ignore")
+        assert "property float motion_0" in header, "Missing motion_0 property"
+        assert "property float t" in header, "Missing t property"
+        assert "property float t_scale" in header, "Missing t_scale property"
+
+    logger.info(f"Delta-compressed PLY test passed: {ply_path}")
+    return True
+
+
 def test_motion_vector_computation():
     """Test motion vector computation from frame sequence."""
     import numpy as np

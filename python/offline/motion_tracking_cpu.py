@@ -376,6 +376,161 @@ def build_trajectories(
     )
 
 
+def fit_trajectories_delta_compression(
+    traj_data: TrajectoryData,
+    compression_ratio_target: float = 51.0,
+    use_int8: bool = False,
+) -> tuple[
+    np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray
+]:
+    """
+    Fit temporal compression using delta encoding with Int16/Int8 quantization.
+
+    Inspired by P-4DGS predictive coding. Instead of storing absolute motion vectors,
+    stores compressed temporal deltas for ~51x compression ratio.
+
+    Returns:
+        (means, scales, rotations, colors, opacities, deltas, time_center, time_scale)
+        deltas: compressed temporal deltas (Int16 or Int8)
+    """
+    n_traj = traj_data.n_trajectories
+    n_obs = len(traj_data.trajectory_ids)
+
+    traj_ids = traj_data.trajectory_ids
+    times = traj_data.times_normalized
+    positions = traj_data.positions
+    scales = traj_data.scales
+    rotations = traj_data.rotations
+    colors = traj_data.colors
+    opacities = traj_data.opacities
+
+    # Compute time centers (same as FreeTimeGS)
+    time_sum = np.zeros(n_traj, dtype=np.float32)
+    time_sq_sum = np.zeros(n_traj, dtype=np.float32)
+    obs_count = np.zeros(n_traj, dtype=np.int32)
+
+    np.add.at(time_sum, traj_ids, times)
+    np.add.at(time_sq_sum, traj_ids, times**2)
+    np.add.at(obs_count, traj_ids, np.ones(n_obs, dtype=np.int32))
+
+    obs_count_safe = np.maximum(obs_count, 1).astype(np.float32)
+    time_center = time_sum / obs_count_safe
+    time_var = time_sq_sum / obs_count_safe - time_center**2
+    time_scale = np.sqrt(np.maximum(time_var, 0.0025)) * 2.0
+    time_scale = np.maximum(time_scale, 0.05)
+    time_scale_log = np.log(time_scale)
+
+    # For SPAG-4D: Compute temporal deltas instead of linear motion
+    # Sort observations by trajectory and time
+    sort_idx = np.lexsort((times, traj_ids))
+    sorted_traj_ids = traj_ids[sort_idx]
+    sorted_times = times[sort_idx]
+    sorted_positions = positions[sort_idx]
+    sorted_scales = scales[sort_idx]
+    sorted_rotations = rotations[sort_idx]
+    sorted_colors = colors[sort_idx]
+    sorted_opacities = opacities[sort_idx]
+
+    # Compute deltas for each trajectory
+    deltas = np.zeros((n_traj, 3), dtype=np.float32)  # Will be compressed to Int16/Int8
+    pos_center = np.zeros((n_traj, 3), dtype=np.float32)
+
+    for traj_id in range(n_traj):
+        mask = sorted_traj_ids == traj_id
+        if np.sum(mask) == 0:
+            continue
+
+        traj_positions = sorted_positions[mask]
+        traj_times = sorted_times[mask]
+
+        # Use first position as reference
+        pos_center[traj_id] = traj_positions[0]
+
+        if len(traj_positions) > 1:
+            # Compute average delta per unit time
+            time_diffs = np.diff(traj_times)
+            pos_diffs = np.diff(traj_positions, axis=0)
+
+            # Avoid division by zero
+            valid_mask = time_diffs > 1e-8
+            if np.any(valid_mask):
+                avg_delta = np.mean(pos_diffs[valid_mask] / time_diffs[valid_mask, None], axis=0)
+                deltas[traj_id] = avg_delta
+            else:
+                deltas[traj_id] = 0.0
+        else:
+            deltas[traj_id] = 0.0
+
+    # Compress deltas to Int16/Int8 based on target compression ratio
+    # First, find the scale factor to fit deltas into Int16 range
+    delta_magnitudes = np.linalg.norm(deltas, axis=1)
+    max_delta = np.max(delta_magnitudes) if len(delta_magnitudes) > 0 else 1.0
+
+    scale_factor = 1.0  # Default scale factor
+    if max_delta > 0:
+        # Scale to fit in Int16 range (-32768 to 32767)
+        # Apply compression ratio target
+        scale_factor = (32767.0 / max_delta) / np.sqrt(compression_ratio_target)
+
+    deltas_compressed = deltas * scale_factor
+
+    if use_int8:
+        # For higher compression, use Int8 range (-127 to 127)
+        deltas_compressed = np.clip(deltas_compressed, -127, 127).astype(np.int8)
+    else:
+        # Use Int16 for better precision
+        deltas_compressed = np.clip(deltas_compressed, -32767, 32767).astype(np.int16)
+
+    # Compute weighted averages for other properties (same as FreeTimeGS)
+    weights = np.maximum(opacities, 0.01)
+    weight_sum = np.zeros(n_traj, dtype=np.float32)
+    np.add.at(weight_sum, traj_ids, weights)
+    weight_sum_safe = np.maximum(weight_sum, 1e-8)
+
+    weighted_scales = np.zeros((n_traj, 3), dtype=np.float32)
+    weighted_rotations = np.zeros((n_traj, 4), dtype=np.float32)
+    weighted_colors = np.zeros((n_traj, 3), dtype=np.float32)
+    weighted_opacities = np.zeros(n_traj, dtype=np.float32)
+
+    for dim in range(3):
+        np.add.at(weighted_scales[:, dim], traj_ids, scales[:, dim] * weights)
+        np.add.at(weighted_colors[:, dim], traj_ids, colors[:, dim] * weights)
+    for dim in range(4):
+        np.add.at(weighted_rotations[:, dim], traj_ids, rotations[:, dim] * weights)
+    np.add.at(weighted_opacities, traj_ids, opacities * weights)
+
+    weighted_scales /= weight_sum_safe[:, None]
+    weighted_rotations /= weight_sum_safe[:, None]
+    weighted_colors /= weight_sum_safe[:, None]
+    weighted_opacities /= weight_sum_safe
+
+    rot_norms = np.linalg.norm(weighted_rotations, axis=1, keepdims=True)
+    weighted_rotations /= np.maximum(rot_norms, 1e-8)
+
+    results = (
+        pos_center.astype(np.float32),
+        weighted_scales.astype(np.float32),
+        weighted_rotations.astype(np.float32),
+        weighted_colors.astype(np.float32),
+        weighted_opacities.astype(np.float32),
+        deltas_compressed.astype(np.int16),  # Compressed deltas
+        time_center.astype(np.float32),
+        time_scale_log.astype(np.float32),
+        scale_factor,  # Return compression scale for decompression
+    )
+
+    delta_mag = np.linalg.norm(results[5].astype(np.float32) / scale_factor, axis=1)
+    logger.info(
+        f"Delta compression stats: magnitude mean={delta_mag.mean():.6f}, max={delta_mag.max():.6f}"
+    )
+    logger.info(
+        f"Delta compression: scale_factor={scale_factor:.2f}, target_ratio={compression_ratio_target:.1f}x"
+    )
+    logger.info(f"Time center: min={results[6].min():.3f}, max={results[6].max():.3f}")
+
+    return results
+
+
 def fit_trajectories(
     traj_data: TrajectoryData,
 ) -> tuple[

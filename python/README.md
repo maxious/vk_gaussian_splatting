@@ -134,10 +134,20 @@ uv run --extra cuda python -m offline.cli export \
   --input video.mp4 --output ./ply_output/ \
   --model "depth-anything/DA3-GIANT" --mode frames
 
-# Postprocess to FreeTimeGS with motion vectors
+# Postprocess to FreeTimeGS with motion vectors (standard)
 uv run --extra cuda python -m offline.cli postprocess \
   --input ./ply_output/ --output scene_4d.ply \
   --fps 30.0
+
+# Export directly to FreeTimeGS with delta compression (Int16, ~51x compression)
+uv run --extra cuda python -m offline.cli images \
+  --input ./images/ --output scene_4d_compressed.ply \
+  --model "depth-anything/DA3-GIANT" --mode freetimegs-delta
+
+# Export directly to FreeTimeGS with high compression (Int8)
+uv run --extra cuda python -m offline.cli images \
+  --input ./images/ --output scene_4d_high_compression.ply \
+  --model "depth-anything/DA3-GIANT" --mode freetimegs-delta-int8
 ```
 
 ## Environment Variables

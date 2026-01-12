@@ -404,3 +404,130 @@ def compute_motion_vectors_cuda(
     )
 
     return fit_trajectories(traj_data)
+
+
+def compute_motion_vectors_delta_compression_cuda(
+    frames: list,
+    fps: float,
+    compression_ratio_target: float = 51.0,
+    use_int8: bool = False,
+    max_match_distance: Optional[float] = None,
+    match_distance_ratio: float = 0.02,
+    window_size: int = 3,
+    opacity_weight: float = 0.1,
+) -> tuple[
+    np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray
+]:
+    """
+    Compute motion vectors using delta compression instead of linear motion vectors.
+
+    Uses temporal delta encoding with Int16/Int8 quantization for high compression ratios.
+    Inspired by P-4DGS predictive coding approaches.
+
+    Args:
+        frames: List of frame data with means, scales, rotations, colors, opacities
+        fps: Frames per second
+        compression_ratio_target: Target compression ratio (default 51.0x)
+        use_int8: Use Int8 instead of Int16 for even higher compression
+        max_match_distance: Maximum distance for matching (auto-computed if None)
+        match_distance_ratio: Ratio of scene diagonal for auto max_distance
+        window_size: Number of frames to search forward
+        opacity_weight: Weight for opacity in matching (0=disabled, 0.1-0.5 typical)
+    """
+    if len(frames) < 2:
+        # Fallback for single frame
+        frame = frames[0]
+        n = len(frame.means)
+        return (
+            frame.means,
+            frame.scales,
+            frame.rotations,
+            frame.colors,
+            frame.opacities,
+            np.zeros((n, 3), dtype=np.int16 if not use_int8 else np.int8),
+            np.full(n, 0.5, dtype=np.float32),
+            np.zeros(n, dtype=np.float32),
+        )
+
+    # Compute scene scale on CPU (fast enough)
+    all_means_np = [f.means for f in frames]
+    all_opacities_np = [f.opacities for f in frames]
+
+    if max_match_distance is None:
+        stacked = np.vstack(all_means_np)
+        bbox_min = stacked.min(axis=0)
+        bbox_max = stacked.max(axis=0)
+        diag = np.linalg.norm(bbox_max - bbox_min)
+        max_match_distance = float(diag * match_distance_ratio)
+        logger.info(f"Scene scale: {diag:.2f}, match dist: {max_match_distance:.2f}")
+
+    # 1. Match on GPU (same as FreeTimeGS)
+    matches = match_gaussians_sliding_window_cuda(
+        all_means_np,
+        max_distance=max_match_distance,
+        window_size=window_size,
+        all_opacities=all_opacities_np,
+        opacity_weight=opacity_weight,
+    )
+    logger.info(f"Found {len(matches)} matches using cuTile")
+
+    # 2. Build Union-Find (CPU)
+    total_gaussians = sum(len(m) for m in all_means_np)
+    frame_offsets = [0]
+    for m in all_means_np:
+        frame_offsets.append(frame_offsets[-1] + len(m))
+    frame_offsets_arr = np.array(frame_offsets, dtype=np.int_)
+
+    parent, rank = union_find_init(total_gaussians)
+    matches_arr = np.array(matches, dtype=np.int_)
+    if len(matches) > 0:
+        apply_matches_to_union_find(parent, rank, matches_arr, frame_offsets_arr)
+
+    trajectory_ids, n_trajectories = union_find_components(parent)
+
+    # 3. Fit Trajectories with delta compression (CPU)
+    frame_indices = np.zeros(total_gaussians, dtype=np.int32)
+    times_normalized = np.zeros(total_gaussians, dtype=np.float32)
+    positions = np.zeros((total_gaussians, 3), dtype=np.float32)
+    scales = np.zeros((total_gaussians, 3), dtype=np.float32)
+    rotations = np.zeros((total_gaussians, 4), dtype=np.float32)
+    colors = np.zeros((total_gaussians, 3), dtype=np.float32)
+    opacities = np.zeros(total_gaussians, dtype=np.float32)
+
+    t_start = frames[0].timestamp_ms
+    t_end = frames[-1].timestamp_ms
+    t_range = max(t_end - t_start, 1e-6)
+
+    idx = 0
+    for frame_idx, frame in enumerate(frames):
+        n = len(frame.means)
+        t_norm = (frame.timestamp_ms - t_start) / t_range
+
+        frame_indices[idx : idx + n] = frame_idx
+        times_normalized[idx : idx + n] = t_norm
+        positions[idx : idx + n] = frame.means
+        scales[idx : idx + n] = frame.scales
+        rotations[idx : idx + n] = frame.rotations
+        colors[idx : idx + n] = frame.colors
+        opacities[idx : idx + n] = frame.opacities
+        idx += n
+
+    traj_data = TrajectoryData(
+        trajectory_ids=trajectory_ids,
+        frame_indices=frame_indices,
+        times_normalized=times_normalized,
+        positions=positions,
+        scales=scales,
+        rotations=rotations,
+        colors=colors,
+        opacities=opacities,
+        n_trajectories=n_trajectories,
+    )
+
+    from .motion_tracking_cpu import fit_trajectories_delta_compression
+
+    logger.info("Computing delta-compressed temporal encoding...")
+    results = fit_trajectories_delta_compression(
+        traj_data, compression_ratio_target=compression_ratio, use_int8=use_int8
+    )
+    return results  # Now includes compression_scale as 9th element

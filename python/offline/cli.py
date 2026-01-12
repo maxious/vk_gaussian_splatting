@@ -65,9 +65,10 @@ def main():
     )
     export_parser.add_argument(
         "--mode",
-        choices=["frames", "freetimegs"],
+        choices=["frames", "freetimegs", "freetimegs-delta", "freetimegs-delta-int8"],
         default="frames",
-        help="Export mode: 'frames' for per-frame PLYs, 'freetimegs' for temporal PLY",
+        help="Export mode: 'frames' for per-frame PLYs, 'freetimegs' for temporal PLY, "
+        "'freetimegs-delta' for compressed temporal (Int16), 'freetimegs-delta-int8' for high compression (Int8)",
     )
     export_parser.add_argument(
         "--format",
@@ -188,9 +189,10 @@ def main():
     )
     images_parser.add_argument(
         "--mode",
-        choices=["frames", "freetimegs"],
+        choices=["frames", "freetimegs", "freetimegs-delta", "freetimegs-delta-int8"],
         default="frames",
-        help="Export mode: 'frames' for per-frame PLYs, 'freetimegs' for temporal PLY",
+        help="Export mode: 'frames' for per-frame PLYs, 'freetimegs' for temporal PLY, "
+        "'freetimegs-delta' for compressed temporal (Int16), 'freetimegs-delta-int8' for high compression (Int8)",
     )
     images_parser.add_argument(
         "--format",

@@ -9,7 +9,12 @@ from pathlib import Path
 
 import numpy as np
 
-from .ply_io import load_static_gaussian_ply, write_freetimegs_ply, write_static_gaussian_ply
+from .ply_io import (
+    load_static_gaussian_ply,
+    write_delta_compressed_freetimegs_ply,
+    write_freetimegs_ply,
+    write_static_gaussian_ply,
+)
 from .processors.da3 import DA3GaussianProcessor
 from .processors.matrix3d import Matrix3DGaussianProcessor
 from .processors.sharp import SharpGaussianProcessor
@@ -664,13 +669,85 @@ def export_images_to_gaussian_plys(
         logger.info(f"Exported {len(frames)} PLY files to {output_path}")
         return
 
-    # FreeTimeGS mode
-    from .motion_tracking_cuda import compute_motion_vectors_cuda
+    # FreeTimeGS mode - support delta compression as alternative
+    mode_lower = mode.lower()
+    if "delta" in mode_lower:
+        from .motion_tracking_cuda import compute_motion_vectors_delta_compression_cuda
 
-    logger.info("Computing motion vectors (GPU-accelerated with cuTile)...")
-    (means, scales, rotations, colors, opacities, motion, time_center, time_scale) = (
-        compute_motion_vectors_cuda(frames, fps)
-    )
+        use_int8 = "int8" in mode_lower
+        compression_ratio = 51.0  # Default target ratio
+
+        logger.info(
+            f"Computing delta-compressed motion vectors (GPU-accelerated with cuTile, ratio={compression_ratio}x)..."
+        )
+        (
+            means,
+            scales,
+            rotations,
+            colors,
+            opacities,
+            deltas,
+            time_center,
+            time_scale,
+            compression_scale,
+        ) = compute_motion_vectors_delta_compression_cuda(
+            frames, fps, compression_ratio_target=compression_ratio, use_int8=use_int8
+        )
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if format == "sog":
+            _export_sog(
+                output_path,
+                means,
+                scales,
+                rotations,
+                colors,
+                opacities,
+                deltas.astype(np.float32),  # Convert back for SOG compatibility
+                time_center,
+                time_scale,
+            )
+        elif format == "4dv":
+            _export_4dv(
+                output_path,
+                means,
+                scales,
+                rotations,
+                colors,
+                opacities,
+                deltas.astype(np.float32),  # Convert back for 4DV compatibility
+                time_center,
+                time_scale,
+            )
+        else:
+            write_delta_compressed_freetimegs_ply(
+                output_path,
+                means,
+                scales,
+                rotations,
+                colors,
+                opacities,
+                deltas,
+                time_center,
+                time_scale,
+                compression_scale=compression_scale,
+                use_int8=use_int8,
+                flip_y=flip_y,
+            )
+
+        logger.info(f"Export complete: {output_path} (delta-compressed)")
+        return
+    else:
+        from .motion_tracking_cuda import compute_motion_vectors_cuda
+
+        logger.info("Computing motion vectors (GPU-accelerated with cuTile)...")
+        (means, scales, rotations, colors, opacities, motion, time_center, time_scale) = (
+            compute_motion_vectors_cuda(frames, fps)
+        )
+        (means, scales, rotations, colors, opacities, motion, time_center, time_scale) = (
+            compute_motion_vectors_cuda(frames, fps)
+        )
 
     # Zero out motion for static splats (motion magnitude <= 0.001)
     motion_magnitude = np.linalg.norm(motion, axis=1)
