@@ -44,7 +44,9 @@ struct RadianceFieldEntry
   size_t                splatOffset = 0;  // Offset into merged SplatSet
   size_t                splatCount = 0;   // Number of splats from this file
   bool                  visible = true;   // Visibility toggle (for future use)
-  
+  bool                  isLcc = false;    // Is this an LCC format file?
+  int                   lodLevel = 0;     // Current LOD level (for LCC files)
+
   // Per-field transform (for future use)
   // Currently all splats share the SplatSetVk transform
 };

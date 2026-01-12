@@ -21,6 +21,12 @@ def main():
     )
     parser.add_argument("--output", "-o", type=Path, required=True, help="Output .4dv file")
     parser.add_argument("--fps", type=float, default=30.0, help="Frame rate")
+    parser.add_argument(
+        "--static-threshold",
+        type=float,
+        default=0.01,
+        help="Variance threshold for static tracks (default: 0.01)",
+    )
     args = parser.parse_args()
 
     if not args.input.exists():
@@ -45,6 +51,14 @@ def main():
 
     T, N, _ = coords.shape
     logger.info(f"Loaded {N} tracks over {T} frames")
+
+    # Compute motion variance to identify static vs dynamic tracks
+    # This is key for temporal compression: static tracks can be represented more efficiently
+    variances = np.var(coords, axis=0).sum(axis=-1)  # (N,)
+    is_static = variances < args.static_threshold
+    logger.info(
+        f"Identified {np.sum(is_static)} static tracks and {np.sum(~is_static)} dynamic tracks"
+    )
 
     # Filter invalid tracks (low visibility)
     # If a track is invisible for most frames, maybe skip?
@@ -130,6 +144,9 @@ def main():
     denominator = np.sum(t_centered**2)
 
     velocity = numerator / denominator  # (N, 3)
+
+    # Force static tracks to have zero velocity for compression efficiency
+    velocity[is_static] = 0.0
 
     # Scales: heuristic 0.02
     scales = np.ones((N, 3), dtype=np.float32) * 0.02

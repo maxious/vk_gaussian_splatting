@@ -279,6 +279,29 @@ bool SplatLoaderAsync::loadScene(std::filesystem::path filename, SplatSet& outpu
   return true;
 }
 
+bool SplatLoaderAsync::loadSceneAtLod(std::filesystem::path filename, SplatSet& output, int lodLevel)
+{
+  std::lock_guard<std::mutex> lock(m_mutex);
+  if(m_status != STATE_READY)
+  {
+    return false;
+  }
+
+  if(!LccLoader::canLoad(filename))
+  {
+    return false;
+  }
+
+  // setup load info and wakeup the thread
+  m_filename    = filename;
+  m_output      = &output;
+  m_targetLod   = lodLevel;
+  m_lodReloadPending = true;
+  m_loadCV.notify_all();
+
+  return true;
+}
+
 bool SplatLoaderAsync::initialize()
 {
   // original state shall be shutdown
@@ -615,7 +638,19 @@ bool SplatLoaderAsync::innerLoad(std::filesystem::path filename, SplatSet& outpu
   // LCC Loader (Lixel CyberColor format)
   if(LccLoader::canLoad(filename))
   {
-    bool success = LccLoader::load(filename, output, [this](float progress) { setProgress(progress); });
+    bool success;
+    if(m_lodReloadPending)
+    {
+      // Load at specific LOD level
+      success = LccLoader::loadWithLod(filename, output, m_targetLod, nullptr, nullptr,
+                                        [this](float progress) { setProgress(progress); });
+      m_lodReloadPending = false;
+    }
+    else
+    {
+      success = LccLoader::load(filename, output, [this](float progress) { setProgress(progress); });
+    }
+
     if(success)
     {
       auto      endTime  = std::chrono::high_resolution_clock::now();

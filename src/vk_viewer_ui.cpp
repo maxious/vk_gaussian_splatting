@@ -994,6 +994,8 @@ void VkViewerUI::onUIRender()
         entry.splatOffset = newSplatOffset;
         entry.splatCount = newSplatCount;
         entry.visible = true;
+        entry.isLcc = LccLoader::canLoad(m_pendingLoadFilename);
+        entry.lodLevel = 0;
         m_radianceFields.push_back(entry);
         
         LOGI("Added radiance field: %s (offset=%zu, count=%zu, total=%zu)\n",
@@ -1723,6 +1725,85 @@ void VkViewerUI::guiDrawSplatSetProperties()
       PE::Checkbox("Remove black splats", &prmScene.removeBlackSplats,
                     "If on, splats with (almost) zero color will be discarded during loading.\n"
                     "This can help reduce point count and improve performance without visible quality loss.");
+
+      // LCC LOD Control
+      static int s_currentLodLevel = 0;
+      static int s_previousLodLevel = 0;
+      static uint32_t s_lodCount = 0;
+      static bool s_isLccScene = false;
+
+      // Check if current scene is LCC and get LOD count
+      if(!m_radianceFields.empty() && m_radianceFields[0].isLcc)
+      {
+        if(!s_isLccScene || s_lodCount == 0)
+        {
+          s_lodCount = LccLoader::getLodCount(m_radianceFields[0].filename);
+          s_isLccScene = true;
+        }
+
+          if(s_lodCount > 1)
+          {
+            ImGui::Separator();
+            ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "LCC LOD Level");
+            ImGui::SameLine();
+            nvgui::tooltip("LOD (Level of Detail) control for LCC format scenes.\n"
+                           "Lower LOD = fewer splats, faster rendering.\n"
+                           "Higher LOD = more splats, higher quality.");
+
+          ImGui::PushItemWidth(200.0f);
+          if(ImGui::SliderInt("##LOD Level", &s_currentLodLevel, 0, s_lodCount - 1, "LOD %d"))
+          {
+            // Clamp to valid range
+            s_currentLodLevel = std::max(0, std::min(s_currentLodLevel, static_cast<int>(s_lodCount) - 1));
+          }
+          ImGui::PopItemWidth();
+
+          // Show splat counts per LOD
+          ImGui::TextDisabled("LOD 0 (High): %s splats", formatSize(m_splatSet.size()).c_str());
+          if(s_lodCount > 1)
+          {
+            ImGui::TextDisabled("LOD %d (Low): ~%s splats", s_lodCount - 1,
+                               formatSize(m_splatSet.size() / 4).c_str());  // Approximate
+          }
+
+          // Apply LOD change
+          if(s_currentLodLevel != s_previousLodLevel && !m_radianceFields.empty())
+          {
+            LOGI("Changing LOD from %d to %d\n", s_previousLodLevel, s_currentLodLevel);
+
+            // Reload at new LOD level
+            vkDeviceWaitIdle(m_device);
+
+            m_splatSet.clear();
+            m_splatSetPending.clear();
+
+            std::string filename = m_radianceFields[0].filename.string();
+
+            if(!m_splatLoader.loadSceneAtLod(filename, m_splatSetPending, s_currentLodLevel))
+            {
+              LOGE("Failed to load scene at LOD %d\n", s_currentLodLevel);
+            }
+            else
+            {
+              // Update radiance field info
+              m_radianceFields[0].lodLevel = s_currentLodLevel;
+              m_radianceFields[0].splatCount = m_splatSetPending.size();
+
+              // Clear and prepare for merge
+              m_splatSet.clear();
+            }
+
+            s_previousLodLevel = s_currentLodLevel;
+          }
+        }
+      }
+      else
+      {
+        s_isLccScene = false;
+        s_lodCount = 0;
+        s_currentLodLevel = 0;
+        s_previousLodLevel = 0;
+      }
 
       if(PE::entry(
              "Apply to scene", [&] { return ImGui::Button("Reload all files"); },

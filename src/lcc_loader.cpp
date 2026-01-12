@@ -125,6 +125,209 @@ bool LccLoader::load(const std::filesystem::path&        path,
     return true;
 }
 
+uint32_t LccLoader::getLodCount(const std::filesystem::path& path)
+{
+    std::filesystem::path basePath = std::filesystem::is_directory(path) ? path : path.parent_path();
+    std::filesystem::path metaPath = basePath / "meta.lcc";
+
+    std::vector<uint8_t> jsonData = readFile(metaPath);
+    if(jsonData.empty())
+        return 0;
+
+    try
+    {
+        json j = json::parse(jsonData.begin(), jsonData.end());
+        return j.value("totalLevel", 1u);
+    }
+    catch(...)
+    {
+        return 0;
+    }
+}
+
+bool LccLoader::loadWithLod(const std::filesystem::path&        path,
+                            SplatSet&                           output,
+                            int                                 targetLod,
+                            const glm::mat4*                    viewProj,
+                            const glm::vec3*                    cameraPos,
+                            std::function<void(float)>          progressCallback)
+{
+    if(progressCallback)
+        progressCallback(0.0f);
+
+    std::filesystem::path basePath = std::filesystem::is_directory(path) ? path : path.parent_path();
+
+    // Parse meta.lcc
+    LccMeta meta;
+    std::filesystem::path metaPath = basePath / "meta.lcc";
+    if(!parseMeta(metaPath, meta))
+    {
+        return false;
+    }
+
+    if(progressCallback)
+        progressCallback(0.1f);
+
+    // Clamp target LOD to valid range
+    int maxLod = static_cast<int>(meta.totalLevel) - 1;
+    if(targetLod < 0)
+        targetLod = 0;
+    if(targetLod > maxLod)
+        targetLod = maxLod;
+
+    // Read index.bin to get spatial distribution
+    std::vector<LccIndexEntry> entries;
+    std::filesystem::path indexPath = basePath / "index.bin";
+    if(!parseIndex(indexPath, meta, entries))
+    {
+        // Fall back to loading all data at target LOD
+        return load(path, output, progressCallback);
+    }
+
+    if(progressCallback)
+        progressCallback(0.2f);
+
+    // Read data.bin
+    std::filesystem::path dataPath = basePath / "data.bin";
+    std::vector<uint8_t> data = readFile(dataPath);
+    if(data.empty())
+    {
+        LOGE("Failed to read data.bin: %s\n", dataPath.string().c_str());
+        return false;
+    }
+
+    if(progressCallback)
+        progressCallback(0.3f);
+
+    // Collect all splats at target LOD (with optional frustum culling)
+    struct LodChunk
+    {
+        uint64_t offset;
+        uint32_t size;
+        uint32_t count;
+    };
+    std::vector<LodChunk> chunks;
+
+    bool useFrustumCulling = (viewProj != nullptr && cameraPos != nullptr);
+
+    for(const auto& entry : entries)
+    {
+        uint32_t count = entry.pointsCount[targetLod];
+        if(count == 0)
+            continue;
+
+        uint64_t offset = entry.lodOffset[targetLod];
+        uint32_t size = entry.lodSize[targetLod];
+        if(size == 0 || offset >= data.size())
+            continue;
+
+        if(useFrustumCulling)
+        {
+            // Estimate node position from index (lower 16 bits = X, upper 16 bits = Y)
+            float nodeX = static_cast<float>(entry.indexX) * meta.cellLengthX;
+            float nodeY = static_cast<float>(entry.indexY) * meta.cellLengthY;
+            glm::vec3 nodePos(nodeX, nodeY, (meta.boundingMin.z + meta.boundingMax.z) * 0.5f);
+
+            // Simple distance-based culling for now
+            float dist = glm::length(*cameraPos - nodePos);
+            const float kMaxNodeDistance = 300.0f;  // Skip nodes too far away
+
+            if(dist > kMaxNodeDistance)
+                continue;
+        }
+
+        chunks.push_back({offset, size, count});
+    }
+
+    if(progressCallback)
+        progressCallback(0.4f);
+
+    // Calculate total splats
+    uint32_t totalSplats = 0;
+    for(const auto& chunk : chunks)
+    {
+        totalSplats += chunk.count;
+    }
+
+    if(totalSplats == 0)
+    {
+        LOGE("No splats found at LOD %d\n", targetLod);
+        return false;
+    }
+
+    LOGI("Loading LCC at LOD %d: %u splats from %zu chunks\n", targetLod, totalSplats, chunks.size());
+
+    // Reserve space
+    output.positions.resize(totalSplats * 3);
+    output.f_dc.resize(totalSplats * 3);
+    output.f_rest.clear();
+    output.opacity.resize(totalSplats);
+    output.scale.resize(totalSplats * 3);
+    output.rotation.resize(totalSplats * 4);
+
+    // Copy data from chunks
+    uint32_t splatIndex = 0;
+    constexpr size_t SPLAT_SIZE = 32;
+
+    for(const auto& chunk : chunks)
+    {
+        const uint8_t* chunkData = data.data() + chunk.offset;
+        uint32_t        splatsInChunk = chunk.count;
+
+        for(uint32_t i = 0; i < splatsInChunk; i++)
+        {
+            const uint8_t* ptr = chunkData + i * SPLAT_SIZE;
+
+            // Position
+            const float* pos = reinterpret_cast<const float*>(ptr);
+            output.positions[splatIndex * 3 + 0] = pos[0];
+            output.positions[splatIndex * 3 + 1] = pos[1];
+            output.positions[splatIndex * 3 + 2] = pos[2];
+
+            // Color + Opacity
+            uint32_t colorVal = *reinterpret_cast<const uint32_t*>(ptr + 12);
+            float    color[3];
+            float    opacity;
+            decodeColor(colorVal, color, opacity);
+            output.f_dc[splatIndex * 3 + 0] = (color[0] - 0.5f) / 0.28209479177387814f;
+            output.f_dc[splatIndex * 3 + 1] = (color[1] - 0.5f) / 0.28209479177387814f;
+            output.f_dc[splatIndex * 3 + 2] = (color[2] - 0.5f) / 0.28209479177387814f;
+            output.opacity[splatIndex]      = opacity;
+
+            // Scale
+            const uint16_t* scale16 = reinterpret_cast<const uint16_t*>(ptr + 16);
+            output.scale[splatIndex * 3 + 0] = decodeScale(scale16[0], meta.scale.min, meta.scale.max);
+            output.scale[splatIndex * 3 + 1] = decodeScale(scale16[1], meta.scale.min, meta.scale.max);
+            output.scale[splatIndex * 3 + 2] = decodeScale(scale16[2], meta.scale.min, meta.scale.max);
+
+            // Rotation
+            uint32_t rotVal = *reinterpret_cast<const uint32_t*>(ptr + 22);
+            float    quat[4];
+            decodeRotation(rotVal, quat);
+            output.rotation[splatIndex * 4 + 0] = quat[0];
+            output.rotation[splatIndex * 4 + 1] = quat[1];
+            output.rotation[splatIndex * 4 + 2] = quat[2];
+            output.rotation[splatIndex * 4 + 3] = quat[3];
+
+            splatIndex++;
+
+            if(progressCallback && (splatIndex % 500000 == 0))
+            {
+                progressCallback(0.4f + 0.5f * static_cast<float>(splatIndex) / totalSplats);
+            }
+        }
+    }
+
+    // Convert coordinate system
+    convertCoordinates(output);
+
+    if(progressCallback)
+        progressCallback(1.0f);
+
+    LOGI("Loaded LCC at LOD %d: %u splats\n", targetLod, static_cast<uint32_t>(output.size()));
+    return true;
+}
+
 bool LccLoader::parseMeta(const std::filesystem::path& metaPath, LccMeta& meta)
 {
     std::vector<uint8_t> jsonData = readFile(metaPath);
@@ -142,6 +345,8 @@ bool LccLoader::parseMeta(const std::filesystem::path& metaPath, LccMeta& meta)
         meta.totalSplats  = j.value("totalSplats", 0u);
         meta.totalLevel   = j.value("totalLevel", 1u);
         meta.indexDataSize = j.value("indexDataSize", 0u);
+        meta.cellLengthX  = j.value("cellLengthX", 15.0f);
+        meta.cellLengthY  = j.value("cellLengthY", 15.0f);
         meta.fileType     = j.value("fileType", "Portable");
         meta.guid         = j.value("guid", "");
 
@@ -431,14 +636,19 @@ bool LccLoader::parseData(const LccMeta&        meta,
         uint32_t rotVal = *reinterpret_cast<const uint32_t*>(ptr + 22);
         float    quat[4];
         decodeRotation(rotVal, quat);
-        // Convert from {w,x,y,z} to SplatSet {w,x,y,z} format
         output.rotation[i * 4 + 0] = quat[0];  // w
         output.rotation[i * 4 + 1] = quat[1];  // x
         output.rotation[i * 4 + 2] = quat[2];  // y
         output.rotation[i * 4 + 3] = quat[3];  // z
 
-        // Normal: 3 × uint16 (6 bytes) at offset 26 (unused for rendering)
-        // Skip normals as they're not used by the renderer
+        // Debug output for first few splats
+        if(i < 3)
+        {
+            LOGD("LCC splat %u: pos=(%.2f, %.2f, %.2f) color=(%.2f, %.2f, %.2f) opacity=%.2f scale=(%.4f, %.4f, %.4f) rot=(%.4f, %.4f, %.4f, %.4f)\n",
+                 i, pos[0], pos[1], pos[2], color[0], color[1], color[2], opacity,
+                 output.scale[i*3+0], output.scale[i*3+1], output.scale[i*3+2],
+                 quat[0], quat[1], quat[2], quat[3]);
+        }
 
         ptr += SPLAT_SIZE;
 

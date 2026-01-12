@@ -46,6 +46,18 @@ public:
                      SplatSet&                           output,
                      std::function<void(float)>          progressCallback = nullptr);
 
+    // Load specific LOD level (0 = highest quality, higher = lower quality)
+    // If targetLod is -1, loads all visible LODs based on view frustum
+    static bool loadWithLod(const std::filesystem::path&        path,
+                            SplatSet&                           output,
+                            int                                 targetLod,
+                            const glm::mat4*                    viewProj      = nullptr,
+                            const glm::vec3*                    cameraPos     = nullptr,
+                            std::function<void(float)>          progressCallback = nullptr);
+
+    // Get number of LOD levels available
+    static uint32_t getLodCount(const std::filesystem::path& path);
+
     // Check if path is an LCC directory (contains meta.lcc)
     static bool canLoad(const std::filesystem::path& path);
 
@@ -56,7 +68,9 @@ public:
         std::string  version;     // Version string (e.g., "4.0")
         uint32_t     totalSplats = 0;
         uint32_t     totalLevel = 0;
-        uint32_t indexDataSize = 0;
+        uint32_t     indexDataSize = 0;
+        float        cellLengthX = 15.0f;  // Spatial cell dimensions in meters
+        float        cellLengthY = 15.0f;
         std::string fileType;           // "Portable" or "Quality"
         std::string guid;
 

@@ -61,6 +61,11 @@ public:
   // return false if loader not in idled state
   // output must not be accessed if status is not LOADED or READY (after reset)
   bool loadScene(std::filesystem::path filename, SplatSet& output);
+
+  // Load scene at specific LOD level (for LCC format)
+  // Returns false if loader not in idled state or file is not LCC
+  bool loadSceneAtLod(std::filesystem::path filename, SplatSet& output, int lodLevel);
+
   // cancel scene loading if possible
   // non blocking, may have no effect
   void cancel();
@@ -86,6 +91,12 @@ public:
     std::lock_guard<std::mutex> lock(m_mutex);
     return m_progress;
   }
+
+  // Set/get LOD level for reload
+  inline void setTargetLod(int lod) { m_targetLod = lod; }
+  inline int  getTargetLod() const { return m_targetLod; }
+  inline void setLodReloadPending(bool pending) { m_lodReloadPending = pending; }
+  inline bool isLodReloadPending() const { return m_lodReloadPending; }
 
 private:
   // actually loads the scene
@@ -118,6 +129,9 @@ private:
   SplatSet* m_output = nullptr;
   // the loading percentage
   float m_progress = 0.0f;
+  // LOD reload state
+  int  m_targetLod = 0;
+  bool m_lodReloadPending = false;
 };
 
 }  // namespace vk_viewer
