@@ -45,8 +45,14 @@ void VkViewer::tryConsumeAndUploadCpuSortingResult(VkCommandBuffer cmd, const ui
 
       // let's wakeup the sorting thread to run a new sort if needed
       // will start work only if camera direction or position has changed
+      bool lazySort = prmRaster.cpuLazySort && !isLccStreamingActive();
+      if(!lazySort)
+      {
+        if(m_cpuSorter.getStatus() != SplatSorterAsync::E_READY)
+          lazySort = true; // Prevent multiple concurrent sorts when streaming
+      }
       m_cpuSorter.sortAsync(glm::normalize(m_center - m_eye), m_eye, m_splatSet.positions, m_splatSetVk.transform,
-                            prmRaster.cpuLazySort);
+                            lazySort);
     }
   }
   else

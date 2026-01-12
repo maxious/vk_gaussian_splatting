@@ -106,6 +106,7 @@ bool LccTileManager::parseTiles(const std::filesystem::path& indexPath, const Lc
         uint32_t cellY = (indexVal >> 16) & 0xFFFF;
 
         LccTile tile;
+        tile.loadMutex = std::make_unique<std::mutex>();
         tile.cellX = cellX;
         tile.cellY = cellY;
         tile.center = glm::vec3(
@@ -125,7 +126,7 @@ bool LccTileManager::parseTiles(const std::filesystem::path& indexPath, const Lc
             lodPtr += 16;
         }
 
-        m_allTiles.push_back(tile);
+        m_allTiles.emplace_back(std::move(tile));
     }
 
     return !m_allTiles.empty();
@@ -133,14 +134,16 @@ bool LccTileManager::parseTiles(const std::filesystem::path& indexPath, const Lc
 
 uint32_t LccTileManager::getLodForDistance(float distance) const
 {
+    uint32_t maxLod = m_lodCount.load() > 0 ? m_lodCount.load() - 1 : 0;
+    
     if(distance < m_config.nearDist)
-        return std::min(m_config.maxLod, 0u);  // Highest quality near camera
+        return std::min(maxLod, 0u);  // Highest quality near camera
     else if(distance < m_config.midDist)
-        return std::min(m_config.maxLod, 1u);
+        return std::min(maxLod, 1u);
     else if(distance < m_config.farDist)
-        return std::min(m_config.maxLod, 2u);
+        return std::min(maxLod, 2u);
     else
-        return std::min(m_config.maxLod, 3u);  // Lowest quality far away
+        return std::min(maxLod, 3u);  // Lowest quality far away
 }
 
 std::array<glm::vec3, 8> LccTileManager::getTileCorners(const LccTile& tile) const
@@ -183,43 +186,62 @@ void LccTileManager::updateVisibleTiles(const glm::mat4& viewProj, const glm::ve
     m_lastViewProj = viewProj;
     m_lastCameraPos = cameraPos;
 
+    size_t prevVisibleCount = m_visibleTiles.size();
     m_visibleTiles.clear();
 
-    // Find visible tiles and determine LOD for each
+    // DEBUG: Only load the first tile at LOD 3 to minimize data
+    bool first = true;
     for(auto& tile : m_allTiles)
     {
-        if(!isInFrustum(tile, viewProj))
-            continue;
-
-        float dist = glm::length(tile.center - cameraPos);
-        uint32_t targetLod = getLodForDistance(dist);
-
-        // Check if tile needs to be (re)loaded
-        bool needsLoad = !tile.isLoaded && !tile.isLoading;
-        bool needsReload = tile.isLoaded && tile.lodLevel != targetLod;
-
-        if(needsLoad || needsReload)
+        if(first) // && isInFrustum(tile, viewProj))
         {
-            tile.lodLevel = targetLod;
-            tile.dataOffset = tile.lodOffset[targetLod];
-            tile.dataSize = tile.lodSize[targetLod];
-            tile.splatCount = tile.pointsCount[targetLod];
+            float dist = glm::length(tile.center - cameraPos);
+            uint32_t targetLod = getLodForDistance(dist); // Will return 3 (from previous hack)
 
-            if(needsReload)
+            // Check if tile needs to be (re)loaded
+            bool needsLoad = !tile.isLoaded && !tile.isLoading;
+            bool needsReload = tile.isLoaded && tile.lodLevel != targetLod;
+
+            if(needsLoad || needsReload)
+            {
+                tile.lodLevel = targetLod;
+                tile.dataOffset = tile.lodOffset[targetLod];
+                tile.dataSize = tile.lodSize[targetLod];
+                tile.splatCount = tile.pointsCount[targetLod];
+
+                if(needsReload)
+                {
+                    unloadTile(tile);
+                }
+
+                // Queue for loading
+                std::lock_guard<std::mutex> lock(m_queueMutex);
+                m_loadQueue.push_back(&tile);
+                tile.isLoading = true;
+            }
+
+            if(tile.isLoaded)
+            {
+                m_visibleTiles.push_back(&tile);
+            }
+            
+            // Just one tile for now!
+            first = false;
+        }
+        else
+        {
+            // Unload everything else
+            if(tile.isLoaded && !tile.isLoading)
             {
                 unloadTile(tile);
             }
-
-            // Queue for loading
-            std::lock_guard<std::mutex> lock(m_queueMutex);
-            m_loadQueue.push_back(&tile);
-            tile.isLoading = true;
         }
+    }
 
-        if(tile.isLoaded)
-        {
-            m_visibleTiles.push_back(&tile);
-        }
+    // Mark dirty if visible tile count changed
+    if(m_visibleTiles.size() != prevVisibleCount)
+    {
+        m_visibleTilesDirty = true;
     }
 
     m_loadCV.notify_one();
@@ -260,9 +282,12 @@ bool LccTileManager::loadTile(LccTile& tile, uint32_t targetLod)
     for(uint32_t i = 0; i < splatCount; i++)
     {
         const float* pos = reinterpret_cast<const float*>(ptr);
-        tile.splatSet.positions[i * 3 + 0] = pos[0];
-        tile.splatSet.positions[i * 3 + 1] = pos[1];
-        tile.splatSet.positions[i * 3 + 2] = pos[2];
+        // Sanitize Position
+        float px = pos[0], py = pos[1], pz = pos[2];
+        if(!std::isfinite(px) || !std::isfinite(py) || !std::isfinite(pz)) { px = py = pz = 0.0f; }
+        tile.splatSet.positions[i * 3 + 0] = px;
+        tile.splatSet.positions[i * 3 + 1] = py;
+        tile.splatSet.positions[i * 3 + 2] = pz;
 
         uint32_t colorVal = *reinterpret_cast<const uint32_t*>(ptr + 12);
         float    color[3];
@@ -271,17 +296,31 @@ bool LccTileManager::loadTile(LccTile& tile, uint32_t targetLod)
         tile.splatSet.f_dc[i * 3 + 0] = (color[0] - 0.5f) / 0.28209479177387814f;
         tile.splatSet.f_dc[i * 3 + 1] = (color[1] - 0.5f) / 0.28209479177387814f;
         tile.splatSet.f_dc[i * 3 + 2] = (color[2] - 0.5f) / 0.28209479177387814f;
+        // Sanitize Opacity
+        if(!std::isfinite(opacity)) opacity = -10.0f; // effectively invisible
         tile.splatSet.opacity[i] = opacity;
 
         const uint16_t* scale16 = reinterpret_cast<const uint16_t*>(ptr + 16);
         // Use fixed scale range for now
-        tile.splatSet.scale[i * 3 + 0] = LccLoader::decodeScale(scale16[0], 0.00001f, 5.0f);
-        tile.splatSet.scale[i * 3 + 1] = LccLoader::decodeScale(scale16[1], 0.00001f, 5.0f);
-        tile.splatSet.scale[i * 3 + 2] = LccLoader::decodeScale(scale16[2], 0.00001f, 5.0f);
+        float sx = LccLoader::decodeScale(scale16[0], 0.00001f, 5.0f);
+        float sy = LccLoader::decodeScale(scale16[1], 0.00001f, 5.0f);
+        float sz = LccLoader::decodeScale(scale16[2], 0.00001f, 5.0f);
+        // Sanitize Scale
+        if(!std::isfinite(sx)) sx = 0.01f;
+        if(!std::isfinite(sy)) sy = 0.01f;
+        if(!std::isfinite(sz)) sz = 0.01f;
+        tile.splatSet.scale[i * 3 + 0] = sx;
+        tile.splatSet.scale[i * 3 + 1] = sy;
+        tile.splatSet.scale[i * 3 + 2] = sz;
 
         uint32_t rotVal = *reinterpret_cast<const uint32_t*>(ptr + 22);
         float    quat[4];
         LccLoader::decodeRotation(rotVal, quat);
+        // Sanitize Rotation
+        if(!std::isfinite(quat[0]) || !std::isfinite(quat[1]) || !std::isfinite(quat[2]) || !std::isfinite(quat[3]))
+        {
+            quat[0] = 1.0f; quat[1] = 0.0f; quat[2] = 0.0f; quat[3] = 0.0f;
+        }
         tile.splatSet.rotation[i * 4 + 0] = quat[0];
         tile.splatSet.rotation[i * 4 + 1] = quat[1];
         tile.splatSet.rotation[i * 4 + 2] = quat[2];
@@ -375,11 +414,11 @@ void LccTileManager::streamingWorker()
                         }
 
                         // Unload the most distant tile
-                        for(auto* unloadTile : m_unloadQueue)
+                        for(auto* tileToUnload : m_unloadQueue)
                         {
-                            if(unloadTile->isLoaded)
+                            if(tileToUnload->isLoaded)
                             {
-                                unloadTile(*unloadTile);
+                                unloadTile(*tileToUnload);
                                 break;
                             }
                         }
@@ -390,7 +429,10 @@ void LccTileManager::streamingWorker()
 
         if(tile)
         {
-            loadTile(*tile, tile->lodLevel);
+            if(loadTile(*tile, tile->lodLevel))
+            {
+                m_visibleTilesDirty = true;  // Mark dirty when a tile finishes loading
+            }
         }
     }
 }
@@ -416,6 +458,12 @@ void LccTileManager::update(const glm::mat4& viewProj, const glm::vec3& cameraPo
 
 void LccTileManager::getVisibleSplats(SplatSet& output)
 {
+    // Skip rebuild if nothing has changed
+    if(!m_visibleTilesDirty.load())
+    {
+        return;  // output already contains valid data from previous call
+    }
+    
     output.clear();
 
     size_t totalSplats = 0;
@@ -428,7 +476,10 @@ void LccTileManager::getVisibleSplats(SplatSet& output)
     }
 
     if(totalSplats == 0)
+    {
+        m_visibleTilesDirty = false;
         return;
+    }
 
     // Reserve space
     output.positions.resize(totalSplats * 3);
@@ -469,6 +520,8 @@ void LccTileManager::getVisibleSplats(SplatSet& output)
             splatIndex++;
         }
     }
+    
+    m_visibleTilesDirty = false;
 }
 
 void LccTileManager::invalidateAll()

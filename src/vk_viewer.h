@@ -107,6 +107,7 @@
 #include "vdz_mesh.h"
 #include "camera_set.h"
 #include "render_context.h"
+#include "lcc_tile_manager.h"
 
 #ifdef WITH_OPENXR
 #include "gs_openxr.hpp"
@@ -195,6 +196,12 @@ protected:
 
   // free scene (splat set) from RAM
   void deinitScene();
+
+  // LCC tiled streaming methods
+  bool initializeLccStreaming(const std::filesystem::path& scenePath);
+  void shutdownLccStreaming();
+  void updateLccStreaming(const glm::mat4& viewProj, const glm::vec3& cameraPos, float dt);
+  bool isLccStreamingActive() const { return m_lccTileManager != nullptr && m_lccTileManager->isActive(); }
 
 #ifdef WITH_OPENXR
 protected:
@@ -364,6 +371,11 @@ protected:
   // Set of cameras in RAM
   CameraSet m_cameraSet = {};
 
+  // LCC tiled streaming manager (nullptr when not streaming)
+  std::unique_ptr<LccTileManager> m_lccTileManager;
+  // Temporary SplatSet for streaming (filled each frame with visible tiles)
+  SplatSet m_streamingSplatSet;
+
   // Index of the item selected in a root node of scene graph or -1 if none
   int64_t m_selectedItemIndex = -1;
   // Index of the last camera loaded
@@ -516,6 +528,7 @@ protected:
   nvvk::Buffer m_splatIndicesDevice;    // Buffer of splat indices on device (used by CPU and GPU sort)
   nvvk::Buffer m_splatDistancesDevice;  // Buffer of splat indices on device (used by CPU and GPU sort)
   nvvk::Buffer m_vrdxStorageDevice;     // Used internally by VrdxSorter, GPU sort
+  uint32_t     m_rendererBufferCapacity = 0;  // Current capacity of sorting buffers (for grow-only resizing)
 
   // macro definitions shared by all shaders
   std::vector<std::pair<std::string, std::string>> m_shaderMacros;

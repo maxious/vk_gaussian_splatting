@@ -195,6 +195,20 @@ void VkViewer::buildContentState(FrameRenderContext& ctx)
   ctx.splatCount = 0;
   if(m_splatLoader.getStatus() == SplatLoaderAsync::State::STATE_READY)
   {
+    if(isLccStreamingActive() && !m_streamingSplatSet.positions.empty())
+    {
+      // Only update m_splatSet when streaming data has actually changed
+      m_splatSet.clear();
+      m_splatSet.positions = std::move(m_streamingSplatSet.positions);
+      m_splatSet.f_dc = std::move(m_streamingSplatSet.f_dc);
+      m_splatSet.f_rest = std::move(m_streamingSplatSet.f_rest);
+      m_splatSet.opacity = std::move(m_streamingSplatSet.opacity);
+      m_splatSet.scale = std::move(m_streamingSplatSet.scale);
+      m_splatSet.rotation = std::move(m_streamingSplatSet.rotation);
+      m_splatSet.has_time_data = m_streamingSplatSet.has_time_data;
+      m_splatSet.minTime = m_streamingSplatSet.minTime;
+      m_splatSet.maxTime = m_streamingSplatSet.maxTime;
+    }
     ctx.splatCount = (uint32_t)m_splatSet.size();
   }
   
@@ -266,6 +280,12 @@ void VkViewer::buildViews(FrameRenderContext& ctx)
   ctx.upVector = m_up;
   ctx.viewMatrix = cameraManip->getViewMatrix();
   ctx.projMatrix = cameraManip->getPerspectiveMatrix();
+
+  if(isLccStreamingActive())
+  {
+    glm::mat4 viewProj = ctx.projMatrix * ctx.viewMatrix;
+    updateLccStreaming(viewProj, m_eye, 0.0f);
+  }
 
 #ifdef WITH_OPENXR
   if(ctx.xrFrameActive && m_xr)

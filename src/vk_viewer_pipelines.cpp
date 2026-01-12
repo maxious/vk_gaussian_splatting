@@ -653,6 +653,16 @@ void VkViewer::initRendererBuffers()
 {
   const auto splatCount = (uint32_t)m_splatSet.size();
 
+  // Skip reallocation if current capacity is sufficient (streaming optimization)
+  if(m_rendererBufferCapacity >= splatCount && m_splatIndicesDevice.buffer != VK_NULL_HANDLE)
+  {
+    return;  // Buffers are already large enough
+  }
+
+  // Grow with 1.5x headroom to reduce reallocations during streaming
+  uint32_t newCapacity = std::max(splatCount, m_rendererBufferCapacity * 3 / 2);
+  newCapacity = std::max(newCapacity, 1024u);  // Minimum capacity
+
   // All this block for the sorting
   {
     // Vrdx sorter
@@ -662,7 +672,7 @@ void VkViewer::initRendererBuffers()
     {  // Create some buffer for GPU and/or CPU sorting
       // shall use minStorageBufferOffsetAlignment
       // Use minimum size of 16 bytes when no splats (for valid descriptor bindings)
-      const VkDeviceSize bufferSize = std::max((VkDeviceSize)16, ((splatCount * sizeof(uint32_t) + 15) / 16) * 16);
+      const VkDeviceSize bufferSize = std::max((VkDeviceSize)16, ((newCapacity * sizeof(uint32_t) + 15) / 16) * 16);
 
       m_alloc.createBuffer(m_splatIndicesHost, bufferSize, VK_BUFFER_USAGE_2_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_AUTO_PREFER_HOST,
                            VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
@@ -678,8 +688,11 @@ void VkViewer::initRendererBuffers()
                            VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE);
 
       VrdxSorterStorageRequirements requirements;
-      vrdxGetSorterKeyValueStorageRequirements(m_gpuSorter, splatCount, &requirements);
+      vrdxGetSorterKeyValueStorageRequirements(m_gpuSorter, newCapacity, &requirements);
       m_alloc.createBuffer(m_vrdxStorageDevice, requirements.size, requirements.usage, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE);
+
+      // Track new capacity
+      m_rendererBufferCapacity = newCapacity;
 
       // for stats reporting only
       m_renderMemoryStats.allocVdrxInternal = (uint32_t)requirements.size;
@@ -756,6 +769,7 @@ void VkViewer::deinitRendererBuffers()
   m_alloc.destroyBuffer(m_splatIndicesDevice);
   m_alloc.destroyBuffer(m_splatIndicesHost);
   m_alloc.destroyBuffer(m_vrdxStorageDevice);
+  m_rendererBufferCapacity = 0;  // Reset capacity on full deinit
 
   m_alloc.destroyBuffer(m_indirect);
   m_alloc.destroyBuffer(m_indirectReadbackHost);

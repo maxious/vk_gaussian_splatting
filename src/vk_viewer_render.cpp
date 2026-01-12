@@ -34,11 +34,33 @@ void VkViewer::onRender(VkCommandBuffer cmd)
   if(!beginFrame(ctx))
     return;
 
-  // Process update requests (shader rebuilds, buffer updates)
-  processUpdateRequests();
+  if(isLccStreamingActive())
+  {
+    cameraManip->getLookat(m_eye, m_center, m_up);
+    glm::mat4 viewMatrix = cameraManip->getViewMatrix();
+    glm::mat4 projMatrix = cameraManip->getPerspectiveMatrix();
+    glm::mat4 viewProj = projMatrix * viewMatrix;
+    updateLccStreaming(viewProj, m_eye, 0.0f);
+
+    // Wait for async sorter to finish before modifying geometry to prevent race condition
+    while(m_cpuSorter.getStatus() == SplatSorterAsync::E_SORTING)
+    {
+      std::this_thread::yield();
+    }
+  }
 
   // Phase 2: Determine what content we have and output mode
+  const size_t prevSplatCount = m_splatSet.size();
   buildContentState(ctx);
+
+  if(isLccStreamingActive() && m_splatSet.size() != prevSplatCount)
+  {
+    // Update GPU buffers only when splat count actually changed
+    m_requestUpdateSplatData = true;
+  }
+
+  // Process update requests (shader rebuilds, buffer updates)
+  processUpdateRequests();
 
   // Early exit for RTX-only pipeline (separate code path for now)
   if(ctx.useRtxPipeline && ctx.shadersValid && ctx.hasSplats)
@@ -252,20 +274,37 @@ void VkViewer::processUpdateRequests(void)
 
   vkDeviceWaitIdle(m_device);
 
+  // Determine if we need full shader/pipeline rebuild or just data update
+  bool needsShaderRebuild = m_requestUpdateShaders || m_requestUpdateMeshData || m_requestDeleteSelectedMesh;
+  bool needsDataUpdate = m_requestUpdateSplatData || m_requestUpdateSplatAs;
+  
   // updates that requires update of descriptor sets
-  if(m_requestUpdateSplatData || m_requestUpdateSplatAs || m_requestUpdateMeshData || m_requestUpdateShaders || m_requestDeleteSelectedMesh)
+  if(needsDataUpdate || needsShaderRebuild)
   {
-    deinitPipelines();
-    deinitShaders();
+    // Only rebuild shaders/pipelines when actually needed (not for streaming data updates)
+    if(needsShaderRebuild || !m_shaders.valid)
+    {
+      deinitPipelines();
+      deinitShaders();
+    }
 
     if(m_requestUpdateSplatData)
     {
       m_splatSetVk.deinitDataStorage();
       m_splatSetVk.initDataStorage(m_splatSet, prmData.dataStorage, prmData.shFormat);
+
+      // Re-initialize renderer buffers if capacity is insufficient (streaming optimization)
+      // initRendererBuffers() will skip if buffers are already large enough
+      const uint32_t splatCount = (uint32_t)m_splatSet.size();
+      if(splatCount > m_rendererBufferCapacity)
+      {
+        deinitRendererBuffers();
+        initRendererBuffers();
+      }
     }
-    if(m_requestUpdateSplatData || m_requestUpdateSplatAs)
+    if((m_requestUpdateSplatData || m_requestUpdateSplatAs) && prmSelectedPipeline == PIPELINE_RTX)
     {
-      // RTX specific
+      // RTX specific - only update when using RTX pipeline
       m_splatSetVk.rtxDeinitAccelerationStructures();
       m_splatSetVk.rtxDeinitSplatModel();
       m_splatSetVk.rtxInitSplatModel(m_splatSet, prmRtxData.useTlasInstances, prmRtxData.useAABBs, prmRtxData.compressBlas,
@@ -286,17 +325,34 @@ void VkViewer::processUpdateRequests(void)
       m_meshSetVk.rtxInitAccelerationStructures();
     }
 
-    if(initShaders())
+    // Rebuild shaders/pipelines if needed, or just update descriptor sets for data-only updates
+    if(needsShaderRebuild || !m_shaders.valid)
     {
-      // Initialize renderer buffers if not already done (mesh-only mode)
-      if(m_frameInfoBuffer.buffer == VK_NULL_HANDLE)
+      if(initShaders())
       {
-        m_lightSet.init(m_app, &m_alloc, &m_uploader);
-        initRendererBuffers();
+        // Initialize renderer buffers if not already done (mesh-only mode)
+        if(m_frameInfoBuffer.buffer == VK_NULL_HANDLE)
+        {
+          m_lightSet.init(m_app, &m_alloc, &m_uploader);
+          initRendererBuffers();
+        }
+        initPipelines();
+        initRtDescriptorSet();
+        initRtPipeline();
+        initDescriptorSetPostProcessing();
+        initPipelinePostProcessing();
       }
+    }
+    else if(needsDataUpdate)
+    {
+      // For data-only updates during streaming, rebuild pipelines and descriptors
+      // This is needed because the data storage buffers have changed
       initPipelines();
-      initRtDescriptorSet();
-      initRtPipeline();
+      if(prmSelectedPipeline == PIPELINE_RTX)
+      {
+        initRtDescriptorSet();
+        initRtPipeline();
+      }
       initDescriptorSetPostProcessing();
       initPipelinePostProcessing();
     }

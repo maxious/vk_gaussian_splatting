@@ -360,6 +360,11 @@ bool VkViewer::initAll()
 {
   vkDeviceWaitIdle(m_device);
 
+  if(!m_radianceFields.empty() && m_radianceFields[0].isLcc)
+  {
+    initializeLccStreaming(m_radianceFields[0].filename);
+  }
+
   // resize the CPU sorter indices buffer
   m_splatIndices.resize(m_splatIndices.size());
   // TODO: use BBox of point cloud to set far plane, eye and center
@@ -626,8 +631,81 @@ void VkViewer::deinitScene()
   m_splatSetPending.clear();
   m_radianceFields.clear();
   m_pendingLoadFilename = "";
+  shutdownLccStreaming();
 }
 
+bool VkViewer::initializeLccStreaming(const std::filesystem::path& scenePath)
+{
+  if(!LccLoader::canLoad(scenePath))
+  {
+    return false;
+  }
+
+  // scenePath may be either the directory or the meta.lcc file itself
+  std::filesystem::path sceneDir = scenePath;
+  if(scenePath.filename() == "meta.lcc")
+  {
+    sceneDir = scenePath.parent_path();
+  }
+
+  LccLoader::LccMeta meta;
+  std::filesystem::path metaPath = sceneDir / "meta.lcc";
+  if(!LccLoader::parseMeta(metaPath, meta))
+  {
+    LOGW("Failed to parse LCC metadata for streaming: %s\n", scenePath.string().c_str());
+    return false;
+  }
+
+  if(meta.totalLevel <= 1)
+  {
+    LOGI("Single-LOD LCC scene, skipping streaming: %s\n", scenePath.string().c_str());
+    return false;
+  }
+
+  m_lccTileManager = std::make_unique<LccTileManager>();
+
+  m_lccTileManager->config().enabled = true;
+  m_lccTileManager->config().asyncLoading = true;
+  m_lccTileManager->config().maxTilesLoaded = 16;
+  m_lccTileManager->config().tileSize = meta.cellLengthX > 0 ? meta.cellLengthX : 30.0f;
+
+  if(!m_lccTileManager->initialize(sceneDir, meta))
+  {
+    LOGE("Failed to initialize LCC tile manager: %s\n", sceneDir.string().c_str());
+    m_lccTileManager.reset();
+    return false;
+  }
+
+  m_lccTileManager->setLodCount(meta.totalLevel);
+
+  LOGI("LCC streaming initialized: %s (tiles=%u, lodLevels=%u)\n",
+       sceneDir.string().c_str(),
+       m_lccTileManager->getTotalTileCount(),
+       meta.totalLevel);
+
+  return true;
+}
+
+void VkViewer::shutdownLccStreaming()
+{
+  if(m_lccTileManager)
+  {
+    m_lccTileManager->shutdown();
+    m_lccTileManager.reset();
+  }
+  m_streamingSplatSet.clear();
+}
+
+void VkViewer::updateLccStreaming(const glm::mat4& viewProj, const glm::vec3& cameraPos, float dt)
+{
+  if(!m_lccTileManager || !m_lccTileManager->isActive())
+  {
+    return;
+  }
+
+  m_lccTileManager->update(viewProj, cameraPos, dt);
+  m_lccTileManager->getVisibleSplats(m_streamingSplatSet);
+}
 void VkViewer::benchmarkAdvance()
 {
   LOGI("BENCHMARK_ADV %d {\n", m_benchmarkId);

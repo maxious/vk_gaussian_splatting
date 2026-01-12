@@ -695,3 +695,18 @@ void LccLoader::convertCoordinates(SplatSet& output)
         output.rotation[i + 3] *= c.flipQ[2];
     }
 }
+
+void LccLoader::decodeRotation(uint32_t encoded, float* quatOut)
+{
+    decodeRotationImpl(encoded, quatOut);
+}
+
+float LccLoader::decodeScale(uint16_t encoded, float min, float max)
+{
+    return decodeScaleImpl(encoded, min, max);
+}
+
+void LccLoader::decodeColor(uint32_t encoded, float* colorOut, float& opacityOut)
+{
+    decodeColorImpl(encoded, colorOut, opacityOut);
+}

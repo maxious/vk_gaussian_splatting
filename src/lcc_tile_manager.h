@@ -57,7 +57,7 @@ struct LccTile
     bool        isLoading = false;
     bool        isDirty = false;
 
-    mutable std::mutex  loadMutex;
+    std::unique_ptr<std::mutex> loadMutex;
 };
 
 // Manages tiled loading of LCC scenes with frustum culling and LOD streaming
@@ -97,6 +97,9 @@ public:
     uint32_t getLoadedTileCount() const { return m_loadedTileCount.load(); }
     uint32_t getTotalTileCount() const { return static_cast<uint32_t>(m_allTiles.size()); }
     float    getStreamingProgress() const { return m_streamingProgress.load(); }
+    
+    // Check if visible tiles have changed since last getVisibleSplats call
+    bool hasVisibleTilesChanged() const { return m_visibleTilesDirty.load(); }
 
     // Configuration
     Config& config() { return m_config; }
@@ -149,6 +152,7 @@ private:
     std::atomic<uint32_t>               m_loadedTileCount{0};
     std::atomic<float>                  m_streamingProgress{0.0f};
     std::atomic<uint32_t>               m_lodCount{1};
+    std::atomic<bool>                   m_visibleTilesDirty{true};  // Track if visible tiles changed
 
     std::mutex                          m_tileMutex;
     std::mutex                          m_queueMutex;
