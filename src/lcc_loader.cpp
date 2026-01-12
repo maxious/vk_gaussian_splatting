@@ -291,7 +291,7 @@ bool LccLoader::loadWithLod(const std::filesystem::path&        path,
             uint32_t colorVal = *reinterpret_cast<const uint32_t*>(ptr + 12);
             float    color[3];
             float    opacity;
-            decodeColor(colorVal, color, opacity);
+            decodeColorImpl(colorVal, color, opacity);
             output.f_dc[splatIndex * 3 + 0] = (color[0] - 0.5f) / 0.28209479177387814f;
             output.f_dc[splatIndex * 3 + 1] = (color[1] - 0.5f) / 0.28209479177387814f;
             output.f_dc[splatIndex * 3 + 2] = (color[2] - 0.5f) / 0.28209479177387814f;
@@ -299,14 +299,14 @@ bool LccLoader::loadWithLod(const std::filesystem::path&        path,
 
             // Scale
             const uint16_t* scale16 = reinterpret_cast<const uint16_t*>(ptr + 16);
-            output.scale[splatIndex * 3 + 0] = decodeScale(scale16[0], meta.scale.min, meta.scale.max);
-            output.scale[splatIndex * 3 + 1] = decodeScale(scale16[1], meta.scale.min, meta.scale.max);
-            output.scale[splatIndex * 3 + 2] = decodeScale(scale16[2], meta.scale.min, meta.scale.max);
+output.scale[splatIndex * 3 + 0] = decodeScaleImpl(scale16[0], meta.scale.min, meta.scale.max);
+        output.scale[splatIndex * 3 + 1] = decodeScaleImpl(scale16[1], meta.scale.min, meta.scale.max);
+        output.scale[splatIndex * 3 + 2] = decodeScaleImpl(scale16[2], meta.scale.min, meta.scale.max);
 
-            // Rotation
-            uint32_t rotVal = *reinterpret_cast<const uint32_t*>(ptr + 22);
-            float    quat[4];
-            decodeRotation(rotVal, quat);
+        // Rotation: uint32 (4 bytes) at offset 22
+        uint32_t rotVal = *reinterpret_cast<const uint32_t*>(ptr + 22);
+        float    quat[4];
+        decodeRotationImpl(rotVal, quat);
             output.rotation[splatIndex * 4 + 0] = quat[0];
             output.rotation[splatIndex * 4 + 1] = quat[1];
             output.rotation[splatIndex * 4 + 2] = quat[2];
@@ -432,7 +432,7 @@ bool LccLoader::parseMeta(const std::filesystem::path& metaPath, LccMeta& meta)
     }
 }
 
-void LccLoader::decodeRotation(uint32_t encoded, float* quatOut)
+void LccLoader::decodeRotationImpl(uint32_t encoded, float* quatOut)
 {
     // Extract 4 × 10-bit values from uint32
     // Layout: [9:0] = a, [19:10] = b, [29:20] = c, [31:30] = mode
@@ -501,14 +501,14 @@ void LccLoader::decodeRotation(uint32_t encoded, float* quatOut)
     }
 }
 
-float LccLoader::decodeScale(uint16_t encoded, float min, float max)
+float LccLoader::decodeScaleImpl(uint16_t encoded, float min, float max)
 {
     // Convert uint16 to float in [0, 1], then interpolate to [min, max]
     float t = static_cast<float>(encoded) / 65535.0f;
     return min + t * (max - min);
 }
 
-void LccLoader::decodeColor(uint32_t encoded, float* colorOut, float& opacityOut)
+void LccLoader::decodeColorImpl(uint32_t encoded, float* colorOut, float& opacityOut)
 {
     // RGBA: 8 bits per channel
     uint8_t r = (encoded) & 0xFF;
@@ -638,7 +638,7 @@ bool LccLoader::parseSingleLodData(const LccMeta&        meta,
         uint32_t colorVal = *reinterpret_cast<const uint32_t*>(ptr + 12);
         float    color[3];
         float    opacity;
-        decodeColor(colorVal, color, opacity);
+        decodeColorImpl(colorVal, color, opacity);
         output.f_dc[i * 3 + 0] = (color[0] - 0.5f) / 0.28209479177387814f;
         output.f_dc[i * 3 + 1] = (color[1] - 0.5f) / 0.28209479177387814f;
         output.f_dc[i * 3 + 2] = (color[2] - 0.5f) / 0.28209479177387814f;
@@ -646,14 +646,14 @@ bool LccLoader::parseSingleLodData(const LccMeta&        meta,
 
         // Scale: 3 × uint16 (6 bytes) at offset 16
         const uint16_t* scale16 = reinterpret_cast<const uint16_t*>(ptr + 16);
-        output.scale[i * 3 + 0] = decodeScale(scale16[0], meta.scale.min, meta.scale.max);
-        output.scale[i * 3 + 1] = decodeScale(scale16[1], meta.scale.min, meta.scale.max);
-        output.scale[i * 3 + 2] = decodeScale(scale16[2], meta.scale.min, meta.scale.max);
+        output.scale[i * 3 + 0] = decodeScaleImpl(scale16[0], meta.scale.min, meta.scale.max);
+        output.scale[i * 3 + 1] = decodeScaleImpl(scale16[1], meta.scale.min, meta.scale.max);
+        output.scale[i * 3 + 2] = decodeScaleImpl(scale16[2], meta.scale.min, meta.scale.max);
 
         // Rotation: uint32 (4 bytes) at offset 22
         uint32_t rotVal = *reinterpret_cast<const uint32_t*>(ptr + 22);
         float    quat[4];
-        decodeRotation(rotVal, quat);
+        decodeRotationImpl(rotVal, quat);
         output.rotation[i * 4 + 0] = quat[0];
         output.rotation[i * 4 + 1] = quat[1];
         output.rotation[i * 4 + 2] = quat[2];

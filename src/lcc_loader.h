@@ -107,10 +107,7 @@ public:
     // Parse meta.lcc JSON content
     static bool parseMeta(const std::filesystem::path& metaPath, LccMeta& meta);
 
-private:
-    // Rotation decoding LUT (16 entries as per spec)
-    static constexpr uint8_t ROTATION_LUT[16] = {3, 0, 1, 2, 0, 3, 1, 2, 0, 1, 3, 2, 0, 1, 2, 3};
-
+    // Public utility functions for tile manager
     // Decode rotation from uint32 to quaternion (w, x, y, z)
     static void decodeRotation(uint32_t encoded, float* quatOut);
 
@@ -119,6 +116,15 @@ private:
 
     // Decode color from uint32 (RGBA 8-bit per channel)
     static void decodeColor(uint32_t encoded, float* colorOut, float& opacityOut);
+
+private:
+    // Rotation decoding LUT (16 entries as per spec)
+    static constexpr uint8_t ROTATION_LUT[16] = {3, 0, 1, 2, 0, 3, 1, 2, 0, 1, 3, 2, 0, 1, 2, 3};
+
+    // Internal implementations
+    static void decodeRotationImpl(uint32_t encoded, float* quatOut);
+    static float decodeScaleImpl(uint16_t encoded, float min, float max);
+    static void decodeColorImpl(uint32_t encoded, float* colorOut, float& opacityOut);
 
     // Parse index.bin to get spatial index entries
     static bool parseIndex(const std::filesystem::path& indexPath,

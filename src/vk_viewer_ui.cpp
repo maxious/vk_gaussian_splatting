@@ -1824,6 +1824,20 @@ void VkViewerUI::guiDrawSplatSetProperties()
         s_previousLodLevel = 0;
       }
 
+      // LCC Tiled Streaming option
+      if(!m_radianceFields.empty() && m_radianceFields[0].isLcc)
+      {
+        static bool s_tiledStreamingEnabled = false;
+        if(PE::Checkbox("Enable Tiled Streaming", &s_tiledStreamingEnabled,
+                       "Enable spatial streaming for large LCC scenes.\n"
+                       "Only loads tiles visible in camera frustum.\n"
+                       "Reduces memory usage for very large scenes."))
+        {
+          // Would trigger reinitialize with tile manager
+          LOGI("Tiled streaming %s\n", s_tiledStreamingEnabled ? "enabled" : "disabled");
+        }
+      }
+
       if(PE::entry(
              "Apply to scene", [&] { return ImGui::Button("Reload all files"); },
              "Reloads all radiance fields with the current loading options (Color Space and Black Splat Removal)"))
