@@ -39,6 +39,7 @@
 #include "vk_viewer_ui.h"
 #include "animation_ui.h"
 #include "utilities.h"
+#include "lcc_loader.h"
 #include <backends/imgui_impl_vulkan.h>
 #include <imgui/imgui_internal.h>
 
@@ -854,8 +855,27 @@ void VkViewerUI::onUIRender()
 
       if (std::filesystem::is_directory(prmScene.sceneToLoadFilename))
       {
-        enablePlySequencePlayback(prmScene.sceneToLoadFilename);
-        prmScene.sceneToLoadFilename.clear();
+        // Check for LCC format first
+        if(LccLoader::canLoad(prmScene.sceneToLoadFilename))
+        {
+          // Store the pending filename for when load completes
+          m_pendingLoadFilename = prmScene.sceneToLoadFilename;
+          m_splatSetPending.clear();
+          if(!m_splatLoader.loadScene(prmScene.sceneToLoadFilename, m_splatSetPending))
+          {
+            LOGE("Error: cannot start scene load while loader is not ready status=%d\n", static_cast<int>(m_splatLoader.getStatus()));
+          }
+          else
+          {
+            ImGui::OpenPopup("Loading");
+          }
+        }
+        else
+        {
+          // Default to PLY sequence playback
+          enablePlySequencePlayback(prmScene.sceneToLoadFilename);
+          prmScene.sceneToLoadFilename.clear();
+        }
       }
       else if (prmScene.sceneToLoadFilename.extension() == ".json")
       {
