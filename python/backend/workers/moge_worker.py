@@ -41,53 +41,79 @@ class MoGEDeviceWorker(
         # Determine version
         version = "v2" if "moge-2" in self.model_id else "v1"
 
-        logger.info(f"Loading MoGe model {self.model_id} on {self.device}")
+        logger.info(f"Worker {self.worker_id}: Loading MoGe model {self.model_id} on {self.device}")
 
         # Load model
         ModelClass = import_model_class_by_version(version)
         self.model = ModelClass.from_pretrained(self.model_id).to(self.device).eval()
 
-        # Use fp16 for speed if on CUDA
-        if "cuda" in self.device:
+        # XPU requires explicit dtype conversions
+        # MoGe models have specific dtype requirements per component
+        if "xpu" in self.device:
+            logger.info(f"Worker {self.worker_id}: Applying XPU dtype optimizations...")
+            self._apply_xpu_dtype_fixes()
+        elif "cuda" in self.device:
+            # Use fp16 for speed if on CUDA
             self.model.half()
 
-        logger.info(f"MoGe model loaded on {self.device}")
+        logger.info(f"Worker {self.worker_id}: MoGe model ready on {self.device}")
+
+    def _apply_xpu_dtype_fixes(self):
+        if self.model is None:
+            return
+
+        import torch
+
+        for name, module in self.model.named_modules():
+            if hasattr(module, "_xpu_dtype_fixed"):
+                continue
+
+            if any(layer_type in name for layer_type in ["LayerNorm", "BatchNorm", "GroupNorm"]):
+                module.to(torch.float32)
+            elif any(layer_type in name for layer_type in ["encoder", "decoder", "transformer"]):
+                try:
+                    module.to(torch.bfloat16)
+                except Exception:
+                    try:
+                        module.to(torch.float16)
+                    except Exception:
+                        logger.warning(
+                            f"Could not convert {name} to reduced precision, keeping fp32"
+                        )
+
+            object.__setattr__(module, "_xpu_dtype_fixed", True)
+
+        logger.info(f"Worker {self.worker_id}: XPU dtype optimizations applied")
 
     def process_item(self, item: np.ndarray) -> tuple[np.ndarray, float, float, np.ndarray | None]:
-        """Process a single frame.
-
-        Returns:
-            (depth_map, z_min, z_max, normal_map)
-        """
         if self.model is None:
             self.load_model()
 
-        # MoGe expects RGB float tensor (0..1)
+        model = self.model
+        assert model is not None
+
         if item.dtype == np.uint8:
             img_tensor = torch.from_numpy(item).float() / 255.0
         else:
             img_tensor = torch.from_numpy(item).float()
 
-        # (H, W, 3) -> (3, H, W)
         img_tensor = img_tensor.permute(2, 0, 1).to(self.device)
 
         if "cuda" in self.device:
             img_tensor = img_tensor.half()
+        elif "xpu" in self.device:
+            img_tensor = img_tensor.to(torch.bfloat16)
 
         with torch.no_grad():
-            output = self.model.infer(img_tensor, resolution_level=self.resolution_level)
+            output = model.infer(img_tensor, resolution_level=self.resolution_level)
 
         depth = output["depth"].cpu().float().numpy()
         mask = output["mask"].cpu().float().numpy()
 
-        # Normals if available
         normals = None
         if "normal" in output:
-            # (H, W, 3) -1..1
             normals = output["normal"].cpu().float().numpy()
 
-        # MoGe metric depth can have outliers or be zero
-        # Mask valid pixels
         valid_mask = mask > 0.5
 
         if valid_mask.sum() > 0:

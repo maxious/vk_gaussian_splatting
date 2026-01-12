@@ -151,6 +151,7 @@ The `python/offline/` directory contains tools for generating Gaussian Splats fr
 
 **Key Features:**
 - **DA3-GIANT**: Default model for metric depth estimation and splat generation.
+- **MoGe**: Metric depth + normals model with dual XPU support (see below).
 - **Apple SHARP**: Integrated support for Apple's SHARP model (vendored in `python/sharp`).
 - **FreeTimeGS**: Generates 4D Gaussian Splats with motion vectors (requires `cupy` or `faiss-gpu`).
 - **Pruning**: Opacity-based pruning to reduce file size.
@@ -181,6 +182,47 @@ uv run python -m offline.export_gaussian_ply images \
 
 **Note on SHARP**:
 The `sharp` library is vendored in `python/sharp` to provide better control and suppress noisy logging. If running from the project root, set `PYTHONPATH=python` or run via `uv run python -m ...` from inside the `python/` directory.
+
+### Dual XPU Processing for MoGe
+
+The MoGe model supports **dual Intel XPU device processing** for significant speedups.
+
+**Performance Results** (640x480 resolution, 100 frames):
+- Single XPU: 168.5 ms/frame (5.94 fps)
+- Dual XPU: **91.6 ms/frame (10.92 fps)**
+- **Speedup: 1.84x** with **92% parallel efficiency**
+
+**Important:** Do NOT source `/opt/intel/oneapi/setvars.sh` - PyTorch XPU bundles its own Intel runtime. Sourcing oneAPI causes library version conflicts.
+
+**Usage:**
+
+```bash
+cd python
+
+# Benchmark single vs dual XPU
+uv run --extra xpu python benchmark_moge_multi_xpu.py \
+  --video video.mp4 \
+  --max-frames 100 --target-width 640 --target-height 480 \
+  --device-spec xpu:0,1 --batch-size 8
+
+# Backend server with dual XPU
+export VIDEO_DEPTH_MULTI_DEVICE=1
+export VIDEO_DEPTH_DEVICE_SPEC=xpu:0,1
+export VIDEO_DEPTH_MODEL_ID=Ruicheng/moge-2-vitl-normal
+uv run --extra xpu --extra backend uvicorn backend.main:app --port 8000
+
+# Offline processing with dual XPU
+uv run --extra xpu python -m offline.cli images \
+  --input ./frames/ --output ./ply_output/ \
+  --model "Ruicheng/moge-2-vitl-normal" --mode frames \
+  --use-multi-device --device-spec xpu:0,1
+```
+
+**Performance Tips:**
+- Use batch_size ≥ 8 for better efficiency
+- Process ≥ 50 frames (multi-device overhead is ~5-6 seconds for model loading)
+- Lower resolutions (640x480) achieve better parallel scaling than higher resolutions
+- No need to source Intel oneAPI environment
 
 ### Running Commands with uv run
 

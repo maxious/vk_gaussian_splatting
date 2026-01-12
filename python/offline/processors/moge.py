@@ -26,32 +26,55 @@ class MoGeGaussianProcessor(GaussianProcessor):
         debug_output_dir: Path | None = None,
         refine_boundaries: bool = False,
         boundary_min_angle: float = 3.0,
+        use_multi_device: bool = False,
+        device_spec: str = "auto",
     ):
         self.model_id = model_id
         self.model = None
         self.debug_output_dir = Path(debug_output_dir) if debug_output_dir else None
         self.refine_boundaries = refine_boundaries
         self.boundary_min_angle = boundary_min_angle
+        self.use_multi_device = use_multi_device
+        self.device_spec = device_spec
+        self._worker_pool = None
 
-        # Auto-detect device
-        if device == "auto":
-            if torch.cuda.is_available():
-                self.device = "cuda"
-            elif hasattr(torch, "xpu") and torch.xpu.is_available():
-                self.device = "xpu"
+        if not use_multi_device:
+            if device == "auto":
+                if torch.cuda.is_available():
+                    self.device = "cuda"
+                elif hasattr(torch, "xpu") and torch.xpu.is_available():
+                    self.device = "xpu"
+                else:
+                    self.device = "cpu"
+                logger.info(f"Auto-detected device: {self.device}")
             else:
-                self.device = "cpu"
-            logger.info(f"Auto-detected device: {self.device}")
+                self.device = device
         else:
-            self.device = device
+            self.device = None
 
     def _load_model(self):
-        """Lazy load the MoGe model."""
+        """Lazy load the MoGe model or create worker pool."""
+        if self.use_multi_device:
+            if self._worker_pool is not None:
+                return
+
+            from common.device_worker_pool import DeviceWorkerPool
+            from backend.workers.moge_worker import MoGEDeviceWorker
+
+            logger.info(f"Creating multi-device worker pool for {self.model_id}")
+            logger.info(f"Device spec: {self.device_spec}")
+
+            self._worker_pool = DeviceWorkerPool(
+                worker_class=MoGEDeviceWorker,
+                device_spec=self.device_spec,
+                worker_kwargs={"model_id": self.model_id},
+            )
+            logger.info(f"Worker pool ready with devices: {self._worker_pool.devices}")
+            return
+
         if self.model is not None:
             return
 
-        # Ensure MoGe is in path - use vendored version in python/moge
-        # This file is in python/offline/processors/, so go up to python/
         moge_path = (Path(__file__).parent / ".." / ".." / "moge").resolve()
         if moge_path.exists() and str(moge_path) not in sys.path:
             logger.info(f"Adding {moge_path} to sys.path")
@@ -65,18 +88,13 @@ class MoGeGaussianProcessor(GaussianProcessor):
 
         logger.info(f"Loading MoGe model: {self.model_id}")
 
-        # Determine version from model_id
         version = "v2" if "moge-2" in self.model_id else "v1"
 
-        import torch
+        model = import_model_class_by_version(version).from_pretrained(self.model_id)
 
-        self.model = (
-            import_model_class_by_version(version)
-            .from_pretrained(self.model_id)
-            .to(self.device)
-            .eval()
-        )
-        self.dtype = torch.float32  # MoGe usually runs in fp32 or fp16
+        assert self.device is not None
+        self.model = model.to(self.device).eval()
+        self.dtype = torch.float32
         logger.info("MoGe model ready")
 
     def _export_debug_outputs(
@@ -104,8 +122,7 @@ class MoGeGaussianProcessor(GaussianProcessor):
         self.debug_output_dir.mkdir(parents=True, exist_ok=True)
         H, W = mask_valid.shape
 
-        # Clean mask by removing depth edges
-        mask_cleaned = mask_valid & ~utils3d.np.depth_map_edge(depth, rtol=0.04)
+        mask_cleaned = mask_valid & ~utils3d.np.depth_map_edge(depth=depth, rtol=0.04)  # type: ignore[misc]
 
         # Build mesh from depth map
         if normals is not None and "normal" in dir(utils3d.np):
@@ -194,10 +211,11 @@ class MoGeGaussianProcessor(GaussianProcessor):
                 img_rgb / 255.0, dtype=self.dtype, device=self.device
             ).permute(2, 0, 1)
 
-            # Inference
+            model = self.model
+            assert model is not None
+
             with torch.no_grad():
-                # MoGe infer expects (C, H, W)
-                output = self.model.infer(img_tensor, resolution_level=9)
+                output = model.infer(img_tensor, resolution_level=9)
 
             # Extract results
             points = output["points"].cpu().numpy()  # (H, W, 3)
