@@ -249,6 +249,17 @@ def main():
         default=None,
         help="Directory for debug outputs (PLY point cloud, GLB mesh). Only for MoGe model.",
     )
+    images_parser.add_argument(
+        "--refine-boundaries",
+        action="store_true",
+        help="Apply boundary depth refinement to reduce halo artifacts (MoGe only)",
+    )
+    images_parser.add_argument(
+        "--boundary-min-angle",
+        type=float,
+        default=3.0,
+        help="Minimum angle (degrees) for boundary detection (default: 3.0)",
+    )
     images_parser.add_argument("-v", "--verbose", action="store_true")
 
     legacy_parser = subparsers.add_parser("legacy", help="Legacy CLI (deprecated)")
@@ -340,6 +351,8 @@ def main():
             remove_black_splats=not getattr(args, "no_remove_black_splats", False),
             flip_y=getattr(args, "flip_y", False),
             debug_output_dir=getattr(args, "debug_output_dir", None),
+            refine_boundaries=getattr(args, "refine_boundaries", False),
+            boundary_min_angle=getattr(args, "boundary_min_angle", 3.0),
         )
 
 

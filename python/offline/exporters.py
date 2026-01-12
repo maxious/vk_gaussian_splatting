@@ -513,6 +513,8 @@ def export_images_to_gaussian_plys(
     save_frequency: int = 5,
     flip_y: bool = False,
     debug_output_dir: Path | None = None,
+    refine_boundaries: bool = False,
+    boundary_min_angle: float = 3.0,
 ) -> None:
     """Process images with DA3 and export to Gaussian PLY files.
 
@@ -547,7 +549,11 @@ def export_images_to_gaussian_plys(
         from .processors.moge import MoGeGaussianProcessor
 
         processor = MoGeGaussianProcessor(
-            model_id=model_id, device=device, debug_output_dir=debug_output_dir
+            model_id=model_id,
+            device=device,
+            debug_output_dir=debug_output_dir,
+            refine_boundaries=refine_boundaries,
+            boundary_min_angle=boundary_min_angle,
         )
     elif "sharp" in model_id.lower():
         # Heuristic: if model_id contains "sharp", use Sharp processor

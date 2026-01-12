@@ -24,10 +24,14 @@ class MoGeGaussianProcessor(GaussianProcessor):
         model_id: str = "Ruicheng/moge-2-vitl-normal",
         device: str = "auto",
         debug_output_dir: Path | None = None,
+        refine_boundaries: bool = False,
+        boundary_min_angle: float = 3.0,
     ):
         self.model_id = model_id
         self.model = None
         self.debug_output_dir = Path(debug_output_dir) if debug_output_dir else None
+        self.refine_boundaries = refine_boundaries
+        self.boundary_min_angle = boundary_min_angle
 
         # Auto-detect device
         if device == "auto":
@@ -105,13 +109,15 @@ class MoGeGaussianProcessor(GaussianProcessor):
 
         # Build mesh from depth map
         if normals is not None and "normal" in dir(utils3d.np):
-            faces, vertices, vertex_colors, vertex_uvs, vertex_normals = utils3d.np.build_mesh_from_map(
-                points,
-                img_rgb.astype(np.float32) / 255,
-                utils3d.np.uv_map(H, W),
-                normals,
-                mask=mask_cleaned,
-                tri=True,
+            faces, vertices, vertex_colors, vertex_uvs, vertex_normals = (
+                utils3d.np.build_mesh_from_map(
+                    points,
+                    img_rgb.astype(np.float32) / 255,
+                    utils3d.np.uv_map(H, W),
+                    normals,
+                    mask=mask_cleaned,
+                    tri=True,
+                )
             )
         else:
             faces, vertices, vertex_colors, vertex_uvs = utils3d.np.build_mesh_from_map(
@@ -216,6 +222,17 @@ class MoGeGaussianProcessor(GaussianProcessor):
             # Extract depth and intrinsics for debug export
             depth = points[:, :, 2]
             intrinsics = output["intrinsics"].cpu().numpy()
+
+            if self.refine_boundaries:
+                from ..boundary_refinement import refine_depth_at_boundaries
+
+                logger.info(f"Refining boundaries (min_angle={self.boundary_min_angle}°)...")
+                points, boundary_mask = refine_depth_at_boundaries(
+                    points=points,
+                    intrinsics=intrinsics,
+                    min_angle=self.boundary_min_angle,
+                )
+                depth = points[:, :, 2]
 
             # Export debug outputs (PLY point cloud and GLB mesh) if enabled
             self._export_debug_outputs(
