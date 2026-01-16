@@ -32,3 +32,6 @@ ENV/
 build_check/
 checkpoints/
 python/tmp/
+
+# Temporary research code
+temp_research/
