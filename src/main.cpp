@@ -146,6 +146,17 @@ int main(int argc, char** argv)
   vkSetup.deviceExtensions.emplace_back(VK_NVX_IMAGE_VIEW_HANDLE_EXTENSION_NAME, nullptr, false);
 #endif
 
+#ifdef WITH_VULKAN_VIDEO
+  // Vulkan Video extensions for hardware-accelerated video decode
+  // These are optional - will gracefully degrade to FFmpeg if not available
+  vkSetup.deviceExtensions.emplace_back(VK_KHR_VIDEO_QUEUE_EXTENSION_NAME, nullptr, false);
+  vkSetup.deviceExtensions.emplace_back(VK_KHR_VIDEO_DECODE_QUEUE_EXTENSION_NAME, nullptr, false);
+  vkSetup.deviceExtensions.emplace_back(VK_KHR_VIDEO_DECODE_H265_EXTENSION_NAME, nullptr, false);
+  vkSetup.deviceExtensions.emplace_back(VK_KHR_VIDEO_DECODE_H264_EXTENSION_NAME, nullptr, false);
+  // YCbCr conversion for sampling decoded video frames
+  vkSetup.deviceExtensions.emplace_back(VK_KHR_SAMPLER_YCBCR_CONVERSION_EXTENSION_NAME, nullptr, false);
+#endif
+
   if(!appInfo.headless)
   {
     nvvk::addSurfaceExtensions(vkSetup.instanceExtensions);

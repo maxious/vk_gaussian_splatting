@@ -229,6 +229,39 @@ if(ENABLE_VIDEO_DECODER)
 endif()
 
 #####################################################################################
+# Vulkan Video support for hardware-accelerated video decoding
+#
+option(ENABLE_VULKAN_VIDEO "Enable Vulkan Video hardware-accelerated decoder (requires Vulkan 1.3+)" ON)
+
+if(ENABLE_VULKAN_VIDEO)
+  # Vulkan Video extensions are part of Vulkan SDK 1.3.230+
+  # We just need to check if the headers are available
+  include(CheckCXXSourceCompiles)
+  set(CMAKE_REQUIRED_INCLUDES ${Vulkan_INCLUDE_DIRS})
+  check_cxx_source_compiles("
+    #include <vulkan/vulkan.h>
+    int main() {
+      VkVideoSessionKHR session;
+      VkVideoDecodeInfoKHR decodeInfo;
+      return 0;
+    }
+  " VULKAN_VIDEO_HEADERS_AVAILABLE)
+  
+  if(VULKAN_VIDEO_HEADERS_AVAILABLE AND FFmpeg_FOUND)
+    message(STATUS "Vulkan Video headers found - enabling hardware-accelerated video decoder")
+    add_definitions(-DWITH_VULKAN_VIDEO)
+    set(WITH_VULKAN_VIDEO_ENABLED TRUE CACHE INTERNAL "Vulkan Video is enabled")
+  else()
+    set(WITH_VULKAN_VIDEO_ENABLED FALSE CACHE INTERNAL "Vulkan Video is disabled")
+    if(NOT FFmpeg_FOUND)
+      message(STATUS "Vulkan Video requires FFmpeg for bitstream parsing - disabled")
+    else()
+      message(STATUS "Vulkan Video headers not found (requires Vulkan SDK 1.3.230+) - disabled")
+    endif()
+  endif()
+endif()
+
+#####################################################################################
 # Source files for this project
 #
 # Note: GLOB is used here, so if you add new files, you must re-run CMake or touch this file.
@@ -248,6 +281,11 @@ endif()
 # Exclude Video Decoder files if disabled
 if (NOT ENABLE_VIDEO_DECODER OR NOT FFmpeg_FOUND)
      list(FILTER SOURCE_FILES EXCLUDE REGEX "video_decoder\\.cpp$")
+endif()
+
+# Exclude Vulkan Video Decoder if disabled
+if (NOT ENABLE_VULKAN_VIDEO OR NOT VULKAN_VIDEO_HEADERS_AVAILABLE OR NOT FFmpeg_FOUND)
+     list(FILTER SOURCE_FILES EXCLUDE REGEX "vulkan_video_decoder\\.cpp$")
 endif()
 
 # Note: src/nvvk_swapchain_override.cpp implements the HDR support for the swapchain,

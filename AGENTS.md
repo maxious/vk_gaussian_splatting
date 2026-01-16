@@ -102,6 +102,7 @@ file /tmp/test_render.png  # Should show: PNG image data, 800 x 600
 - **Video Export**: `video_renderer.cpp`, `camera_trajectory.cpp`
 - **Scene Loading**: `splat_loader_async.cpp`, `sog_loader.cpp`, `splat_set.cpp`
 - **Depth Video**: `vk_viewer_video.cpp`, `depth_video_loader.cpp`
+- **Vulkan Video Decoder** (PoC): `vulkan_video_decoder.cpp` - GPU-accelerated H.265 decoding
 
 ## Python Tools
 
