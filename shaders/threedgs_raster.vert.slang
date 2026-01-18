@@ -155,8 +155,8 @@ VertexOutput main(VertexInput input)
   const float2 fragPos = input.inPosition.xy;
 #if !USE_BARYCENTRIC
   // emit as early as possible
-  // Scale the position data we send to the fragment shader
-  output.outFragPos = fragPos * sqrt8;
+  // Scale the position data we send to the fragment shader (using configurable sigma coverage)
+  output.outFragPos = fragPos * frameInfo.sigmaCoverage;
 #endif
 
   // alpha based culling
@@ -188,13 +188,31 @@ VertexOutput main(VertexInput input)
   const float3 cov2Dv = threedgsCovarianceProjection(cov3Dm, viewCenter, frameInfo.focal, modelViewMatrix);
 
   // computes the basis vectors of the extent of the projected covariance
-  // We use sqrt(8) standard deviations instead of 3 to eliminate more of the splat with a very low opacity.
+  // We use configurable sigma coverage (default sqrt(8) ≈ 2.83) standard deviations
   float2 basisVector1, basisVector2;
-  if(!threedgsProjectedExtentBasis(cov2Dv, sqrt8, frameInfo.splatScale, splatColor.a, basisVector1, basisVector2))
+  if(!threedgsProjectedExtentBasis(cov2Dv, frameInfo.sigmaCoverage, frameInfo.splatScale, splatColor.a, basisVector1, basisVector2))
   {
     // emit same vertex to get degenerate triangle
     output.position = float4(0.0, 0.0, 2.0, 1.0);
     return output;
+  }
+
+  // Compute pixel radius from basis vectors for min/max culling
+  const float pixelRadius = max(length(basisVector1), length(basisVector2));
+
+  // Min pixel radius culling: cull tiny noise splats
+  if(pixelRadius < frameInfo.minPixelRadius)
+  {
+    output.position = float4(0.0, 0.0, 2.0, 1.0);
+    return output;
+  }
+
+  // Max pixel radius clamping: limit oversized splats
+  if(pixelRadius > frameInfo.maxPixelRadius)
+  {
+    const float clampScale = frameInfo.maxPixelRadius / pixelRadius;
+    basisVector1 *= clampScale;
+    basisVector2 *= clampScale;
   }
 
 #if MS_ANTIALIASING == 1

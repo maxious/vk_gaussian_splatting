@@ -22,14 +22,19 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+
+#ifndef _WIN32
 #include <unistd.h>
 #include <sys/wait.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <errno.h>
+#endif
 
 namespace vk_viewer {
+
+#ifndef _WIN32
 
 BackendProcessManager::BackendProcessManager() = default;
 
@@ -232,5 +237,32 @@ bool BackendProcessManager::waitForReady(int timeoutMs) const {
 
     return false;
 }
+
+#else
+
+BackendProcessManager::BackendProcessManager() = default;
+
+BackendProcessManager::~BackendProcessManager() {}
+
+bool BackendProcessManager::start(const std::string&) {
+    LOGW("BackendProcessManager: Not supported on Windows\\n");
+    return false;
+}
+
+void BackendProcessManager::stop() {}
+
+bool BackendProcessManager::isRunning() const {
+    return false;
+}
+
+bool BackendProcessManager::ping() const {
+    return false;
+}
+
+bool BackendProcessManager::waitForReady(int) const {
+    return false;
+}
+
+#endif
 
 }  // namespace vk_viewer

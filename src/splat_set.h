@@ -24,12 +24,14 @@
 #include <cassert>
 #include <cmath>
 #include <algorithm>
+#include <numeric>
 #include <filesystem>
 #include <string>
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 
 #include "splat-types.h"
+#include "morton_order.hpp"
 
 // 3rd party spz library, used here for coordinate system convertions
 #include "splat-types.h"
@@ -390,6 +392,138 @@ struct SplatSet
     has_time_data = false;
     minTime = 0.0f;
     maxTime = 1.0f;
+  }
+
+  // Reorder all splat attributes using Morton/Z-order curve based on spatial positions
+  // This improves cache coherency during rendering by grouping spatially-close splats together
+  void reorderByMortonCode()
+  {
+    const size_t count = size();
+    if(count == 0)
+      return;
+
+    // Step 1: Compute bounding box
+    float minX = std::numeric_limits<float>::max();
+    float minY = std::numeric_limits<float>::max();
+    float minZ = std::numeric_limits<float>::max();
+    float maxX = std::numeric_limits<float>::lowest();
+    float maxY = std::numeric_limits<float>::lowest();
+    float maxZ = std::numeric_limits<float>::lowest();
+
+    for(size_t i = 0; i < count; ++i)
+    {
+      float x = positions[i * 3 + 0];
+      float y = positions[i * 3 + 1];
+      float z = positions[i * 3 + 2];
+      minX = std::min(minX, x);
+      minY = std::min(minY, y);
+      minZ = std::min(minZ, z);
+      maxX = std::max(maxX, x);
+      maxY = std::max(maxY, y);
+      maxZ = std::max(maxZ, z);
+    }
+
+    // Compute inverse range for normalization (avoid division by zero)
+    float rangeX = maxX - minX;
+    float rangeY = maxY - minY;
+    float rangeZ = maxZ - minZ;
+    float invRangeX = (rangeX > 1e-6f) ? (1.0f / rangeX) : 0.0f;
+    float invRangeY = (rangeY > 1e-6f) ? (1.0f / rangeY) : 0.0f;
+    float invRangeZ = (rangeZ > 1e-6f) ? (1.0f / rangeZ) : 0.0f;
+
+    // Step 2: Compute Morton codes and create sorted indices
+    std::vector<std::pair<uint32_t, uint32_t>> mortonWithIndex(count);
+    for(size_t i = 0; i < count; ++i)
+    {
+      float    x         = positions[i * 3 + 0];
+      float    y         = positions[i * 3 + 1];
+      float    z         = positions[i * 3 + 2];
+      uint32_t mortonCode = mortonFromPosition(x, y, z, minX, minY, minZ, invRangeX, invRangeY, invRangeZ);
+      mortonWithIndex[i]  = {mortonCode, static_cast<uint32_t>(i)};
+    }
+
+    // Step 3: Sort by Morton code
+    std::sort(mortonWithIndex.begin(), mortonWithIndex.end(),
+              [](const auto& a, const auto& b) { return a.first < b.first; });
+
+    // Step 4: Reorder all attribute arrays using the sorted indices
+    auto reorderVec3 = [&](std::vector<float>& vec) {
+      if(vec.empty())
+        return;
+      std::vector<float> newVec(vec.size());
+      for(size_t i = 0; i < count; ++i)
+      {
+        uint32_t srcIdx  = mortonWithIndex[i].second;
+        newVec[i * 3 + 0] = vec[srcIdx * 3 + 0];
+        newVec[i * 3 + 1] = vec[srcIdx * 3 + 1];
+        newVec[i * 3 + 2] = vec[srcIdx * 3 + 2];
+      }
+      vec = std::move(newVec);
+    };
+
+    auto reorderVec4 = [&](std::vector<float>& vec) {
+      if(vec.empty())
+        return;
+      std::vector<float> newVec(vec.size());
+      for(size_t i = 0; i < count; ++i)
+      {
+        uint32_t srcIdx  = mortonWithIndex[i].second;
+        newVec[i * 4 + 0] = vec[srcIdx * 4 + 0];
+        newVec[i * 4 + 1] = vec[srcIdx * 4 + 1];
+        newVec[i * 4 + 2] = vec[srcIdx * 4 + 2];
+        newVec[i * 4 + 3] = vec[srcIdx * 4 + 3];
+      }
+      vec = std::move(newVec);
+    };
+
+    auto reorderVec1 = [&](std::vector<float>& vec) {
+      if(vec.empty())
+        return;
+      std::vector<float> newVec(vec.size());
+      for(size_t i = 0; i < count; ++i)
+      {
+        uint32_t srcIdx = mortonWithIndex[i].second;
+        newVec[i]       = vec[srcIdx];
+      }
+      vec = std::move(newVec);
+    };
+
+    auto reorderVecN = [&](std::vector<float>& vec, size_t componentsPerSplat) {
+      if(vec.empty() || componentsPerSplat == 0)
+        return;
+      std::vector<float> newVec(vec.size());
+      for(size_t i = 0; i < count; ++i)
+      {
+        uint32_t srcIdx = mortonWithIndex[i].second;
+        for(size_t c = 0; c < componentsPerSplat; ++c)
+        {
+          newVec[i * componentsPerSplat + c] = vec[srcIdx * componentsPerSplat + c];
+        }
+      }
+      vec = std::move(newVec);
+    };
+
+    // Reorder all attributes
+    reorderVec3(positions);
+    reorderVec3(f_dc);
+    reorderVec1(opacity);
+    reorderVec3(scale);
+    reorderVec4(rotation);
+
+    // f_rest has variable components per splat
+    if(!f_rest.empty())
+    {
+      size_t shPerSplat = f_rest.size() / count;
+      reorderVecN(f_rest, shPerSplat);
+    }
+
+    // Temporal data
+    if(has_time_data)
+    {
+      reorderVec3(motion);
+      reorderVec1(time);
+      reorderVec1(time_scale);
+    }
   }
 };
 

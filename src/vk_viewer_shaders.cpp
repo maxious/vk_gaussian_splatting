@@ -108,6 +108,8 @@ bool VkViewer::initShaders(void)
 
   // Particles distance to viewpoint and frustum culling
   success &= compileSlangShader("dist.comp.slang", m_shaders.distShader);
+  // Chunk-based hierarchical frustum culling
+  success &= compileSlangShader("chunk_cull.comp.slang", m_shaders.chunkCullShader);
   // 3DGS raster
   success &= compileSlangShader("threedgs_raster.vert.slang", m_shaders.vertexShader);
   success &= compileSlangShader("threedgs_raster.mesh.slang", m_shaders.meshShader);

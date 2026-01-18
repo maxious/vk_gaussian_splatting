@@ -97,7 +97,7 @@ void VkViewer::tryConsumeAndUploadCpuSortingResult(VkCommandBuffer cmd, const ui
   }
 }
 
-void VkViewer::processSortingOnGPU(VkCommandBuffer cmd, const uint32_t splatCount)
+void VkViewer::processSortingOnGPU(VkCommandBuffer cmd, const uint32_t splatCount, bool skipRadixSort)
 {
   NVVK_DBG_SCOPE(cmd);
 
@@ -106,6 +106,12 @@ void VkViewer::processSortingOnGPU(VkCommandBuffer cmd, const uint32_t splatCoun
     return;
 
   // when GPU sorting, we sort at each frame, all buffer in device memory, no copy from RAM
+
+  // 0. Dispatch chunk culling pass (if enabled)
+  if (prmRaster.chunkCullingEnabled && m_numChunks > 0)
+  {
+    dispatchChunkCulling(cmd);
+  }
 
   // 1. reset the draw indirect parameters and counters, will be updated by compute shader
   {
@@ -154,7 +160,8 @@ void VkViewer::processSortingOnGPU(VkCommandBuffer cmd, const uint32_t splatCoun
                          0, 1, &barrier, 0, NULL, 0, NULL);
   }
 
-  // 3. invoke the radix sort from vrdx lib
+  // 3. invoke the radix sort from vrdx lib (can be skipped if camera is stationary)
+  if (!skipRadixSort)
   {
     auto timerSection = m_profilerGpuTimer.cmdFrameSection(cmd, "GPU Sort");
     VkDeviceSize indirectOffset = m_frameIndex * m_indirectStride;
@@ -164,6 +171,13 @@ void VkViewer::processSortingOnGPU(VkCommandBuffer cmd, const uint32_t splatCoun
                                 m_splatIndicesDevice.buffer, 0, m_vrdxStorageDevice.buffer, 0, 0, 0);
 
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_MESH_SHADER_BIT_EXT | VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT,
+                         0, 1, &barrier, 0, NULL, 0, NULL);
+  }
+  else
+  {
+    // Even when skipping sort, we need the barrier for the distance compute output
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                          VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_MESH_SHADER_BIT_EXT | VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT,
                          0, 1, &barrier, 0, NULL, 0, NULL);
   }

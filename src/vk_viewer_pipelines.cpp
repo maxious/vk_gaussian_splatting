@@ -75,6 +75,11 @@ void VkViewer::initPipelines()
   bindings.addBinding(BINDING_ENV_DEPTH_TEXTURE, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT);
   // Hand mesh joint matrices (XR skinned hands)
   bindings.addBinding(BINDING_JOINT_MATRICES, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT);
+  
+  // Chunk-based hierarchical frustum culling buffers
+  bindings.addBinding(BINDING_CHUNK_BOUNDS_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT);
+  bindings.addBinding(BINDING_VISIBLE_CHUNKS_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT);
+  bindings.addBinding(BINDING_VISIBLE_CHUNK_COUNT_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT);
 
   //
   const VkPushConstantRange pcRanges = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT
@@ -244,6 +249,14 @@ void VkViewer::initPipelines()
   meshTexWrite.descriptorCount = 16;
   meshTexWrite.pImageInfo = meshTexInfos.data();
   vkUpdateDescriptorSets(m_device, 1, &meshTexWrite, 0, nullptr);
+
+  // Chunk culling buffers (bind even if empty to avoid validation errors)
+  if(m_chunkBoundsBuffer.buffer != VK_NULL_HANDLE)
+  {
+    writeContainer.append(bindings.getWriteSet(BINDING_CHUNK_BOUNDS_BUFFER, m_descriptorSet), m_chunkBoundsBuffer);
+    writeContainer.append(bindings.getWriteSet(BINDING_VISIBLE_CHUNKS_BUFFER, m_descriptorSet), m_visibleChunksBuffer);
+    writeContainer.append(bindings.getWriteSet(BINDING_VISIBLE_CHUNK_COUNT_BUFFER, m_descriptorSet), m_visibleChunkCountBuffer);
+  }
 
   // write
   vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writeContainer.size()), writeContainer.data(), 0, nullptr);
@@ -607,6 +620,9 @@ void VkViewer::initPipelines()
     }
 #endif
   }
+  
+  // Initialize chunk culling pipeline
+  initChunkCullingPipeline();
 }
 
 // include RTX one
@@ -623,6 +639,9 @@ void VkViewer::deinitPipelines()
   TEST_DESTROY_AND_RESET(m_graphicsPipelineVdzHybrid, vkDestroyPipeline(m_device, m_graphicsPipelineVdzHybrid, nullptr));
   TEST_DESTROY_AND_RESET(m_graphicsPipelineHandMesh, vkDestroyPipeline(m_device, m_graphicsPipelineHandMesh, nullptr));
   TEST_DESTROY_AND_RESET(m_computePipelineGsDistCull, vkDestroyPipeline(m_device, m_computePipelineGsDistCull, nullptr));
+  
+  // Chunk culling pipeline cleanup
+  deinitChunkCullingPipeline();
 #ifdef WITH_OPENXR
   TEST_DESTROY_AND_RESET(m_graphicsPipelineGsVertMultiview, vkDestroyPipeline(m_device, m_graphicsPipelineGsVertMultiview, nullptr));
   TEST_DESTROY_AND_RESET(m_graphicsPipelineGsMeshMultiview, vkDestroyPipeline(m_device, m_graphicsPipelineGsMeshMultiview, nullptr));

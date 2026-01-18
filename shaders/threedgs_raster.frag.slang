@@ -156,20 +156,19 @@ FragmentOutput processFragment(float2 inFragPos, float4 inSplatCol, float3 baryC
 #endif
 
 #if USE_BARYCENTRIC
-  // Use barycentric extension to find the position of the fragment
-  const float sqrt8 = sqrt(8.0);
-  const float2 inFragPos = (baryCoord.x * float2(-1, -1) + baryCoord.y * float2(1, 1) + baryCoord.z * float2(-1, 1)) * sqrt8;
+  // Use barycentric extension to find the position of the fragment (using configurable sigma coverage)
+  const float2 inFragPos = (baryCoord.x * float2(-1, -1) + baryCoord.y * float2(1, 1) + baryCoord.z * float2(-1, 1)) * frameInfo.sigmaCoverage;
 #else
   const float2 inFragPos = inFragPos;
 #endif
 
   // Compute the positional squared distance from the center of the splat to the current fragment.
   const float A = dot(inFragPos, inFragPos);
-  // Since the positional data in inFragPos has been scaled by sqrt(8), the squared result will be
-  // scaled by a factor of 8. If the squared result is larger than 8, it means it is outside the ellipse
-  // defined by the rectangle formed by inFragPos. It also means it's farther
-  // away than sqrt(8) standard deviations from the mean.
-  if(A > 8.0)
+  // Since the positional data in inFragPos has been scaled by sigmaCoverage, the squared result will be
+  // scaled by sigmaCoverage^2. If the squared result is larger than sigmaCoverage^2, it means it is outside
+  // the ellipse defined by the rectangle formed by inFragPos.
+  const float sigmaCoverageSq = frameInfo.sigmaCoverage * frameInfo.sigmaCoverage;
+  if(A > sigmaCoverageSq)
     discard;
 
   // Environment Depth Occlusion
@@ -241,7 +240,10 @@ FragmentOutput processFragment(float2 inFragPos, float4 inSplatCol, float3 baryC
   // Since the rendered splat is scaled by sqrt(8), the inverse covariance matrix that is part of
   // the gaussian formula becomes the identity matrix. We're then left with (X - mean) * (X - mean),
   // and since 'mean' is zero, we have X * X, which is the same as A:
-  const float opacity = exp(-0.5 * A) * inSplatCol.a;
+  float opacity = exp(-0.5 * A) * inSplatCol.a;
+  
+  // Apply alpha boost: pow(alpha, 1/boost) so boost > 1 increases opacity
+  opacity = pow(opacity, 1.0 / frameInfo.alphaBoost);
 #endif
 
   output.outColor = float4(inSplatCol.rgb, opacity);

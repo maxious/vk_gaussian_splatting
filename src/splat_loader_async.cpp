@@ -41,6 +41,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <winhttp.h>
+#include <regex>
 #elif defined(USE_WINHTTPPAL)
 #include <winhttppal.h>
 #include <regex>

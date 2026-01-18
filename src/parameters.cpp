@@ -109,6 +109,10 @@ void registerCommandLineParameters(nvutils::ParameterRegistry* parameterRegistry
                          &prmRaster.extentProjection);
   parameterRegistry->add({"kernelDegree", "kernel degree used by 3DGRT, 3DGUT and Hybrid 3DGUT pipelines in [0,1,2(default),3,4,5]"},
                          &prmRtx.kernelDegree);
+
+  // Scene loading options
+  parameterRegistry->add({"mortonReorder", "1=reorder splats using Morton/Z-order curve for cache coherency (default), 0=disabled"},
+                         &prmScene.mortonReorder);
 }
 
 }  // namespace vk_viewer

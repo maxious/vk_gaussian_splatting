@@ -254,6 +254,15 @@ private:
 
   void deinitRendererBuffers();
 
+  // Chunk-based hierarchical frustum culling
+  void computeChunkBounds();                           // Compute chunk AABBs on CPU after loading
+  void initChunkCullingBuffers();                      // Create GPU buffers for chunk culling
+  void deinitChunkCullingBuffers();                    // Destroy chunk culling buffers
+  void initChunkCullingPipeline();                     // Create chunk culling compute pipeline
+  void deinitChunkCullingPipeline();                   // Destroy chunk culling pipeline
+  void extractFrustumPlanes(const glm::mat4& viewProj); // Extract 6 frustum planes from viewProj matrix
+  void dispatchChunkCulling(VkCommandBuffer cmd);      // Dispatch chunk culling compute shader
+
   void updateSlangMacros(void);
 
   bool compileSlangShader(const std::string& filename, VkShaderModule& module);
@@ -296,7 +305,7 @@ private:
 
   void tryConsumeAndUploadCpuSortingResult(VkCommandBuffer cmd, const uint32_t splatCount);
 
-  void processSortingOnGPU(VkCommandBuffer cmd, const uint32_t splatCount);
+  void processSortingOnGPU(VkCommandBuffer cmd, const uint32_t splatCount, bool skipRadixSort = false);
 
   void drawSplatPrimitives(VkCommandBuffer cmd, const uint32_t splatCount);
 
@@ -528,6 +537,12 @@ protected:
   std::vector<uint32_t> m_splatIndices;                // the array of cpu sorted indices to use for rendering
   VrdxSorter            m_gpuSorter = VK_NULL_HANDLE;  // GPU radix sort
 
+  // Temporal stability: skip GPU sorting when camera is stationary
+  glm::vec3 m_lastSortCameraPosition{0.0f};
+  glm::vec3 m_lastSortCameraDirection{0.0f};
+  bool      m_lastSortValid = false;
+  bool      m_sortSkippedThisFrame = false;  // For debug UI display
+
   // buffers used by GPU and/or CPU sort
   nvvk::Buffer m_splatIndicesHost;      // Buffer of splat indices on host for transfers (used by CPU sort)
   nvvk::Buffer m_splatIndicesDevice;    // Buffer of splat indices on device (used by CPU and GPU sort)
@@ -540,11 +555,24 @@ protected:
   // used to load and compile shaders
   nvslang::SlangCompiler m_slangCompiler{};
 
+  // Chunk-based hierarchical frustum culling
+  nvvk::Buffer             m_chunkBoundsBuffer;           // Per-chunk AABB bounds (ChunkBounds[numChunks])
+  nvvk::Buffer             m_visibleChunksBuffer;         // Output: visible chunk indices
+  nvvk::Buffer             m_visibleChunkCountBuffer;     // Output: count of visible chunks (atomic counter)
+  uint32_t                 m_numChunks = 0;               // Total number of chunks
+  std::vector<shaderio::ChunkBounds> m_chunkBoundsCpu;    // CPU-side chunk bounds for upload
+  VkPipeline               m_computePipelineChunkCull = VK_NULL_HANDLE;  // Chunk culling compute pipeline
+  VkDescriptorSetLayout    m_chunkCullDescriptorSetLayout = VK_NULL_HANDLE;
+  VkDescriptorSet          m_chunkCullDescriptorSet = VK_NULL_HANDLE;
+  VkDescriptorPool         m_chunkCullDescriptorPool = VK_NULL_HANDLE;
+  VkPipelineLayout         m_chunkCullPipelineLayout = VK_NULL_HANDLE;
+  
   // The different shaders that are used in the pipelines
   struct Shaders
   {
     // 3D Gaussians Raster
     VkShaderModule distShader{};
+    VkShaderModule chunkCullShader{};  // Chunk culling compute shader
     VkShaderModule meshShader{};
     VkShaderModule vertexShader{};
     VkShaderModule fragmentShader{};

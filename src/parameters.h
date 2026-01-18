@@ -52,6 +52,8 @@ struct SceneParameters
   int colorSpaceConversion = 0;
   // If true, splats with (almost) black color will be removed during load
   bool removeBlackSplats = false;
+  // If true, splats are reordered using Morton/Z-order curve for better cache coherency
+  bool mortonReorder = true;
 };
 
 // Parameters that controls the scene
@@ -109,6 +111,10 @@ struct RasterParameters
 {
   int32_t sortingMethod           = SORTING_GPU_SYNC_RADIX;
   bool    cpuLazySort             = true;  // if true, sorting starts only if viewpoint changed
+  bool    gpuSortSkipWhenStable   = false;  // if true, skip GPU sort when camera is stationary
+  bool    gpuSortForceEveryFrame  = false; // debug: force GPU sort every frame (overrides stability check)
+  float   gpuSortPositionEpsilon  = 0.001f;  // position change threshold in world units
+  float   gpuSortAngleEpsilon     = 0.001f;  // angle change threshold in radians
   int     frustumCulling          = FRUSTUM_CULLING_AT_DIST;
   int     distShaderWorkgroupSize = 256;  // best default value set by experimentation on ADA6000
   int     meshShaderWorkgroupSize = 32;   // best default value set by experimentation on ADA6000
@@ -118,6 +124,11 @@ struct RasterParameters
   // Whether gaussians should be rendered with mip-splat
   // antialiasing https://niujinshuchong.github.io/mip-splatting/
   bool msAntialiasing = false;
+  
+  // Chunk-based hierarchical frustum culling
+  // When enabled, splats are grouped into chunks of 256 and chunk AABBs are tested
+  // against the frustum before processing individual splats
+  bool chunkCullingEnabled = false;
 };
 
 // Parameters that control rasterization

@@ -84,6 +84,12 @@ void VkViewerUI::guiDrawRendererProperties()
     prmFrame.alphaCullThreshold = (float)alphaThres / 255.0f;
   }
 
+  if(PE::SliderFloat("Alpha boost", &prmFrame.alphaBoost, 0.5f, 3.0f, "%.2f", 0,
+                     "Increases splat opacity to reduce see-through artifacts. Values > 1 make splats more opaque."))
+  {
+    resetFrameCounter();
+  }
+
   const int maxModelShDegree = m_splatSet.maxShDegree();
   prmRender.maxShDegree      = std::min(prmRender.maxShDegree, maxModelShDegree);
 
@@ -347,6 +353,19 @@ void VkViewerUI::guiDrawRendererProperties()
         PE::Text("CPU sorting state", m_cpuSorter.getStatus() == SplatSorterAsync::E_SORTING ? "Sorting" : "Idled");
         ImGui::EndDisabled();
 
+        // GPU sort temporal stability options
+        ImGui::BeginDisabled(prmRaster.sortingMethod != SORTING_GPU_SYNC_RADIX);
+        PE::Checkbox("Skip GPU sort when stable", &prmRaster.gpuSortSkipWhenStable, 
+                     "Skip GPU radix sorting when camera is stationary to improve performance");
+        
+        ImGui::BeginDisabled(!prmRaster.gpuSortSkipWhenStable);
+        PE::Checkbox("Force sort every frame", &prmRaster.gpuSortForceEveryFrame, 
+                     "Debug: Force GPU sorting every frame (disables stability optimization)");
+        ImGui::EndDisabled();
+        
+        PE::Text("GPU sort status", m_sortSkippedThisFrame ? "Skipped" : "Active");
+        ImGui::EndDisabled();
+
         // Radio buttons for exclusive selection
         PE::entry(
             "Frustum culling",
@@ -380,6 +399,25 @@ void VkViewerUI::guiDrawRendererProperties()
                         "only at the center of each splat, rather than its full elliptical shape. A positive \n"
                         "value expands the frustum by the given percentage, reducing the risk of prematurely \n"
                         "discarding splats near the frustum boundaries.");
+
+        // Chunk-based hierarchical frustum culling
+        ImGui::BeginDisabled(prmRaster.sortingMethod != SORTING_GPU_SYNC_RADIX);
+        if(PE::Checkbox("Chunk culling", &prmRaster.chunkCullingEnabled,
+                        "Enable chunk-based hierarchical frustum culling.\n"
+                        "Splats are grouped into chunks of 256 and tested against the frustum at the chunk level\n"
+                        "before individual splat processing. Can significantly improve performance when large\n"
+                        "portions of the scene are outside the view frustum."))
+        {
+          // No shader rebuild needed - this is a runtime toggle
+        }
+        
+        if(m_numChunks > 0)
+        {
+          char chunkInfo[64];
+          snprintf(chunkInfo, sizeof(chunkInfo), "%u chunks (%u splats)", m_numChunks, prmFrame.splatCount);
+          PE::Text("Chunks", chunkInfo);
+        }
+        ImGui::EndDisabled();
 
         if(PE::entry(
                "Dist WG size",
@@ -426,6 +464,15 @@ void VkViewerUI::guiDrawRendererProperties()
         // we set a different size range for point and splat rendering
         PE::SliderFloat("Splat scale", (float*)&prmFrame.splatScale, 0.1f, prmRaster.pointCloudModeEnabled != 0 ? 10.0f : 2.0f,
                         "%.3f", 0, "Adjusts the size of the splats for visualization purposes.");
+
+        PE::SliderFloat("Min pixel radius", (float*)&prmFrame.minPixelRadius, 0.0f, 10.0f,
+                        "%.1f", 0, "Minimum pixel radius for splats. Smaller splats are culled (removes noise).\n0 = no minimum culling.");
+
+        PE::SliderFloat("Max pixel radius", (float*)&prmFrame.maxPixelRadius, 10.0f, 2000.0f,
+                        "%.0f", 0, "Maximum pixel radius for splats. Larger splats are clamped to this size.");
+
+        PE::SliderFloat("Sigma coverage", (float*)&prmFrame.sigmaCoverage, 2.0f, 4.0f,
+                        "%.2f", 0, "Sigma coverage for Gaussian extent.\n2.0 = SuperSplat default\n2.83 = sqrt(8), original 3DGS\n3.0 = 3 sigma standard");
 
         if(PE::Checkbox("Disable splatting", &prmRaster.pointCloudModeEnabled,
                         "Switches to point cloud mode, displaying only the splat centers. \n"

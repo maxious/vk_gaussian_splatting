@@ -97,6 +97,17 @@ void VkViewer::updateAndUploadFrameInfoUBO(VkCommandBuffer cmd, const uint32_t s
     prmFrame.lccScaleMin = m_lccMeta.scaleVec3.min;
     prmFrame.lccScaleMax = m_lccMeta.scaleVec3.max;
   }
+  
+  // Chunk-based hierarchical frustum culling
+  prmFrame.chunkCullingEnabled = prmRaster.chunkCullingEnabled ? 1 : 0;
+  prmFrame.numChunks = m_numChunks;
+  
+  // Extract frustum planes from viewProj matrix for GPU culling
+  if(prmRaster.chunkCullingEnabled && m_numChunks > 0)
+  {
+    glm::mat4 viewProj = prmFrame.projectionMatrix * prmFrame.viewMatrix;
+    extractFrustumPlanes(viewProj);
+  }
 
   // the buffer is small so we use vkCmdUpdateBuffer for the transfer
   vkCmdUpdateBuffer(cmd, m_frameInfoBuffer.buffer, 0, sizeof(shaderio::FrameInfo), &prmFrame);
@@ -178,6 +189,17 @@ void VkViewer::updateAndUploadFrameInfoUBO(VkCommandBuffer  cmd,
 
   // prmFrame.multiviewEnabled is now managed by the caller (onRender)
   // Do not reset it here, as it might have been set for OpenXR
+  
+  // Chunk-based hierarchical frustum culling
+  prmFrame.chunkCullingEnabled = prmRaster.chunkCullingEnabled ? 1 : 0;
+  prmFrame.numChunks = m_numChunks;
+  
+  // Extract frustum planes from viewProj matrix for GPU culling
+  if(prmRaster.chunkCullingEnabled && m_numChunks > 0)
+  {
+    glm::mat4 viewProj = proj * view;
+    extractFrustumPlanes(viewProj);
+  }
 
 #ifdef WITH_DLSS_RR
 

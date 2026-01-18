@@ -18,11 +18,13 @@
  */
 
 #include "splat_loader_fast.h"
+#include "parameters.h"
 #include <fstream>
 #include <cstring>
 #include <charconv>
 #include <string_view>
 #include <algorithm>
+#include <chrono>
 #include <immintrin.h>
 #include <nvutils/logger.hpp>
 #include <nvutils/file_mapping.hpp>
@@ -328,6 +330,16 @@ bool SplatLoaderFast::load(const std::filesystem::path& filename, SplatSet& outp
     {
       output.time_scale[i] = std::exp(output.time_scale[i]);
     }
+  }
+
+  // Apply Morton/Z-order curve spatial reordering for cache coherency
+  if(prmScene.mortonReorder)
+  {
+    auto startTime = std::chrono::high_resolution_clock::now();
+    output.reorderByMortonCode();
+    auto endTime = std::chrono::high_resolution_clock::now();
+    auto durationMs = std::chrono::duration<double, std::milli>(endTime - startTime).count();
+    LOGI("Morton reordering %zu splats took %.1f ms\n", count, durationMs);
   }
 
   if(progressCallback) progressCallback(1.0f);

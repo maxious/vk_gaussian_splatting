@@ -24,13 +24,15 @@
 #include <mutex>
 #include <atomic>
 
-// FFmpeg includes
+// FFmpeg includes (only when video decoder is enabled)
+#ifdef WITH_VIDEO_DECODER
 extern "C" {
 #include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>
 #include <libavutil/avutil.h>
 #include <libswresample/swresample.h>
 }
+#endif
 
 namespace vk_viewer {
 

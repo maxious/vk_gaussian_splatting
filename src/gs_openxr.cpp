@@ -31,10 +31,12 @@
 #include <sstream>
 
 // Cross-platform string copy macro for OpenXR structures
+#ifndef XR_STRCPY
 #ifdef _WIN32
-#define XR_STRCPY(dst, src) XR_STRCPY(dst, src)
+#define XR_STRCPY(dst, src) strcpy_s(dst, sizeof(dst), src)
 #else
 #define XR_STRCPY(dst, src) strncpy(dst, src, sizeof(dst) - 1)
+#endif
 #endif
 
 #ifndef XR_FB_space_warp

@@ -483,7 +483,54 @@ void VkViewer::prepareSceneForFrame(FrameRenderContext& ctx)
   {
     m_profilerTimeline->asyncRemoveTimer("CPU Dist");
     m_profilerTimeline->asyncRemoveTimer("CPU Sort");
-    processSortingOnGPU(ctx.cmd, ctx.splatCount);
+
+    // Temporal stability: check if camera is stationary to skip sorting
+    bool shouldSort = true;
+    m_sortSkippedThisFrame = false;
+
+    if(prmRaster.gpuSortSkipWhenStable && !prmRaster.gpuSortForceEveryFrame && m_lastSortValid)
+    {
+      // Calculate camera direction from eye to center
+      glm::vec3 currentDirection = glm::normalize(m_center - m_eye);
+      
+      // Check position delta
+      float positionDelta = glm::length(m_eye - m_lastSortCameraPosition);
+      
+      // Check angle delta (dot product gives cos of angle)
+      float dotProduct = glm::dot(currentDirection, m_lastSortCameraDirection);
+      dotProduct = glm::clamp(dotProduct, -1.0f, 1.0f);
+      float angleDelta = std::acos(dotProduct);
+
+#ifdef WITH_OPENXR
+      // Use tighter thresholds for XR (head tracking can be jittery)
+      bool isXrActive = m_xrInitialized && m_xr && m_xr->isValid();
+      float posEpsilon = isXrActive ? prmRaster.gpuSortPositionEpsilon * 0.1f : prmRaster.gpuSortPositionEpsilon;
+      float angleEpsilon = isXrActive ? prmRaster.gpuSortAngleEpsilon * 0.1f : prmRaster.gpuSortAngleEpsilon;
+#else
+      float posEpsilon = prmRaster.gpuSortPositionEpsilon;
+      float angleEpsilon = prmRaster.gpuSortAngleEpsilon;
+#endif
+
+      if(positionDelta < posEpsilon && angleDelta < angleEpsilon)
+      {
+        shouldSort = false;
+        m_sortSkippedThisFrame = true;
+        LOGD("GPU sort skipped: pos delta=%.6f, angle delta=%.6f rad\n", positionDelta, angleDelta);
+      }
+    }
+
+    // Process sorting - distance computation always runs, but radix sort can be skipped
+    // when camera is stationary (temporal stability optimization)
+    bool skipRadixSort = !shouldSort;
+    processSortingOnGPU(ctx.cmd, ctx.splatCount, skipRadixSort);
+    
+    // Update last camera state after sorting (only if we actually sorted)
+    if (shouldSort)
+    {
+      m_lastSortCameraPosition = m_eye;
+      m_lastSortCameraDirection = glm::normalize(m_center - m_eye);
+      m_lastSortValid = true;
+    }
   }
   else
   {

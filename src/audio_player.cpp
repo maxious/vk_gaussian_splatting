@@ -21,17 +21,20 @@
 #include <thread>
 #include <chrono>
 
-// FFmpeg includes - these need to be available at build time
+#ifdef WITH_VIDEO_DECODER
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libavutil/avutil.h>
 #include <libavutil/error.h>
 }
+#endif
 
 #include <nvutils/logger.hpp>
 
 namespace vk_viewer {
+
+#ifdef WITH_VIDEO_DECODER
 
 AudioPlayer::~AudioPlayer() {
     close();
@@ -97,4 +100,35 @@ void AudioPlayer::update() {
     // In a full implementation, this would update m_positionMs based on time
 }
 
-} // namespace vk_viewer
+#else
+
+AudioPlayer::~AudioPlayer() {}
+
+bool AudioPlayer::initFFmpeg() {
+    return false;
+}
+
+bool AudioPlayer::load(const std::string&) {
+    LOGW("AudioPlayer: Not available (FFmpeg not enabled)\\n");
+    return false;
+}
+
+void AudioPlayer::close() {}
+
+void AudioPlayer::play() {}
+
+void AudioPlayer::pause() {}
+
+void AudioPlayer::stop() {}
+
+void AudioPlayer::setVolume(float) {}
+
+bool AudioPlayer::seek(uint64_t) {
+    return false;
+}
+
+void AudioPlayer::update() {}
+
+#endif
+
+}  // namespace vk_viewer

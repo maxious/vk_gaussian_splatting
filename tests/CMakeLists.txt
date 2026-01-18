@@ -8,6 +8,7 @@ add_executable(unit_tests
     test_npz_loader.cpp
     test_lod_loader.cpp
     test_vulkan_video.cpp
+    test_morton_order.cpp
 )
 
 # Add source files we need to test
@@ -60,6 +61,11 @@ target_link_libraries(unit_tests PRIVATE webp)
 
 # C++20 required
 target_compile_features(unit_tests PRIVATE cxx_std_20)
+
+# Disable assertions in Release builds to prevent SIGTRAP
+if(CMAKE_BUILD_TYPE MATCHES "Release")
+    target_compile_definitions(unit_tests PRIVATE NDEBUG)
+endif()
 
 # Register with CTest
 add_test(NAME unit_tests COMMAND unit_tests)

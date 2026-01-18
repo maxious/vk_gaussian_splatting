@@ -226,8 +226,8 @@ void main(
     [unroll]
     for(uint i = 0; i < 4; ++i)
     {
-      // Scale the fragment position data we send to the fragment shader
-      verts[localIndex * 4 + i].outFragPos = positions[i].xy * sqrt8;
+      // Scale the fragment position data we send to the fragment shader (using configurable sigma coverage)
+      verts[localIndex * 4 + i].outFragPos = positions[i].xy * frameInfo.sigmaCoverage;
     }
 #endif
 
@@ -235,13 +235,31 @@ void main(
     const float3 cov2Dv = threedgsCovarianceProjection(cov3Dm, viewCenter, frameInfo.focal, modelViewMatrix);
 
     // computes the basis vectors of the extent of the projected covariance
-    // We use sqrt(8) standard deviations instead of 3 to eliminate more of the splat with a very low opacity.
+    // We use configurable sigma coverage (default sqrt(8) ≈ 2.83) standard deviations
     float2 basisVector1, basisVector2;
-    if(!threedgsProjectedExtentBasis(cov2Dv, sqrt8, frameInfo.splatScale, splatColor.a, basisVector1, basisVector2))
+    if(!threedgsProjectedExtentBasis(cov2Dv, frameInfo.sigmaCoverage, frameInfo.splatScale, splatColor.a, basisVector1, basisVector2))
     {
       // Early return to discard splat
       emitDegeneratedQuad(localIndex, verts);
       return;
+    }
+
+    // Compute pixel radius from basis vectors for min/max culling
+    const float pixelRadius = max(length(basisVector1), length(basisVector2));
+
+    // Min pixel radius culling: cull tiny noise splats
+    if(pixelRadius < frameInfo.minPixelRadius)
+    {
+      emitDegeneratedQuad(localIndex, verts);
+      return;
+    }
+
+    // Max pixel radius clamping: limit oversized splats
+    if(pixelRadius > frameInfo.maxPixelRadius)
+    {
+      const float clampScale = frameInfo.maxPixelRadius / pixelRadius;
+      basisVector1 *= clampScale;
+      basisVector2 *= clampScale;
     }
 
 #if MS_ANTIALIASING == 1

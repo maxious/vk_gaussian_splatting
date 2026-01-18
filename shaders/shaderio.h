@@ -78,6 +78,10 @@
 #define KERNEL_DEGREE_LAPLACIAN 1
 #define KERNEL_DEGREE_LINEAR 0
 
+// Chunk culling constants
+#define CHUNK_SIZE 256  // Number of splats per chunk for hierarchical frustum culling
+#define CHUNK_CULL_WORKGROUP_SIZE 64  // Workgroup size for chunk culling compute shader
+
 // bindings for set 0 (common to Raster and RTX)
 #define BINDING_FRAME_INFO_UBO 0
 #define BINDING_CENTERS_TEXTURE 1
@@ -148,6 +152,11 @@
 // LCC packed storage bindings (for STORAGE_LCC_PACKED mode)
 #define BINDING_LCC_PACKED_BUFFER 33  // Raw 32-byte packed LCC splat data
 
+// Chunk-based hierarchical frustum culling bindings
+#define BINDING_CHUNK_BOUNDS_BUFFER 34       // Per-chunk AABB bounds
+#define BINDING_VISIBLE_CHUNKS_BUFFER 35     // Output: visible chunk indices
+#define BINDING_VISIBLE_CHUNK_COUNT_BUFFER 36 // Output: count of visible chunks
+
 // location for vertex attributes
 // (only for vertex shader mode)
 #define ATTRIBUTE_LOC_POSITION 0
@@ -205,6 +214,12 @@ struct FrameInfo
 
   float frustumDilation    DEFAULT(0.2f);           // for frustum culling, 2% scale
   float alphaCullThreshold DEFAULT(1.0f / 255.0f);  // for alpha culling
+
+  // Pixel radius culling and sigma coverage
+  float minPixelRadius DEFAULT(0.0f);     // min pixel radius to render (cull smaller splats, default 0 = no min culling)
+  float maxPixelRadius DEFAULT(1000.0f);  // max pixel radius to render (clamp larger splats)
+  float sigmaCoverage  DEFAULT(2.8284271f);  // sigma coverage for Gaussian extent (default sqrt(8) ≈ 2.83)
+  float alphaBoost         DEFAULT(1.0f);           // opacity boost via power function (range 0.5-3.0)
 
   int32_t lightCount DEFAULT(0);
   int2               cursor;        // position of the mouse cursor for debug
@@ -302,6 +317,11 @@ struct FrameInfo
   // LCC packed storage parameters (for GPU-side decompression)
   float3 lccScaleMin DEFAULT(float3(0.00001f, 0.00001f, 0.00001f));  // Scale attribute min bounds
   float3 lccScaleMax DEFAULT(float3(5.0f, 5.0f, 5.0f));              // Scale attribute max bounds
+
+  // Chunk-based hierarchical frustum culling
+  int32_t chunkCullingEnabled DEFAULT(0);  // 0 = disabled, 1 = enabled
+  int32_t numChunks DEFAULT(0);            // Total number of chunks (ceil(splatCount / CHUNK_SIZE))
+  float4 frustumPlanes[6];                 // Frustum planes for GPU culling
 };
 
 // Push constant for raster
@@ -342,6 +362,22 @@ struct IndirectParams
   float val6         DEFAULT(0.0);
   float val7         DEFAULT(0.0);
   float val8         DEFAULT(0.0);
+};
+
+// Chunk bounds for hierarchical frustum culling
+// Each chunk contains CHUNK_SIZE (256) consecutive splats
+struct ChunkBounds
+{
+  float3 minPos;
+  float  _pad0;
+  float3 maxPos;
+  float  _pad1;
+};
+
+// Frustum planes for GPU culling (extracted from viewProj matrix)
+struct FrustumPlanes
+{
+  float4 planes[6];  // left, right, bottom, top, near, far
 };
 
 

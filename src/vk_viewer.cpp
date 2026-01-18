@@ -320,6 +320,9 @@ void VkViewer::onResize(VkCommandBuffer cmd, const VkExtent2D& viewportSize)
   updateRtDescriptorSet();
   updateDescriptorSetPostProcessing();
   resetFrameCounter();
+  
+  // Invalidate sort cache on resize (projection changes)
+  m_lastSortValid = false;
 }
 
 void VkViewer::onPreRender()
@@ -382,6 +385,11 @@ bool VkViewer::initAll()
   }
   initRendererBuffers();
   m_splatSetVk.initDataStorage(m_splatSet, prmData.dataStorage, prmData.shFormat);
+  
+  // Compute chunk bounds for hierarchical frustum culling
+  computeChunkBounds();
+  initChunkCullingBuffers();
+  
   initPipelines();
 
   // RTX specifics
@@ -409,6 +417,10 @@ void VkViewer::deinitAll()
 #endif
 
   m_canCollectReadback = false;
+  
+  // Invalidate sort cache when scene is unloaded
+  m_lastSortValid = false;
+  
   deinitScene();
   m_splatSetVk.resetTransform();
   m_splatSetVk.deinitDataStorage();
@@ -421,6 +433,7 @@ void VkViewer::deinitAll()
   deinitShaders();
   deinitPipelines();
   deinitRendererBuffers();
+  deinitChunkCullingBuffers();
   resetRenderSettings();
   // record default cam for reset in UI
   m_cameraSet.setCamera(Camera());
@@ -1365,6 +1378,7 @@ void VkViewer::updateAnimation(float deltaTime)
 #include "vk_viewer_rtx.cpp"
 #include "vk_viewer_postprocess.cpp"
 #include "vk_viewer_multiview.cpp"
+#include "vk_viewer_chunk_culling.cpp"
 
 #include "vk_viewer_dlss_rr.cpp"
 #include "vk_viewer_video.cpp"

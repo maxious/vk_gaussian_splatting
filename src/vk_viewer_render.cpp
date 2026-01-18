@@ -334,6 +334,11 @@ void VkViewer::processUpdateRequests(void)
         deinitRendererBuffers();
         initRendererBuffers();
       }
+      
+      // Compute chunk bounds for hierarchical frustum culling
+      deinitChunkCullingBuffers();
+      computeChunkBounds();
+      initChunkCullingBuffers();
     }
     if((m_requestUpdateSplatData || m_requestUpdateSplatAs) && prmSelectedPipeline == PIPELINE_RTX)
     {

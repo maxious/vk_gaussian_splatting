@@ -10,13 +10,17 @@
 #include <fstream>
 #include <tinygltf/json.hpp>
 
+#ifdef WITH_VIDEO_DECODER
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libavutil/imgutils.h>
 }
+#endif
 
 namespace vk_viewer {
+
+#ifdef WITH_VIDEO_DECODER
 
 HlsDepthPlayer::HlsDepthPlayer() : m_decoder(std::make_unique<VideoDecoder>())
 {
@@ -238,5 +242,50 @@ void HlsDepthPlayer::resume()
         m_decoder->resume();
     }
 }
+
+#else
+
+HlsDepthPlayer::HlsDepthPlayer() {}
+
+HlsDepthPlayer::~HlsDepthPlayer() {}
+
+bool HlsDepthPlayer::open(const std::filesystem::path&) {
+    LOGW("HlsDepthPlayer: Not available (FFmpeg not enabled)\\n");
+    return false;
+}
+
+bool HlsDepthPlayer::loadMetadata(const std::filesystem::path&) {
+    return false;
+}
+
+void HlsDepthPlayer::start() {}
+
+void HlsDepthPlayer::stop() {}
+
+bool HlsDepthPlayer::getNextFrame(HlsDecodedFrame&) {
+    return false;
+}
+
+bool HlsDepthPlayer::seekToTime(double) {
+    return false;
+}
+
+double HlsDepthPlayer::getCurrentTime() const {
+    return 0.0;
+}
+
+void HlsDepthPlayer::pause() {}
+
+void HlsDepthPlayer::resume() {}
+
+std::vector<float> HlsDepthPlayer::unpackDepthFromGrayscale(const uint8_t*, int, int) {
+    return {};
+}
+
+HlsDecodedFrame HlsDepthPlayer::separateFrame(const DecodedFrame&) {
+    return {};
+}
+
+#endif
 
 } // namespace vk_viewer

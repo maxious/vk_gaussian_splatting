@@ -1632,6 +1632,8 @@ void VkViewerUI::guiDrawSplatSetProperties()
     {
       // delay update of Acceleration Structures if not using ray tracing
       m_requestDelayedUpdateSplatAs = true;
+      // Invalidate sort cache when model transform changes
+      m_lastSortValid = false;
     }
     PE::end();
   }
