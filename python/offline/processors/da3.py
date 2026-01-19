@@ -111,7 +111,14 @@ class DA3GaussianProcessor(GaussianProcessor):
 
                 images_to_process.append(img)
         else:
-            images_to_process = [str(p) for p in frame_paths]
+            for path in frame_paths:
+                img = cv2.imread(str(path))
+                if img is None:
+                    logger.warning(f"Failed to load image: {path}")
+                    images_to_process.append(str(path))
+                    continue
+                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                images_to_process.append(img)
 
         if per_frame:
             return self._process_frames_individually(

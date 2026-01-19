@@ -271,6 +271,64 @@ def export_video_to_gaussian_plys(
         processor = SharpGaussianProcessor(
             model_path=model_path, device=device, vit_preset=vit_preset
         )
+    elif "sam3dbody" in model_id.lower():
+        # SAM 3D Body for human scenes
+        # Format: sam3dbody:facebook/sam-3d-body-vith or sam3dbody:/path/to/model.ckpt
+        human_model_id = "facebook/sam-3d-body-vith"  # Default
+        if ":" in model_id:
+            parts = model_id.split(":", 1)
+            human_model_id = parts[1]
+
+        from .processors.sam3dbody import Sam3DBodyProcessor
+
+        processor = Sam3DBodyProcessor(
+            hf_repo_id=human_model_id,
+            device=device,
+            points_per_person=10000,
+            bbox_threshold=0.8,
+        )
+    elif "hybrid" in model_id.lower():
+        # Hybrid: SAM 3D Body (humans) + depth model (background)
+        # Format: hybrid:facebook/sam-3d-body-vith+depth-anything/DA3-GIANT
+        # or hybrid:/path/to/human.ckpt:/path/to/depth.pt
+        human_model_id = "facebook/sam-3d-body-vith"
+        depth_model_id = "depth-anything/DA3-GIANT"
+        depth_type = "da3"  # Default depth processor type
+
+        if ":" in model_id:
+            parts = model_id.split(":", 1)
+            config = parts[1]
+
+            # Parse human:depth configuration
+            if "+" in config:
+                # Format: human_model+depth_model
+                model_parts = config.split("+", 1)
+                human_model_id = model_parts[0] if model_parts[0] else human_model_id
+                depth_config = model_parts[1] if len(model_parts) > 1 else depth_model_id
+
+                # Detect depth type from depth_config
+                if "moge" in depth_config.lower():
+                    depth_type = "moge"
+                    depth_model_id = depth_config
+                elif "sharp" in depth_config.lower():
+                    depth_type = "sharp"
+                    depth_model_id = depth_config
+                else:
+                    depth_type = "da3"
+                    depth_model_id = depth_config
+
+        from .processors.hybrid import HybridProcessor
+
+        processor = HybridProcessor(
+            human_model_id=human_model_id,
+            depth_model_id=depth_model_id,
+            depth_processor_type=depth_type,
+            device=device,
+            points_per_person=10000,
+            bbox_threshold=0.8,
+            depth_process_res=process_res,
+            remove_overlap=True,
+        )
     else:
         processor = DA3GaussianProcessor(
             model_id=model_id,

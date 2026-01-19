@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Export video to Gaussian Splatting PLY files using DA3"
+        description="Export video to Gaussian Splatting PLY files using DA3/MoGe/SHARP/SAM 3D Body/Hybrid"
     )
     subparsers = parser.add_subparsers(dest="command", help="Commands")
 
@@ -80,7 +80,10 @@ def main():
         "--model",
         type=str,
         default="depth-anything/DA3-GIANT",
-        help="DA3 model ID (must support infer_gs)",
+        help="Model: DA3/MoGe/SHARP for depth, 'sam3dbody' for humans, 'hybrid' for SAM 3D Body + depth "
+        "(default: depth-anything/DA3-GIANT). "
+        "SAM 3D Body: sam3dbody:facebook/sam-3d-body-vith. "
+        "Hybrid: hybrid:human+depth (e.g., hybrid:facebook/sam-3d-body-vith+depth-anything/DA3-GIANT)",
     )
     export_parser.add_argument("--frame-skip", type=int, default=5, help="Process every Nth frame")
     export_parser.add_argument(

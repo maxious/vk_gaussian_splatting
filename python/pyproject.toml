@@ -48,6 +48,7 @@ dependencies = [
     "pycolmap>=0.6",
     "matplotlib>=3.5",
     "evo>=1.0",
+    "triton>=2.3.0",
 ]
 
 [project.optional-dependencies]
@@ -116,7 +117,7 @@ trellis2 = [
     # TRELLIS.2 core dependencies are vendored in offline/vkgs_trellis2/
     # Install from source: git clone --recursive https://github.com/microsoft/TRELLIS.2.git
     # cd TRELLIS.2 && . ./setup.sh --basic --nvdiffrast --nvdiffrec --cumesh --o-voxel --flexgemm
-]
+    ]
 
 dev = [
     "pytest>=8.2",
