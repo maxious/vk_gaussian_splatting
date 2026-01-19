@@ -16,6 +16,7 @@ from .ply_io import (
     write_static_gaussian_ply,
 )
 from .processors.da3 import DA3GaussianProcessor
+from .processors.fastgs import FastGSProcessor
 from .processors.matrix3d import Matrix3DGaussianProcessor
 from .processors.sharp import SharpGaussianProcessor
 from .types import GaussianFrame
@@ -619,7 +620,6 @@ def export_images_to_gaussian_plys(
             boundary_min_angle=boundary_min_angle,
         )
     elif "sharp" in model_id.lower():
-        # Heuristic: if model_id contains "sharp", use Sharp processor
         model_path = (
             model_id if Path(model_id).exists() or "\\" in model_id or "/" in model_id else None
         )
@@ -627,6 +627,32 @@ def export_images_to_gaussian_plys(
             model_path = None
 
         processor = SharpGaussianProcessor(model_path=model_path, device=device)
+    elif "fastgs" in model_id.lower():
+        from .processors.fastgs import FastGSProcessor
+
+        fastgs_path = None
+        iterations = 30_000
+
+        if ":" in model_id:
+            parts = model_id.split(":", 1)
+            config = parts[1]
+
+            if Path(config).exists() or "\\" in config or "/" in config:
+                fastgs_path = config
+            else:
+                try:
+                    iterations = int(config)
+                except ValueError:
+                    pass
+
+        processor = FastGSProcessor(
+            device=device,
+            iterations=iterations,
+            fastgs_path=fastgs_path,
+            white_background=False,
+            eval=False,
+            sh_degree=3,
+        )
     elif "trellis.2" in model_id.lower():
         from .processors.trellis2 import Trellis2Processor
 

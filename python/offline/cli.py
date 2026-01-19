@@ -210,7 +210,8 @@ def main():
         "--model",
         type=str,
         default="depth-anything/DA3-GIANT",
-        help="Model ID. Options: 'depth-anything/DA3-GIANT', 'sharp', 'microsoft/TRELLIS-image-large', 'microsoft/TRELLIS.2-4B'",
+        help="Model ID. Options: 'depth-anything/DA3-GIANT', 'sharp', 'microsoft/TRELLIS-image-large', "
+        "'microsoft/TRELLIS.2-4B', 'fastgs' (high-quality training, requires COLMAP dataset)",
     )
     images_parser.add_argument(
         "--pattern", type=str, default="*.jpg", help="Glob pattern for image files"
