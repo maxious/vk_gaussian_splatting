@@ -4,3 +4,6 @@
 [submodule "3rdparty/winhttppal"]
 	path = 3rdparty/winhttppal
 	url = https://github.com/microsoft/WinHttpPAL.git
+[submodule "python/sam_3d_body_git"]
+	path = python/sam_3d_body_git
+	url = https://github.com/Erant/sam-3d-body.git
