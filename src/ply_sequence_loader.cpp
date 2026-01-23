@@ -27,6 +27,7 @@
 namespace vk_viewer {
 
 PlySequenceLoader::~PlySequenceLoader() {
+    stopPrefetch();
     close();
 }
 
@@ -75,8 +76,12 @@ bool PlySequenceLoader::open(const std::filesystem::path& dirPath, float frameRa
 }
 
 void PlySequenceLoader::close() {
+    stopPrefetch();
+    
     std::lock_guard<std::mutex> lock(m_mutex);
     m_frameCache.clear();
+    m_lruOrder.clear();
+    m_lruMap.clear();
     m_frames.clear();
     m_audioPath.clear();
     m_dirPath.clear();
@@ -177,25 +182,58 @@ bool PlySequenceLoader::loadFrame(const PlyFrameInfo& frameInfo, SplatSet& outFr
 void PlySequenceLoader::clearCache() {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_frameCache.clear();
+    m_lruOrder.clear();
+    m_lruMap.clear();
 }
 
-void PlySequenceLoader::evictOldFrames(size_t currentFrameIndex) {
-    // For forward-only playback, evict frames that are now behind our sliding window
-    // Keep frames: [current - cacheSize + 1, current]
-    if (m_maxCacheSize == 0) {
-        m_frameCache.clear();
+void PlySequenceLoader::touchCacheEntry(size_t index) {
+    // Move entry to front of LRU list (most recently used)
+    auto it = m_lruMap.find(index);
+    if (it != m_lruMap.end()) {
+        m_lruOrder.erase(it->second);
+        m_lruOrder.push_front(index);
+        it->second = m_lruOrder.begin();
+    }
+}
+
+void PlySequenceLoader::evictLRU() {
+    // Evict least recently used entries until under max cache size
+    while (m_frameCache.size() >= m_maxCacheSize && !m_lruOrder.empty()) {
+        size_t evictIdx = m_lruOrder.back();
+        m_lruOrder.pop_back();
+        m_lruMap.erase(evictIdx);
+        m_frameCache.erase(evictIdx);
+        LOGD("PLY sequence: Evicted frame %zu from cache", evictIdx);
+    }
+}
+
+void PlySequenceLoader::getSurroundingKeyframes(uint32_t timestampMs, size_t& lowerIdx, size_t& upperIdx, float& t) const {
+    if (m_frames.empty()) {
+        lowerIdx = upperIdx = 0;
+        t = 0.0f;
         return;
     }
     
-    size_t minCachedIndex = (currentFrameIndex >= m_maxCacheSize) ? (currentFrameIndex - m_maxCacheSize + 1) : 0;
-    
-    // Erase all frames before minCachedIndex
-    for (auto it = m_frameCache.begin(); it != m_frameCache.end(); ) {
-        if (it->first < minCachedIndex) {
-            it = m_frameCache.erase(it);
+    // Find surrounding keyframes
+    lowerIdx = 0;
+    for (size_t i = 0; i < m_frames.size(); ++i) {
+        if (m_frames[i].timestampMs <= timestampMs) {
+            lowerIdx = i;
         } else {
-            ++it;
+            break;
         }
+    }
+    
+    upperIdx = std::min(lowerIdx + 1, m_frames.size() - 1);
+    
+    // Compute blend factor t in [0, 1]
+    if (lowerIdx == upperIdx) {
+        t = 0.0f;
+    } else {
+        uint32_t t0 = m_frames[lowerIdx].timestampMs;
+        uint32_t t1 = m_frames[upperIdx].timestampMs;
+        t = static_cast<float>(timestampMs - t0) / static_cast<float>(t1 - t0);
+        t = std::max(0.0f, std::min(1.0f, t));
     }
 }
 
@@ -210,6 +248,7 @@ bool PlySequenceLoader::getFrame(size_t index, SplatSet& outFrame) {
     auto it = m_frameCache.find(index);
     if (it != m_frameCache.end()) {
         outFrame = it->second;
+        touchCacheEntry(index);
         return true;
     }
     
@@ -224,12 +263,62 @@ bool PlySequenceLoader::getFrame(size_t index, SplatSet& outFrame) {
     // Estimate frame size and adjust cache if needed
     updateAdaptiveCacheSize(outFrame);
     
-    // Evict old frames that are now outside our sliding window
-    evictOldFrames(index);
+    // Evict LRU entries if cache is full
+    evictLRU();
     
-    // Add new frame to cache
+    // Add new frame to cache and LRU tracking
     m_frameCache[index] = outFrame;
+    m_lruOrder.push_front(index);
+    m_lruMap[index] = m_lruOrder.begin();
+    
+    // Trigger async prefetch of upcoming frames
+    prefetchFramesAsync(index);
+    
     return true;
+}
+
+bool PlySequenceLoader::getInterpolatedFrame(uint32_t timestampMs, SplatSet& outFrame) {
+    if (!m_isOpen || m_frames.empty()) {
+        return false;
+    }
+    
+    // Find surrounding keyframes
+    size_t lowerIdx, upperIdx;
+    float t;
+    getSurroundingKeyframes(timestampMs, lowerIdx, upperIdx, t);
+    
+    // If interpolation disabled or same frame, return nearest keyframe
+    if (!m_interpolationEnabled || lowerIdx == upperIdx || t < 0.001f) {
+        return getFrame(lowerIdx, outFrame);
+    }
+    if (t > 0.999f) {
+        return getFrame(upperIdx, outFrame);
+    }
+    
+    // Load both keyframes
+    SplatSet frame0, frame1;
+    if (!getFrame(lowerIdx, frame0) || !getFrame(upperIdx, frame1)) {
+        return false;
+    }
+    
+    // Interpolate between frames
+    if (!interpolateSplatSet(outFrame, frame0, frame1, t)) {
+        LOGW("PLY sequence: Interpolation failed (splat count mismatch: %zu vs %zu)", 
+             frame0.size(), frame1.size());
+        return getFrame(lowerIdx, outFrame);  // Fallback to nearest
+    }
+    
+    return true;
+}
+
+bool PlySequenceLoader::getInterpolatedFrameNormalized(float normalizedTime, SplatSet& outFrame) {
+    if (!m_isOpen || m_frames.empty()) {
+        return false;
+    }
+    
+    normalizedTime = std::max(0.0f, std::min(1.0f, normalizedTime));
+    uint32_t timestampMs = static_cast<uint32_t>(normalizedTime * getDurationMs());
+    return getInterpolatedFrame(timestampMs, outFrame);
 }
 
 void PlySequenceLoader::updateAdaptiveCacheSize(const SplatSet& frame) {
@@ -253,6 +342,128 @@ void PlySequenceLoader::updateAdaptiveCacheSize(const SplatSet& frame) {
                  m_maxCacheSize, m_estimatedFrameSize / (1024.0 * 1024.0));
         }
     }
+}
+
+void PlySequenceLoader::prefetchFramesAsync(size_t currentFrame) {
+    if (m_prefetchCount == 0) {
+        return;
+    }
+    
+    // Queue upcoming frames for prefetch
+    std::vector<size_t> framesToPrefetch;
+    for (size_t i = 1; i <= m_prefetchCount; ++i) {
+        size_t nextFrame = currentFrame + i;
+        if (nextFrame < m_frames.size()) {
+            // Only prefetch if not already cached
+            if (m_frameCache.find(nextFrame) == m_frameCache.end()) {
+                framesToPrefetch.push_back(nextFrame);
+            }
+        }
+    }
+    
+    if (framesToPrefetch.empty()) {
+        return;
+    }
+    
+    // Start prefetch thread if not running
+    {
+        std::lock_guard<std::mutex> lock(m_prefetchMutex);
+        m_prefetchQueue.insert(m_prefetchQueue.end(), framesToPrefetch.begin(), framesToPrefetch.end());
+        
+        if (!m_prefetching.load()) {
+            m_stopPrefetch.store(false);
+            m_prefetching.store(true);
+            
+            // Stop existing thread if any
+            if (m_prefetchThread.joinable()) {
+                m_prefetchThread.join();
+            }
+            
+            m_prefetchThread = std::thread(&PlySequenceLoader::prefetchWorker, this);
+        }
+    }
+    m_prefetchCV.notify_one();
+}
+
+void PlySequenceLoader::prefetchWorker() {
+    LOGD("PLY sequence: Prefetch worker started");
+    
+    while (!m_stopPrefetch.load()) {
+        std::vector<size_t> framesToLoad;
+        
+        {
+            std::unique_lock<std::mutex> lock(m_prefetchMutex);
+            m_prefetchCV.wait_for(lock, std::chrono::milliseconds(100), [this] {
+                return !m_prefetchQueue.empty() || m_stopPrefetch.load();
+            });
+            
+            if (m_stopPrefetch.load()) {
+                break;
+            }
+            
+            // Take up to 2 frames at a time
+            size_t count = std::min(m_prefetchQueue.size(), static_cast<size_t>(2));
+            for (size_t i = 0; i < count; ++i) {
+                framesToLoad.push_back(m_prefetchQueue.front());
+                m_prefetchQueue.erase(m_prefetchQueue.begin());
+            }
+        }
+        
+        // Load frames outside the lock
+        for (size_t frameIdx : framesToLoad) {
+            if (m_stopPrefetch.load()) {
+                break;
+            }
+            
+            // Check if already cached (might have been loaded by main thread)
+            {
+                std::lock_guard<std::mutex> lock(m_mutex);
+                if (m_frameCache.find(frameIdx) != m_frameCache.end()) {
+                    continue;
+                }
+            }
+            
+            // Load frame
+            if (frameIdx < m_frames.size()) {
+                SplatSet frame;
+                if (loadFrame(m_frames[frameIdx], frame)) {
+                    std::lock_guard<std::mutex> lock(m_mutex);
+                    
+                    // Double-check it wasn't loaded while we were loading
+                    if (m_frameCache.find(frameIdx) == m_frameCache.end()) {
+                        evictLRU();
+                        m_frameCache[frameIdx] = std::move(frame);
+                        m_lruOrder.push_front(frameIdx);
+                        m_lruMap[frameIdx] = m_lruOrder.begin();
+                        LOGD("PLY sequence: Prefetched frame %zu", frameIdx);
+                    }
+                }
+            }
+        }
+        
+        // Check if queue is empty, if so we can stop
+        {
+            std::lock_guard<std::mutex> lock(m_prefetchMutex);
+            if (m_prefetchQueue.empty()) {
+                break;
+            }
+        }
+    }
+    
+    m_prefetching.store(false);
+    LOGD("PLY sequence: Prefetch worker stopped");
+}
+
+void PlySequenceLoader::stopPrefetch() {
+    m_stopPrefetch.store(true);
+    m_prefetchCV.notify_all();
+    
+    if (m_prefetchThread.joinable()) {
+        m_prefetchThread.join();
+    }
+    
+    std::lock_guard<std::mutex> lock(m_prefetchMutex);
+    m_prefetchQueue.clear();
 }
 
 } // namespace vk_viewer

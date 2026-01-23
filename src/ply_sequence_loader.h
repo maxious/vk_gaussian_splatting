@@ -27,7 +27,13 @@
 #include <unordered_map>
 #include <string>
 #include <algorithm>
+#include <list>
+#include <future>
+#include <thread>
+#include <atomic>
+#include <condition_variable>
 #include "splat_set.h"
+#include "splat_interpolation.h"
 
 namespace vk_viewer {
 
@@ -90,6 +96,26 @@ public:
      * @return true if successful
      */
     bool getFrameByTimestamp(uint32_t timestampMs, SplatSet& outFrame);
+
+    /**
+     * @brief Get interpolated frame at exact timestamp
+     * 
+     * Computes surrounding keyframes and blends them using SLERP for rotations,
+     * log-lerp for scales, and linear lerp for other attributes.
+     * 
+     * @param timestampMs Desired timestamp in milliseconds
+     * @param outFrame Output interpolated SplatSet
+     * @return true if successful
+     */
+    bool getInterpolatedFrame(uint32_t timestampMs, SplatSet& outFrame);
+
+    /**
+     * @brief Get interpolated frame using normalized time [0, 1]
+     * @param normalizedTime Time in range [0, 1] spanning full sequence duration
+     * @param outFrame Output interpolated SplatSet
+     * @return true if successful
+     */
+    bool getInterpolatedFrameNormalized(float normalizedTime, SplatSet& outFrame);
 
     /**
      * @brief Get frame index for a given timestamp
@@ -166,27 +192,65 @@ public:
      */
     void setTargetMemoryMB(size_t targetMemoryMB) { m_targetMemoryMB = targetMemoryMB; }
 
+    /**
+     * @brief Enable/disable interpolation mode
+     * When enabled, getInterpolatedFrame returns blended frames.
+     * When disabled, it returns the nearest keyframe.
+     */
+    void setInterpolationEnabled(bool enabled) { m_interpolationEnabled = enabled; }
+    bool isInterpolationEnabled() const { return m_interpolationEnabled; }
+
+    /**
+     * @brief Set number of frames to prefetch ahead
+     */
+    void setPrefetchCount(size_t count) { m_prefetchCount = count; }
+    size_t getPrefetchCount() const { return m_prefetchCount; }
+
+    /**
+     * @brief Check if async prefetch is running
+     */
+    bool isPrefetching() const { return m_prefetching.load(); }
+
 private:
     bool scanDirectory(const std::filesystem::path& dirPath);
     bool loadFrame(const PlyFrameInfo& frameInfo, SplatSet& outFrame);
     void updateAdaptiveCacheSize(const SplatSet& frame);
-    void evictOldFrames(size_t currentFrameIndex);
+    void evictLRU();
+    void touchCacheEntry(size_t index);
+    void prefetchFramesAsync(size_t currentFrame);
+    void prefetchWorker();
+    void stopPrefetch();
+    
+    // Compute surrounding keyframes and blend factor
+    void getSurroundingKeyframes(uint32_t timestampMs, size_t& lowerIdx, size_t& upperIdx, float& t) const;
     
     std::filesystem::path                    m_dirPath;
     std::vector<PlyFrameInfo>                m_frames;
     std::filesystem::path                    m_audioPath;
-    std::mutex                             m_mutex;
+    std::mutex                               m_mutex;
     
-    // Sliding window cache for forward-only playback
+    // LRU cache: map + ordered list for LRU tracking
     std::unordered_map<size_t, SplatSet>     m_frameCache;
-    size_t                                 m_maxCacheSize = 10;
-    size_t                                 m_targetMemoryMB = 512;
-    size_t                                 m_estimatedFrameSize = 0;
+    std::list<size_t>                        m_lruOrder;  // front = most recent, back = least recent
+    std::unordered_map<size_t, std::list<size_t>::iterator> m_lruMap;
+    size_t                                   m_maxCacheSize = 10;
+    size_t                                   m_targetMemoryMB = 512;
+    size_t                                   m_estimatedFrameSize = 0;
     
-    float                                  m_frameRate = 30.0f;
-    uint32_t                               m_frameDurationMs = 33;
-    bool                                   m_isOpen = false;
-    bool                                   m_hasAudio = false;
+    // Async prefetch
+    std::thread                              m_prefetchThread;
+    std::atomic<bool>                        m_prefetching{false};
+    std::atomic<bool>                        m_stopPrefetch{false};
+    std::condition_variable                  m_prefetchCV;
+    std::mutex                               m_prefetchMutex;
+    std::vector<size_t>                      m_prefetchQueue;
+    size_t                                   m_prefetchCount = 3;  // Frames to prefetch ahead
+    
+    float                                    m_frameRate = 30.0f;
+    uint32_t                                 m_frameDurationMs = 33;
+    bool                                     m_isOpen = false;
+    bool                                     m_hasAudio = false;
+    bool                                     m_interpolationEnabled = true;
 };
 
 }  // namespace vk_viewer

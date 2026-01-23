@@ -159,9 +159,15 @@ public:
     void seekToFrame(size_t frameIndex);
 
     /**
-     * @brief Get current frame data for rendering
+     * @brief Get current frame data for rendering (uses interpolation if enabled)
      */
     bool getCurrentFrameData(SplatSet& outFrame);
+
+    /**
+     * @brief Enable/disable frame interpolation
+     */
+    void setInterpolationEnabled(bool enabled);
+    bool isInterpolationEnabled() const;
 
     /**
      * @brief Update playback state (call during main loop)

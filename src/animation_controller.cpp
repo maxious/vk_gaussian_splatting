@@ -144,10 +144,26 @@ void AnimationController::setVolume(float volume) {
 }
 
 bool AnimationController::getCurrentFrameData(SplatSet& outFrame) {
-    if (!m_plyLoader || m_currentFrame >= m_totalFrames) {
+    if (!m_plyLoader || m_totalFrames == 0) {
         return false;
     }
+    
+    // Use interpolated frame if enabled
+    if (m_plyLoader->isInterpolationEnabled()) {
+        return m_plyLoader->getInterpolatedFrame(static_cast<uint32_t>(m_currentPositionMs), outFrame);
+    }
+    
     return m_plyLoader->getFrame(m_currentFrame, outFrame);
+}
+
+void AnimationController::setInterpolationEnabled(bool enabled) {
+    if (m_plyLoader) {
+        m_plyLoader->setInterpolationEnabled(enabled);
+    }
+}
+
+bool AnimationController::isInterpolationEnabled() const {
+    return m_plyLoader ? m_plyLoader->isInterpolationEnabled() : false;
 }
 
 void AnimationController::update(float deltaTime) {
