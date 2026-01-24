@@ -16,9 +16,10 @@ jobs:
         submodules: recursive
         
     - name: Setup FFmpeg
-      uses: AnimMouse/setup-ffmpeg@v1
+      uses: FedericoCarboni/setup-ffmpeg@v3
       with:
-        version: '8.0.1'
+        ffmpeg-version: '8.0.1'
+        linking-type: shared
         
     - name: Install Vulkan SDK
       uses: humbletim/setup-vulkan-sdk@v1.2.0
@@ -28,7 +29,7 @@ jobs:
         vulkan-use-cache: true
         
     - name: Configure CMake
-      run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+      run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DENABLE_VIDEO_DECODER=ON
       
     - name: Build
       run: cmake --build build --config Release

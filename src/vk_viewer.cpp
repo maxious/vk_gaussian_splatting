@@ -303,7 +303,9 @@ void VkViewer::enableDepthRendering(const std::string& host, int port, const std
   }
 
   m_videoDepthPlaybackMode = false;
+#ifdef WITH_VIDEO_DECODER
   m_hlsPlaybackMode = false;
+#endif
   m_enableDepthRendering = true;
   m_playbackStartTime = std::chrono::steady_clock::now();
   m_playbackTimeOffset = 0.0;
@@ -867,7 +869,11 @@ void VkViewer::updateXrLocomotion(float deltaTime)
   const auto& locomotion = m_xr->getLocomotionInput();
 
   // Check if in depth-only mode (depth content but no splats or meshes)
-  bool hasDepthContent = m_enableDepthRendering || m_videoDepthPlaybackMode || m_hlsPlaybackMode;
+  bool hasDepthContent = m_enableDepthRendering || m_videoDepthPlaybackMode
+#ifdef WITH_VIDEO_DECODER
+                        || m_hlsPlaybackMode
+#endif
+    ;
   bool hasSplats = m_splatSet.positions.size() > 0 || m_splatLoader.getStatus() == SplatLoaderAsync::State::STATE_READY;
   bool hasMeshes = !m_meshSetVk.instances.empty();
   bool isDepthOnlyMode = hasDepthContent && !hasSplats && !hasMeshes;

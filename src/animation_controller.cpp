@@ -39,7 +39,7 @@ bool AnimationController::loadSequence(const std::filesystem::path& dirPath, flo
     // Load audio if available
     if (m_plyLoader->hasAudio()) {
         m_audioPlayer = std::make_unique<AudioPlayer>();
-        if (!m_audioPlayer->load(m_plyLoader->getAudioPath())) {
+        if (!m_audioPlayer->load(m_plyLoader->getAudioPath().string())) {
             LOGE("AnimationController: Failed to load audio from: %s", m_plyLoader->getAudioPath().string().c_str());
             return false;
         }
