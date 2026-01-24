@@ -32,6 +32,7 @@
 
 #include "splat-types.h"
 #include "morton_order.hpp"
+#include "temporal_binning.h"
 
 // 3rd party spz library, used here for coordinate system convertions
 #include "splat-types.h"
@@ -72,6 +73,9 @@ struct SplatSet
   std::vector<float> time_scale = {};  // 1 component (t_extent/duration)
   float minTime = 0.0f;
   float maxTime = 1.0f;
+
+  // Temporal acceleration structure
+  TemporalBins temporalBins;
 
   // returns the number of splats in the set
   inline size_t size() const { return positions.size() / 3; }
@@ -523,6 +527,9 @@ struct SplatSet
       reorderVec3(motion);
       reorderVec1(time);
       reorderVec1(time_scale);
+      
+      // Rebuild temporal bins after reordering since indices changed
+      temporalBins.build(time, time_scale, minTime, maxTime);
     }
   }
 };

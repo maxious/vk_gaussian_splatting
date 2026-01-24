@@ -829,9 +829,6 @@ def export_images_to_gaussian_plys(
         (means, scales, rotations, colors, opacities, motion, time_center, time_scale) = (
             compute_motion_vectors_cuda(frames, fps)
         )
-        (means, scales, rotations, colors, opacities, motion, time_center, time_scale) = (
-            compute_motion_vectors_cuda(frames, fps)
-        )
 
     # Zero out motion for static splats (motion magnitude <= 0.001)
     motion_magnitude = np.linalg.norm(motion, axis=1)

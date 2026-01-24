@@ -70,7 +70,7 @@ def knn_kernel(
         # Deterministic tie-breaking: update if strictly closer,
         # OR if equal distance but lower index (for reproducibility)
         is_closer = curr_min < best_dist
-        is_tie_lower_idx = (curr_min < best_dist + 1e-6) & (curr_idx < best_idx)
+        is_tie_lower_idx = (curr_min < best_dist + TIE_EPSILON) & (curr_idx < best_idx)
         update_mask = is_closer | is_tie_lower_idx
 
         best_dist = ct.where(update_mask, curr_min, best_dist)
@@ -294,6 +294,30 @@ def match_gaussians_sliding_window_cuda(
     return all_matches
 
 
+def estimate_scene_scale(positions: np.ndarray, sample_size: int = 10000) -> dict:
+    """Auto-estimate voxel size from point cloud statistics."""
+    # Bounding box diagonal
+    bbox_diag = np.linalg.norm(positions.max(0) - positions.min(0))
+
+    # Median k-NN distance (sample for speed)
+    from scipy.spatial import cKDTree
+
+    sample = positions[
+        np.random.choice(len(positions), min(sample_size, len(positions)), replace=False)
+    ]
+    tree = cKDTree(sample)
+    dists, _ = tree.query(sample, k=6)
+    median_nn = np.median(dists[:, 1:].mean(axis=1))
+
+    # Suggested voxel: max of (15x median NN, 1.5% bbox)
+    voxel_size = max(median_nn * 15, bbox_diag * 0.015)
+    return {
+        "voxel_size": np.clip(voxel_size, 0.01, 1.0),
+        "bbox_diag": bbox_diag,
+        "median_nn": median_nn,
+    }
+
+
 def compute_motion_vectors_cuda(
     frames: list,
     fps: float,
@@ -416,7 +440,15 @@ def compute_motion_vectors_delta_compression_cuda(
     window_size: int = 3,
     opacity_weight: float = 0.1,
 ) -> tuple[
-    np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    float,
 ]:
     """
     Compute motion vectors using delta compression instead of linear motion vectors.
@@ -447,6 +479,7 @@ def compute_motion_vectors_delta_compression_cuda(
             np.zeros((n, 3), dtype=np.int16 if not use_int8 else np.int8),
             np.full(n, 0.5, dtype=np.float32),
             np.zeros(n, dtype=np.float32),
+            1.0,
         )
 
     # Compute scene scale on CPU (fast enough)
@@ -528,6 +561,6 @@ def compute_motion_vectors_delta_compression_cuda(
 
     logger.info("Computing delta-compressed temporal encoding...")
     results = fit_trajectories_delta_compression(
-        traj_data, compression_ratio_target=compression_ratio, use_int8=use_int8
+        traj_data, compression_ratio_target=compression_ratio_target, use_int8=use_int8
     )
     return results  # Now includes compression_scale as 9th element
