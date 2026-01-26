@@ -54,6 +54,33 @@ def main():
     )
     depth_parser.add_argument("-v", "--verbose", action="store_true")
 
+    masks_parser = subparsers.add_parser(
+        "masks", help="Generate masks for images using BEN2 or BiRefNet"
+    )
+    masks_parser.add_argument(
+        "--input", "-i", type=Path, required=True, help="Input image directory"
+    )
+    masks_parser.add_argument(
+        "--output", "-o", type=Path, required=True, help="Output mask directory"
+    )
+    masks_parser.add_argument("--device", type=str, default="cuda")
+    masks_parser.add_argument(
+        "--pattern", type=str, default="*.jpg", help="Glob pattern for input images"
+    )
+    masks_parser.add_argument(
+        "--model",
+        type=str,
+        default="ben2",
+        choices=["ben2", "birefnet", "birefnet-lite"],
+        help="Model to use for mask generation",
+    )
+    masks_parser.add_argument(
+        "--refine",
+        action="store_true",
+        help="Enable foreground refinement (BEN2 only)",
+    )
+    masks_parser.add_argument("-v", "--verbose", action="store_true")
+
     prune_parser = subparsers.add_parser(
         "prune", help="Prune Gaussians using sensitivity/visibility analysis"
     )
@@ -330,6 +357,18 @@ def main():
         from .depth import run_depth
 
         run_depth(args)
+
+    elif args.command == "masks":
+        from .masking import generate_masks
+
+        generate_masks(
+            args.input,
+            args.output,
+            device=args.device,
+            pattern=args.pattern,
+            refine=args.refine,
+            model=args.model,
+        )
 
     elif args.command == "prune":
         from .prune_sensitivity import run_pruning
