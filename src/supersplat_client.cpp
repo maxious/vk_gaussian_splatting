@@ -6,17 +6,17 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb/stb_image.h>
 #include <webp/decode.h>
+#include <cstring>
+#include <algorithm>
 
-#ifdef _WIN32
-#include <windows.h>
-#include <winhttp.h>
-#pragma comment(lib, "winhttp.lib")
-#endif
+#include <ixwebsocket/IXHttpClient.h>
+#include <ixwebsocket/IXNetSystem.h>
 
 namespace vk_viewer {
 
 SupersplatClient::SupersplatClient()
 {
+    ix::initNetSystem();
 }
 
 SupersplatClient::~SupersplatClient()
@@ -31,8 +31,6 @@ SupersplatClient::~SupersplatClient()
 void SupersplatClient::threadFunc(std::function<void()> task)
 {
     task();
-    // In a real thread pool, we'd reuse threads. Here we just let them finish.
-    // Detaching or joining is tricky with this simple design, but for now we'll assume the client lives long enough.
 }
 
 void SupersplatClient::fetchSceneList(const std::string& search, SceneListCallback callback)
@@ -174,112 +172,26 @@ void SupersplatClient::fetchThumbnail(const std::string& url, ThumbnailCallback 
 
 bool SupersplatClient::httpGet(const std::string& url, std::vector<uint8_t>& response)
 {
-#ifdef _WIN32
-    URL_COMPONENTS urlComp;
-    ZeroMemory(&urlComp, sizeof(urlComp));
-    urlComp.dwStructSize = sizeof(urlComp);
-
-    wchar_t hostName[256] = {0};
-    wchar_t urlPath[2048] = {0};
-    urlComp.lpszHostName = hostName;
-    urlComp.dwHostNameLength = sizeof(hostName) / sizeof(wchar_t);
-    urlComp.lpszUrlPath = urlPath;
-    urlComp.dwUrlPathLength = sizeof(urlPath) / sizeof(wchar_t);
-
-    std::wstring wideUrl(url.begin(), url.end());
-
-    if (!WinHttpCrackUrl(wideUrl.c_str(), static_cast<DWORD>(wideUrl.length()), 0, &urlComp))
-    {
+    ix::HttpClient httpClient;
+    auto args = httpClient.createRequest(url, ix::HttpClient::kGet);
+    
+    // Disable compression for binary data if needed, but for JSON/thumbnails it's fine.
+    args->compress = true;
+    
+    auto res = httpClient.get(url, args);
+    
+    if (res->errorCode != ix::HttpErrorCode::Ok) {
+        LOGE("SupersplatClient: HTTP error: %s\n", res->errorMsg.c_str());
         return false;
     }
-
-    HINTERNET hSession = WinHttpOpen(L"SupersplatClient/1.0",
-                                     WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
-                                     WINHTTP_NO_PROXY_NAME,
-                                     WINHTTP_NO_PROXY_BYPASS, 0);
-    if (!hSession) return false;
-
-    HINTERNET hConnect = WinHttpConnect(hSession, hostName, urlComp.nPort, 0);
-    if (!hConnect)
-    {
-        WinHttpCloseHandle(hSession);
+    
+    if (res->statusCode != 200) {
+        LOGE("SupersplatClient: HTTP status error: %d\n", res->statusCode);
         return false;
     }
-
-    DWORD dwFlags = (urlComp.nScheme == INTERNET_SCHEME_HTTPS) ? WINHTTP_FLAG_SECURE : 0;
-    HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"GET", urlPath,
-                                            NULL, WINHTTP_NO_REFERER,
-                                            WINHTTP_DEFAULT_ACCEPT_TYPES,
-                                            dwFlags);
-    if (!hRequest)
-    {
-        WinHttpCloseHandle(hConnect);
-        WinHttpCloseHandle(hSession);
-        return false;
-    }
-
-    if (!WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
-                            WINHTTP_NO_REQUEST_DATA, 0, 0, 0))
-    {
-        WinHttpCloseHandle(hRequest);
-        WinHttpCloseHandle(hConnect);
-        WinHttpCloseHandle(hSession);
-        return false;
-    }
-
-    if (!WinHttpReceiveResponse(hRequest, NULL))
-    {
-        WinHttpCloseHandle(hRequest);
-        WinHttpCloseHandle(hConnect);
-        WinHttpCloseHandle(hSession);
-        return false;
-    }
-
-    DWORD dwStatusCode = 0;
-    DWORD dwSize = sizeof(dwStatusCode);
-    WinHttpQueryHeaders(hRequest, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-                        WINHTTP_HEADER_NAME_BY_INDEX, &dwStatusCode, &dwSize, WINHTTP_NO_HEADER_INDEX);
-
-    if (dwStatusCode != 200)
-    {
-        WinHttpCloseHandle(hRequest);
-        WinHttpCloseHandle(hConnect);
-        WinHttpCloseHandle(hSession);
-        return false;
-    }
-
-    DWORD dwSizeAvail = 0;
-    DWORD dwDownloaded = 0;
-    std::vector<char> buffer(8192);
-
-    do
-    {
-        dwSizeAvail = 0;
-        if (!WinHttpQueryDataAvailable(hRequest, &dwSizeAvail)) break;
-
-        if (dwSizeAvail > 0)
-        {
-            if (dwSizeAvail > buffer.size()) buffer.resize(dwSizeAvail);
-
-            if (WinHttpReadData(hRequest, buffer.data(), dwSizeAvail, &dwDownloaded))
-            {
-                response.insert(response.end(), buffer.data(), buffer.data() + dwDownloaded);
-            }
-            else
-            {
-                break;
-            }
-        }
-    } while (dwSizeAvail > 0);
-
-    WinHttpCloseHandle(hRequest);
-    WinHttpCloseHandle(hConnect);
-    WinHttpCloseHandle(hSession);
+    
+    response.assign(res->body.begin(), res->body.end());
     return true;
-#else
-    LOGE("SupersplatClient: Only supported on Windows\n");
-    return false;
-#endif
 }
 
 } // namespace vk_viewer

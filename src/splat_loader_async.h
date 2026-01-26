@@ -92,6 +92,32 @@ public:
     return m_progress;
   }
 
+  // New getters for download details
+  [[nodiscard]] inline std::string getCurrentDownloadingFilename()
+  {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_currentDownloadingFile;
+  }
+
+  [[nodiscard]] inline size_t getCurrentDownloadSize()
+  {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_currentDownloadSize;
+  }
+
+  [[nodiscard]] inline size_t getCurrentDownloadProgress()
+  {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_currentDownloadProgress;
+  }
+
+  inline void getDownloadFileCounts(int& current, int& total)
+  {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    current = m_downloadFileIndex;
+    total = m_downloadFileCount;
+  }
+
   // Set/get LOD level for reload
   inline void setTargetLod(int lod) { m_targetLod = lod; }
   inline int  getTargetLod() const { return m_targetLod; }
@@ -129,6 +155,14 @@ private:
   SplatSet* m_output = nullptr;
   // the loading percentage
   float m_progress = 0.0f;
+  
+  // Download details
+  std::string m_currentDownloadingFile = "";
+  size_t m_currentDownloadSize = 0;
+  size_t m_currentDownloadProgress = 0;
+  int m_downloadFileIndex = 0;
+  int m_downloadFileCount = 0;
+
   // LOD reload state
   int  m_targetLod = 0;
   bool m_lodReloadPending = false;

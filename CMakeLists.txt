@@ -159,29 +159,26 @@ set_property(TARGET webputilsdecode PROPERTY FOLDER "ThirdParty/libwebp")
 
 
 #####
-# Network libraries for ComfyUI and Depth Streaming (unified)
+# Network libraries for HTTP downloads, ComfyUI and Depth Streaming
 option(ENABLE_COMFYUI "Enable ComfyUI integration" ON)
 option(ENABLE_DEPTH_STREAMING "Enable VideoDepthViewer3D depth streaming" ON)
 
-if(ENABLE_COMFYUI OR ENABLE_DEPTH_STREAMING)
-  
-  # Configure IXWebSocket options
-  set(USE_TLS OFF CACHE BOOL "" FORCE) # Disable TLS to avoid OpenSSL/MbedTLS issues for now
-  set(USE_OPENSSL OFF CACHE BOOL "" FORCE)
-  set(USE_MBED_TLS OFF CACHE BOOL "" FORCE)
-  set(USE_ZLIB OFF CACHE BOOL "" FORCE) 
-  set(USE_WS ON CACHE BOOL "" FORCE)
-  set(USE_TEST OFF CACHE BOOL "" FORCE)
-  set(IXWEBSOCKET_INSTALL OFF CACHE BOOL "" FORCE)
-  
-  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/ixwebsocket)
+# Configure IXWebSocket options
+set(USE_TLS OFF CACHE BOOL "" FORCE) # Disable TLS to avoid OpenSSL/MbedTLS issues for now
+set(USE_OPENSSL OFF CACHE BOOL "" FORCE)
+set(USE_MBED_TLS OFF CACHE BOOL "" FORCE)
+set(USE_ZLIB OFF CACHE BOOL "" FORCE) 
+set(USE_WS ON CACHE BOOL "" FORCE)
+set(USE_TEST OFF CACHE BOOL "" FORCE)
+set(IXWEBSOCKET_INSTALL OFF CACHE BOOL "" FORCE)
 
-  if(ENABLE_COMFYUI)
-    message(STATUS "ComfyUI integration enabled (IXWebSocket)")
-  endif()
-  if(ENABLE_DEPTH_STREAMING)
-    message(STATUS "Depth streaming enabled (IXWebSocket)")
-  endif()
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/ixwebsocket)
+
+if(ENABLE_COMFYUI)
+  message(STATUS "ComfyUI integration enabled")
+endif()
+if(ENABLE_DEPTH_STREAMING)
+  message(STATUS "Depth streaming enabled")
 endif()
 
 #####
@@ -355,16 +352,14 @@ target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/n
 
 
 # Network libraries linkage for ComfyUI and Depth Streaming
-if(ENABLE_COMFYUI OR ENABLE_DEPTH_STREAMING)
-  if(ENABLE_COMFYUI)
-    target_compile_definitions(${PROJECT_NAME} PRIVATE WITH_COMFYUI)
-  endif()
-  if(ENABLE_DEPTH_STREAMING)
-    target_compile_definitions(${PROJECT_NAME} PRIVATE WITH_DEPTH_STREAMING)
-  endif()
-  target_link_libraries(${PROJECT_NAME} PRIVATE ixwebsocket)
-  target_include_directories(${PROJECT_NAME} PRIVATE ${ixwebsocket_SOURCE_DIR})
+if(ENABLE_COMFYUI)
+  target_compile_definitions(${PROJECT_NAME} PRIVATE WITH_COMFYUI)
 endif()
+if(ENABLE_DEPTH_STREAMING)
+  target_compile_definitions(${PROJECT_NAME} PRIVATE WITH_DEPTH_STREAMING)
+endif()
+target_link_libraries(${PROJECT_NAME} PRIVATE ixwebsocket)
+target_include_directories(${PROJECT_NAME} PRIVATE ${ixwebsocket_SOURCE_DIR})
 
 # DLSS-RR linkage
 if(ENABLE_DLSS_RR AND NGX_FOUND)
@@ -397,18 +392,6 @@ if(ENABLE_OPENXR AND OpenXR_FOUND)
     target_link_libraries(${PROJECT_NAME} PRIVATE openxr_loader)
     target_include_directories(${PROJECT_NAME} PRIVATE ${openxr-sdk_SOURCE_DIR}/include)
   endif()
-endif()
-
-# HTTP download support: WinHTTP on Windows, WinHttpPAL (libcurl wrapper) on Linux
-if(WIN32)
-  target_link_libraries(${PROJECT_NAME} PRIVATE winhttp)
-else()
-  # WinHttpPAL provides WinHTTP-compatible API on Linux using libcurl
-  find_package(CURL 7.57 REQUIRED)
-  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/winhttppal)
-  set_property(TARGET winhttppal PROPERTY FOLDER "ThirdParty")
-  target_link_libraries(${PROJECT_NAME} PRIVATE winhttppal::winhttppal)
-  target_compile_definitions(${PROJECT_NAME} PRIVATE USE_WINHTTPPAL)
 endif()
 
 add_project_definitions(${PROJECT_NAME})

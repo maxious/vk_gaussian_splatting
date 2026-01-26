@@ -937,6 +937,40 @@ void VkViewerUI::onUIRender()
       case SplatLoaderAsync::State::STATE_LOADING: {
         ImGui::Text("%s", m_splatLoader.getFilename().string().c_str());
         ImGui::ProgressBar(m_splatLoader.getProgress(), ImVec2(ImGui::GetContentRegionAvail().x, 0.0f));
+
+        // Display detailed download info if available
+        int currentFileIdx = 0;
+        int totalFiles = 0;
+        m_splatLoader.getDownloadFileCounts(currentFileIdx, totalFiles);
+
+        if (totalFiles > 0)
+        {
+             std::string currentFilename = m_splatLoader.getCurrentDownloadingFilename();
+             std::string displayName = std::filesystem::path(currentFilename).filename().string();
+             size_t currentBytes = m_splatLoader.getCurrentDownloadProgress();
+             size_t totalBytes = m_splatLoader.getCurrentDownloadSize();
+             
+             ImGui::Separator();
+             ImGui::Text("Downloading file %d/%d: %s", currentFileIdx, totalFiles, displayName.c_str());
+             
+             if (totalBytes > 0)
+             {
+                 float fileProgress = static_cast<float>(currentBytes) / static_cast<float>(totalBytes);
+                 char overlay[64];
+                 // Format bytes to MB
+                 float currentMB = static_cast<float>(currentBytes) / (1024.0f * 1024.0f);
+                 float totalMB = static_cast<float>(totalBytes) / (1024.0f * 1024.0f);
+                 snprintf(overlay, sizeof(overlay), "%.2f MB / %.2f MB", currentMB, totalMB);
+                 
+                 ImGui::ProgressBar(fileProgress, ImVec2(ImGui::GetContentRegionAvail().x, 0.0f), overlay);
+             }
+             else
+             {
+                 // Indeterminate progress
+                 float currentMB = static_cast<float>(currentBytes) / (1024.0f * 1024.0f);
+                 ImGui::Text("Downloaded: %.2f MB", currentMB);
+             }
+        }
       }
       break;
       case SplatLoaderAsync::State::STATE_FAILURE: {

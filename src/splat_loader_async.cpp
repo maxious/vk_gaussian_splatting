@@ -18,6 +18,7 @@
  */
 
 //
+#include <functional>
 #include <fstream>
 #include <array>
 #include <chrono>
@@ -38,14 +39,8 @@
 #include "lcc_loader.h"
 #include "utilities.h"
 
-#ifdef _WIN32
-#include <windows.h>
-#include <winhttp.h>
-#include <regex>
-#elif defined(USE_WINHTTPPAL)
-#include <winhttppal.h>
-#include <regex>
-#endif
+#include <ixwebsocket/IXHttpClient.h>
+#include <ixwebsocket/IXNetSystem.h>
 
 using namespace vk_viewer;
 
@@ -85,184 +80,49 @@ std::vector<uint8_t> readFileLocal(const std::filesystem::path& path)
   return buffer;
 }
 
-#if defined(_WIN32) || defined(USE_WINHTTPPAL)
-
-struct UrlParts {
-  std::string host;
-  std::string path;
-  uint16_t port = 80;
-  bool isHttps = false;
-};
-
-bool parseUrl(const std::string& url, UrlParts& parts)
-{
-  std::regex urlRegex(R"(^(https?)://([^/:]+)(?::(\d+))?(.*)$)");
-  std::smatch match;
-  
-  if (!std::regex_match(url, match, urlRegex))
-    return false;
-  
-  parts.isHttps = (match[1].str() == "https");
-  parts.host = match[2].str();
-  parts.port = match[3].length() > 0 ? static_cast<uint16_t>(std::stoi(match[3].str())) 
-                                      : (parts.isHttps ? 443 : 80);
-  parts.path = match[4].length() > 0 ? match[4].str() : "/";
-  return true;
-}
-
 namespace {
-bool downloadFile(const std::string& url, const std::filesystem::path& destPath)
+using ProgressCallback = std::function<void(size_t downloaded, size_t total)>;
+
+bool downloadFile(const std::string& url, const std::filesystem::path& destPath, ProgressCallback callback = nullptr)
 {
-  UrlParts parts;
-  if (!parseUrl(url, parts))
-  {
-    LOGE("Failed to parse URL: %s\n", url.c_str());
-    return false;
-  }
-
-#ifdef _WIN32
-  std::wstring wideAgent(L"VkViewer/1.0");
-  std::wstring wideHost(parts.host.begin(), parts.host.end());
-  std::wstring widePath(parts.path.begin(), parts.path.end());
-  
-  HINTERNET hSession = WinHttpOpen(wideAgent.c_str(),
-                                   WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
-                                   WINHTTP_NO_PROXY_NAME,
-                                   WINHTTP_NO_PROXY_BYPASS, 0);
-#else
-  HINTERNET hSession = WinHttpOpen("VkViewer/1.0",
-                                   WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
-                                   WINHTTP_NO_PROXY_NAME,
-                                   WINHTTP_NO_PROXY_BYPASS, 0);
-#endif
-  if (!hSession)
-  {
-    LOGE("WinHttpOpen failed (error %d)\n", GetLastError());
-    return false;
-  }
-
-#ifdef _WIN32
-  HINTERNET hConnect = WinHttpConnect(hSession, wideHost.c_str(), parts.port, 0);
-#else
-  HINTERNET hConnect = WinHttpConnect(hSession, parts.host.c_str(), parts.port, 0);
-#endif
-  if (!hConnect)
-  {
-    LOGE("WinHttpConnect failed (error %d)\n", GetLastError());
-    WinHttpCloseHandle(hSession);
-    return false;
-  }
-
-  DWORD dwFlags = parts.isHttps ? WINHTTP_FLAG_SECURE : 0;
-#ifdef _WIN32
-  HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"GET", widePath.c_str(),
-                                          NULL, WINHTTP_NO_REFERER,
-                                          WINHTTP_DEFAULT_ACCEPT_TYPES,
-                                          dwFlags);
-#else
-  HINTERNET hRequest = WinHttpOpenRequest(hConnect, "GET", parts.path.c_str(),
-                                          NULL, WINHTTP_NO_REFERER,
-                                          WINHTTP_DEFAULT_ACCEPT_TYPES,
-                                          dwFlags);
-#endif
-  if (!hRequest)
-  {
-    LOGE("WinHttpOpenRequest failed (error %d)\n", GetLastError());
-    WinHttpCloseHandle(hConnect);
-    WinHttpCloseHandle(hSession);
-    return false;
-  }
-
-  if (!WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
-                          WINHTTP_NO_REQUEST_DATA, 0, 0, 0))
-  {
-    LOGE("WinHttpSendRequest failed (error %d)\n", GetLastError());
-    WinHttpCloseHandle(hRequest);
-    WinHttpCloseHandle(hConnect);
-    WinHttpCloseHandle(hSession);
-    return false;
-  }
-
-  if (!WinHttpReceiveResponse(hRequest, NULL))
-  {
-    LOGE("WinHttpReceiveResponse failed (error %d)\n", GetLastError());
-    WinHttpCloseHandle(hRequest);
-    WinHttpCloseHandle(hConnect);
-    WinHttpCloseHandle(hSession);
-    return false;
-  }
-
-  DWORD dwStatusCode = 0;
-  DWORD dwSize = sizeof(dwStatusCode);
-  if (!WinHttpQueryHeaders(hRequest, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-                           WINHTTP_HEADER_NAME_BY_INDEX, &dwStatusCode, &dwSize, WINHTTP_NO_HEADER_INDEX))
-  {
-    LOGE("WinHttpQueryHeaders failed (error %d)\n", GetLastError());
-    WinHttpCloseHandle(hRequest);
-    WinHttpCloseHandle(hConnect);
-    WinHttpCloseHandle(hSession);
-    return false;
-  }
-
-  if (dwStatusCode != 200)
-  {
-    LOGE("Download failed: HTTP %lu\n", dwStatusCode);
-    WinHttpCloseHandle(hRequest);
-    WinHttpCloseHandle(hConnect);
-    WinHttpCloseHandle(hSession);
-    return false;
-  }
-
-  std::ofstream outFile(destPath, std::ios::binary);
-  if (!outFile)
-  {
-    LOGE("Failed to create file: %s\n", destPath.string().c_str());
-    WinHttpCloseHandle(hRequest);
-    WinHttpCloseHandle(hConnect);
-    WinHttpCloseHandle(hSession);
-    return false;
-  }
-
-  DWORD dwSizeAvail = 0;
-  DWORD dwDownloaded = 0;
-  std::vector<char> buffer(8192);
-
-  do
-  {
-    dwSizeAvail = 0;
-    if (!WinHttpQueryDataAvailable(hRequest, &dwSizeAvail))
+    ix::HttpClient httpClient;
+    auto args = httpClient.createRequest(url, ix::HttpClient::kGet);
+    
+    std::ofstream outFile(destPath, std::ios::binary);
+    if (!outFile)
     {
-      LOGE("WinHttpQueryDataAvailable failed (error %d)\n", GetLastError());
-      break;
+        LOGE("Failed to create file: %s\n", destPath.string().c_str());
+        return false;
     }
 
-    if (dwSizeAvail > 0)
-    {
-      if (dwSizeAvail > buffer.size()) buffer.resize(dwSizeAvail);
+    args->onChunkCallback = [&](const std::string& chunk) {
+        outFile.write(chunk.data(), chunk.size());
+        return true;
+    };
 
-      if (WinHttpReadData(hRequest, buffer.data(), dwSizeAvail, &dwDownloaded))
-      {
-        outFile.write(buffer.data(), dwDownloaded);
-      }
-      else
-      {
-        LOGE("WinHttpReadData failed (error %d)\n", GetLastError());
-        break;
-      }
+    if (callback) {
+        args->onProgressCallback = [&](size_t downloaded, size_t total) {
+            callback(downloaded, total);
+            return true;
+        };
     }
-  } while (dwSizeAvail > 0);
 
-  outFile.close();
-  WinHttpCloseHandle(hRequest);
-  WinHttpCloseHandle(hConnect);
-  WinHttpCloseHandle(hSession);
+    auto res = httpClient.get(url, args);
+    outFile.close();
 
-  return true;
+    if (res->errorCode != ix::HttpErrorCode::Ok) {
+        LOGE("Download failed: %s\n", res->errorMsg.c_str());
+        return false;
+    }
+
+    if (res->statusCode != 200) {
+        LOGE("Download failed: HTTP %d\n", res->statusCode);
+        return false;
+    }
+
+    return true;
 }
 }
-#endif
-
-
 
 bool SplatLoaderAsync::loadScene(std::filesystem::path filename, SplatSet& output)
 {
@@ -305,6 +165,8 @@ bool SplatLoaderAsync::loadSceneAtLod(std::filesystem::path filename, SplatSet& 
 
 bool SplatLoaderAsync::initialize()
 {
+  ix::initNetSystem();
+
   // original state shall be shutdown
   std::unique_lock<std::mutex> lock(m_mutex);
   if(m_status != STATE_SHUTDOWN)
@@ -396,7 +258,6 @@ bool SplatLoaderAsync::innerLoad(std::filesystem::path filename, SplatSet& outpu
   std::string pathStr = filename.string();
   if (pathStr.find("http://") == 0 || pathStr.find("https://") == 0)
   {
-#if defined(_WIN32) || defined(USE_WINHTTPPAL)
     std::string superSplatId = extractSuperSplatId(pathStr);
     std::filesystem::path cacheDir = std::filesystem::temp_directory_path() / "vk_viewer_cache";
     
@@ -457,6 +318,12 @@ bool SplatLoaderAsync::innerLoad(std::filesystem::path filename, SplatSet& outpu
 
             int total = static_cast<int>(filesToDownload.size());
             int current = 0;
+            
+            {
+                std::lock_guard<std::mutex> lock(m_mutex);
+                m_downloadFileCount = total;
+            }
+
             for (const auto& file : filesToDownload)
             {
                 current++;
@@ -471,7 +338,21 @@ bool SplatLoaderAsync::innerLoad(std::filesystem::path filename, SplatSet& outpu
                 
                 setProgress(static_cast<float>(current) / static_cast<float>(total));
 
-                if (!downloadFile(fileUrl, localFilePath))
+                {
+                    std::lock_guard<std::mutex> lock(m_mutex);
+                    m_downloadFileIndex = current;
+                    m_currentDownloadingFile = file;
+                    m_currentDownloadSize = 0;
+                    m_currentDownloadProgress = 0;
+                }
+
+                auto progressCallback = [&](size_t downloaded, size_t totalBytes) {
+                    std::lock_guard<std::mutex> lock(m_mutex);
+                    m_currentDownloadSize = totalBytes;
+                    m_currentDownloadProgress = downloaded;
+                };
+
+                if (!downloadFile(fileUrl, localFilePath, progressCallback))
                 {
                     LOGE("Failed to download file: %s\n", file.c_str());
                     return false;
@@ -507,7 +388,26 @@ bool SplatLoaderAsync::innerLoad(std::filesystem::path filename, SplatSet& outpu
         
         LOGI("Downloading %s to %s...\n", pathStr.c_str(), destPath.string().c_str());
         
-        if (downloadFile(pathStr, destPath))
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_downloadFileCount = 1;
+            m_downloadFileIndex = 1;
+            m_currentDownloadingFile = pathStr;
+            m_currentDownloadSize = 0;
+            m_currentDownloadProgress = 0;
+        }
+
+        auto progressCallback = [&](size_t downloaded, size_t totalBytes) {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_currentDownloadSize = totalBytes;
+            m_currentDownloadProgress = downloaded;
+            // For single file, use download progress as overall progress
+            if (totalBytes > 0) {
+                m_progress = static_cast<float>(downloaded) / static_cast<float>(totalBytes);
+            }
+        };
+
+        if (downloadFile(pathStr, destPath, progressCallback))
         {
            filename = destPath;
            LOGI("Download complete. Proceeding to load...\n");
@@ -518,10 +418,6 @@ bool SplatLoaderAsync::innerLoad(std::filesystem::path filename, SplatSet& outpu
            return false;
         }
     }
-#else
-    LOGE("URL loading is currently only supported on Windows.\n");
-    return false;
-#endif
   }
 
   // LOD format (lod-meta.json with octree + multi-level SOG files)
