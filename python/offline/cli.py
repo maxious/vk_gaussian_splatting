@@ -54,6 +54,29 @@ def main():
     )
     depth_parser.add_argument("-v", "--verbose", action="store_true")
 
+    prune_parser = subparsers.add_parser(
+        "prune", help="Prune Gaussians using sensitivity/visibility analysis"
+    )
+    prune_parser.add_argument("--input", "-i", type=Path, required=True, help="Input PLY file")
+    prune_parser.add_argument("--output", "-o", type=Path, required=True, help="Output PLY file")
+    prune_parser.add_argument(
+        "--source-path",
+        "-s",
+        type=Path,
+        required=True,
+        help="Path to COLMAP dataset (containing sparse/0/)",
+    )
+    prune_parser.add_argument(
+        "--prune-percent",
+        type=float,
+        default=0.5,
+        help="Fraction of Gaussians to prune (0.0 - 1.0)",
+    )
+    prune_parser.add_argument(
+        "--device", type=str, default="cuda", help="Computation device (default: cuda)"
+    )
+    prune_parser.add_argument("-v", "--verbose", action="store_true")
+
     export_parser = subparsers.add_parser("export", help="Export video to Gaussian PLYs")
     export_parser.add_argument("--input", "-i", type=Path, required=True, help="Input video file")
     export_parser.add_argument(
@@ -307,6 +330,17 @@ def main():
         from .depth import run_depth
 
         run_depth(args)
+
+    elif args.command == "prune":
+        from .prune_sensitivity import run_pruning
+
+        run_pruning(
+            args.input,
+            args.output,
+            args.source_path,
+            args.prune_percent,
+            args.device,
+        )
 
     elif args.command == "export" or args.command == "legacy":
         export_video_to_gaussian_plys(
