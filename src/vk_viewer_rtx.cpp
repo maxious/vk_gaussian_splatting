@@ -44,6 +44,16 @@ void VkViewer::initRtDescriptorSet()
   m_rtDescriptorBindings.addBinding(RTX_BINDING_TLAS_MESH, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1,
                                     VK_SHADER_STAGE_RAYGEN_BIT_KHR);
 
+  // GRTX optimization: Global SoA K-buffer bindings for splat any-hit accumulation
+  // These are accessed by both raygen (init/read) and anyhit (write) shaders
+  if(prmRtx.useGlobalKBuffer)
+  {
+    m_rtDescriptorBindings.addBinding(RTX_BINDING_KBUFFER_DIST, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
+                                      VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_ANY_HIT_BIT_KHR);
+    m_rtDescriptorBindings.addBinding(RTX_BINDING_KBUFFER_ID, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
+                                      VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_ANY_HIT_BIT_KHR);
+  }
+
 #ifdef WITH_DLSS_RR
   m_rtDescriptorBindings.addBinding(RTX_BINDING_DLSS_DIFFUSE_ALBEDO, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_RAYGEN_BIT_KHR);
   m_rtDescriptorBindings.addBinding(RTX_BINDING_DLSS_SPECULAR_ALBEDO, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_RAYGEN_BIT_KHR);
@@ -105,6 +115,13 @@ void VkViewer::initRtDescriptorSet()
   {
     writeContainer.append(m_rtDescriptorBindings.getWriteSet(RTX_BINDING_TLAS_MESH, m_rtDescriptorSet),
                           m_meshSetVk.rtAccelerationStructures.tlas);
+  }
+
+  // GRTX optimization: K-buffer bindings
+  if(prmRtx.useGlobalKBuffer && m_kBufferDist.buffer != VK_NULL_HANDLE)
+  {
+    writeContainer.append(m_rtDescriptorBindings.getWriteSet(RTX_BINDING_KBUFFER_DIST, m_rtDescriptorSet), m_kBufferDist);
+    writeContainer.append(m_rtDescriptorBindings.getWriteSet(RTX_BINDING_KBUFFER_ID, m_rtDescriptorSet), m_kBufferId);
   }
 
 #ifdef WITH_DLSS_RR
@@ -177,6 +194,13 @@ void VkViewer::updateRtDescriptorSet()
     writeContainer.append(m_rtDescriptorBindings.getWriteSet(RTX_BINDING_DLSS_MOTION, m_rtDescriptorSet),
                           m_gBuffers.getColorImageView(COLOR_MOTION), VK_IMAGE_LAYOUT_GENERAL);
 #endif
+
+    // GRTX optimization: K-buffer bindings (resized with viewport)
+    if(prmRtx.useGlobalKBuffer && m_kBufferDist.buffer != VK_NULL_HANDLE)
+    {
+      writeContainer.append(m_rtDescriptorBindings.getWriteSet(RTX_BINDING_KBUFFER_DIST, m_rtDescriptorSet), m_kBufferDist);
+      writeContainer.append(m_rtDescriptorBindings.getWriteSet(RTX_BINDING_KBUFFER_ID, m_rtDescriptorSet), m_kBufferId);
+    }
 
     // let's update
     if (writeContainer.size() > 0) {
@@ -530,6 +554,54 @@ void VkViewer::raytraceMultiview(const VkCommandBuffer& cmdBuf, bool meshDepthOn
                     traceWidth, traceHeight, 1);
 }
 
+
+//--------------------------------------------------------------------------------------------------
+// GRTX optimization: Create or resize global SoA K-buffers for splat any-hit accumulation
+// Structure-of-Arrays layout provides coalesced memory access and reduces register pressure
+//
+void VkViewer::updateKBuffers(uint32_t width, uint32_t height)
+{
+  if(!prmRtx.useGlobalKBuffer)
+    return;
+
+  // Check if resize is needed
+  if(m_kBufferSize.x == width && m_kBufferSize.y == height)
+    return;
+
+  // Free old buffers
+  if(m_kBufferDist.buffer != VK_NULL_HANDLE)
+  {
+    m_alloc.destroyBuffer(m_kBufferDist);
+  }
+  if(m_kBufferId.buffer != VK_NULL_HANDLE)
+  {
+    m_alloc.destroyBuffer(m_kBufferId);
+  }
+
+  // Calculate buffer sizes: PAYLOAD_ARRAY_SIZE * width * height elements
+  const uint32_t numRays = width * height;
+  const uint32_t kBufferElements = prmRtx.payloadArraySize * numRays;
+  const VkDeviceSize distBufferSize = kBufferElements * sizeof(float);
+  const VkDeviceSize idBufferSize = kBufferElements * sizeof(int32_t);
+
+  // Create K-buffer for distances (float)
+  NVVK_CHECK(m_alloc.createBuffer(m_kBufferDist, distBufferSize,
+                                  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                  VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE));
+  NVVK_DBG_NAME(m_kBufferDist.buffer);
+
+  // Create K-buffer for splat IDs (int)
+  NVVK_CHECK(m_alloc.createBuffer(m_kBufferId, idBufferSize,
+                                  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                  VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE));
+  NVVK_DBG_NAME(m_kBufferId.buffer);
+
+  m_kBufferSize = glm::uvec2(width, height);
+
+  LOGI("Created K-buffers: %u x %u pixels, %u elements each (%.2f MB total)\n",
+       width, height, kBufferElements,
+       (distBufferSize + idBufferSize) / (1024.0f * 1024.0f));
+}
 
 bool VkViewer::updateFrameCounter()
 {

@@ -319,6 +319,7 @@ void VkViewer::onResize(VkCommandBuffer cmd, const VkExtent2D& viewportSize)
 {
   m_viewSize = {viewportSize.width, viewportSize.height};
   NVVK_CHECK(m_gBuffers.update(cmd, viewportSize));
+  updateKBuffers(viewportSize.width, viewportSize.height);  // GRTX: resize K-buffers
   updateRtDescriptorSet();
   updateDescriptorSetPostProcessing();
   resetFrameCounter();
@@ -349,6 +350,7 @@ void VkViewer::onPreRender()
       VkCommandBuffer cmd = m_app->createTempCmdBuffer();
       m_viewSize = glm::vec2(xrExtent.width, xrExtent.height);
       NVVK_CHECK(m_gBuffers.update(cmd, xrExtent));
+      updateKBuffers(xrExtent.width, xrExtent.height);  // GRTX: resize K-buffers
       updateRtDescriptorSet();
       updateDescriptorSetPostProcessing();
       resetFrameCounter();

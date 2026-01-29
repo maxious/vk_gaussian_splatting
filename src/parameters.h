@@ -77,7 +77,9 @@ struct RtxVramDataParameters
   bool compressBlas = true;
   // set to true to use AABBs instead of mesh ICOSA primitives
   // This will also make the Rtx pipeline use parametric intersections
-  bool useAABBs = false;
+  // AABB mode is faster: eliminates 20-triangle icosahedron traversal overhead
+  // and uses efficient particleDensityHitInstance path in intersection shader
+  bool useAABBs = true;
   // if true, use one instance per splat in TLAS and single splat model in BLAS
   // otherwise, only one instance in TLAS and all splats transformed in BLAS
   bool useTlasInstances = true;
@@ -144,6 +146,9 @@ struct RtxParameters
   float kernelMinResponse      = 0.0113f;  // constant value from Paper
   bool  kernelAdaptiveClamping = true;
   int   payloadArraySize       = 18;  // best default value set by experimentation on ADA6000
+  // GRTX optimization: use global SoA K-buffer instead of ray payload arrays
+  // Structure-of-Arrays layout provides coalesced memory access and reduces register pressure
+  bool  useGlobalKBuffer       = true;
 };
 
 // Parameters that control Raytracing (RTX)

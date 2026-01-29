@@ -47,6 +47,12 @@
 #if defined(WITH_DLSS_RR) || defined(WITH_SPACE_WARP)
 [[vk::binding(RTX_BINDING_DLSS_MOTION, 1)]] RWTexture2D<float2> dlssMotion;
 #endif
+#if RTX_USE_GLOBAL_KBUFFER
+// GRTX optimization: Global SoA K-buffer for splat any-hit accumulation
+// Structure-of-Arrays layout: buffer[slotIndex * numRays + rayIndex]
+[[vk::binding(RTX_BINDING_KBUFFER_DIST, 1)]] RWStructuredBuffer<float> gKDist;
+[[vk::binding(RTX_BINDING_KBUFFER_ID, 1)]] RWStructuredBuffer<int> gKId;
+#endif
 
 // clang-format on
 
@@ -280,9 +286,29 @@ void main()
       // uses the inverse of the rotation-scale part of the model matrix.
       const float3 splatSetModelRayDirection = normalize(mul(rayDirection, float3x3(pcRay.modelMatrixRotScaleInverse)));
 
+#if RTX_USE_GLOBAL_KBUFFER
+      // GRTX optimization: compute ray index for global K-buffer access
+      const uint rayIndex = launchID.y * launchSize.x + launchID.x;
+      const uint numRays = launchSize.x * launchSize.y;
+      
+      // Pass ray info to anyhit via minimal payload
+      payload.rayIndex = rayIndex;
+      payload.numRays = numRays;
+#endif
+
       while(outerIdx < frameInfo.maxPasses && (rayLastHitDistance <= tMax)
             && (maxComponent(transmittance) > double(frameInfo.minTransmittance)))
       {
+#if RTX_USE_GLOBAL_KBUFFER
+        // Initialize global K-buffer for this ray
+        [[unroll]]
+        for(int i = 0; i < PAYLOAD_ARRAY_SIZE; ++i)
+        {
+          uint idx = getKBufferIndex(i, rayIndex, numRays);
+          gKId[idx] = PAYLOAD_INVALID_ID;
+          gKDist[idx] = PAYLOAD_INF_DISTANCE;
+        }
+#else
         // prepare the payload
         [[unroll]]
         for(int i = 0; i < PAYLOAD_ARRAY_SIZE; ++i)
@@ -290,6 +316,7 @@ void main()
           payload.id[i]   = PAYLOAD_INVALID_ID;
           payload.dist[i] = PAYLOAD_INF_DISTANCE;
         }
+#endif
 
         // trace the PAYLOAD_ARRAY_SIZE any hits
         // Use model-space ray since TLAS is built in model space with identity transform
@@ -309,7 +336,11 @@ void main()
                  payload      // payload (location = 0)
         );
 
+#if RTX_USE_GLOBAL_KBUFFER
+        const int firstId = gKId[getKBufferIndex(0, rayIndex, numRays)];
+#else
         const int firstId = payload.id[0];
+#endif
 
         // no more hits found
         if(firstId == PAYLOAD_INVALID_ID)
@@ -321,8 +352,14 @@ void main()
         [[unroll]]
         for(int i = 0; i < PAYLOAD_ARRAY_SIZE; ++i)
         {
+#if RTX_USE_GLOBAL_KBUFFER
+          uint idx = getKBufferIndex(i, rayIndex, numRays);
+          const int   splatId = gKId[idx];
+          const float dist    = gKDist[idx];
+#else
           const int   splatId = payload.id[i];
           const float dist    = payload.dist[i];
+#endif
 
           if((splatId != PAYLOAD_INVALID_ID) && (maxComponent(transmittance) > double(frameInfo.minTransmittance)))
           {

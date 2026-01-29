@@ -20,6 +20,12 @@
 #include "shaderio.h"
 #include "threedgrt_payload.h.slang"
 
+#if RTX_USE_GLOBAL_KBUFFER
+// GRTX optimization: Global SoA K-buffer for splat any-hit accumulation
+[[vk::binding(RTX_BINDING_KBUFFER_DIST, 1)]] RWStructuredBuffer<float> gKDist;
+[[vk::binding(RTX_BINDING_KBUFFER_ID, 1)]] RWStructuredBuffer<int> gKId;
+#endif
+
 [shader("anyhit")]
 void main(inout HitPayload payload
 #if WIREFRAME
@@ -43,6 +49,45 @@ void main(inout HitPayload payload
 #endif
   //prd.hitCount += 1;
 
+#if RTX_USE_GLOBAL_KBUFFER
+  // GRTX optimization: Use global SoA K-buffer instead of payload arrays
+  const uint rayIndex = payload.rayIndex;
+  const uint numRays = payload.numRays;
+  
+  // Get last slot distance for early out test
+  uint lastIdx = getKBufferIndex(PAYLOAD_ARRAY_SIZE - 1, rayIndex, numRays);
+  if (splatDist < gKDist[lastIdx])
+  {
+    // insert/sorted from min dist to max dist using global K-buffer
+    [unroll]
+    for(int i = 0; i < PAYLOAD_ARRAY_SIZE; ++i)
+    {
+      uint idx = getKBufferIndex(i, rayIndex, numRays);
+      const float distance = gKDist[idx];
+      if(splatDist < distance)
+      {
+        gKDist[idx] = splatDist;
+        splatDist = distance;
+
+        const int id = gKId[idx];
+        gKId[idx] = splatId;
+        splatId = id;
+
+#if WIREFRAME
+        const float2 bary = payload.bary[i];
+        payload.bary[i] = splatBary;
+        splatBary = bary;
+#endif
+      }
+    }
+
+    // ignore all inserted hits, except if the last one
+    if(gKDist[lastIdx] > RayTCurrent())
+    {
+      IgnoreHit();
+    }
+  }
+#else
   if (splatDist < payload.dist[PAYLOAD_ARRAY_SIZE - 1])
   {
     // insert/sorted from min dist to max dist
@@ -73,4 +118,5 @@ void main(inout HitPayload payload
       IgnoreHit();
     }
   }
+#endif
 }

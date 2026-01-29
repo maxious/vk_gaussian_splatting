@@ -331,6 +331,7 @@ private:
   void initRtDescriptorSet();
   void updateRtDescriptorSet();
   void initRtPipeline();
+  void updateKBuffers(uint32_t width, uint32_t height);  // GRTX: Create/resize global K-buffers
   void raytrace(const VkCommandBuffer& cmdBuf, bool meshDepthOnly = false,
                 glm::ivec2 viewportOffset = {0, 0}, glm::ivec2 viewportSize = {0, 0});
   // VK_KHR_multiview optimized raytrace for stereo rendering (mobile VR)
@@ -687,6 +688,12 @@ protected:
   VkDescriptorPool         m_rtDescriptorPool      = VK_NULL_HANDLE;
 
   nvvk::Buffer m_payloadDevice;
+
+  // GRTX optimization: Global SoA K-buffer for splat any-hit accumulation
+  // Structure-of-Arrays layout: buffer[slotIndex * numRays + rayIndex] for coalesced access
+  nvvk::Buffer m_kBufferDist;  // float[PAYLOAD_ARRAY_SIZE * width * height]
+  nvvk::Buffer m_kBufferId;    // int[PAYLOAD_ARRAY_SIZE * width * height]
+  glm::uvec2   m_kBufferSize{0, 0};  // Current K-buffer dimensions
 
   nvvk::Buffer m_rtSBTBuffer;  // common to GS and Mesh
   // The 4 SBT regions (raygen, miss, chit, call in this order)

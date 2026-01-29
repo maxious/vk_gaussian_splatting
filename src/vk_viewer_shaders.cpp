@@ -52,6 +52,7 @@ void VkViewer::updateSlangMacros()
        {"RTX_USE_INSTANCES", std::to_string((int)prmRtxData.useTlasInstances)},
        {"RTX_USE_AABBS", std::to_string((int)prmRtxData.useAABBs)},
        {"RTX_USE_MESHES", std::to_string((int)m_meshSetVk.instances.size())},
+       {"RTX_USE_GLOBAL_KBUFFER", std::to_string((int)prmRtx.useGlobalKBuffer)},
        {"RTX_DOF_ENABLED", std::to_string((int)m_cameraSet.getCamera().dofEnabled)},
        // VK_KHR_multiview support for mobile VR (stereo rendering optimization)
        {"MULTIVIEW_ENABLED", "1"},

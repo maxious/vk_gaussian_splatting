@@ -21,3 +21,22 @@
 
 static const int PAYLOAD_INVALID_ID   = -1;
 static const float PAYLOAD_INF_DISTANCE = asfloat(0x7F7FFFFF);
+
+// GRTX optimization: Global SoA K-buffer accessors
+// When RTX_USE_GLOBAL_KBUFFER is enabled, the K-buffer data is stored in global memory
+// using Structure-of-Arrays layout for coalesced access: buffer[slotIndex * numRays + rayIndex]
+// This reduces ray payload register pressure and improves occupancy.
+
+#if RTX_USE_GLOBAL_KBUFFER
+
+// Helper functions to access K-buffer with SoA layout
+// slotIndex: which slot in the K-buffer (0 to PAYLOAD_ARRAY_SIZE-1)
+// rayIndex: linear index of the ray (y * width + x)
+// numRays: total number of rays (width * height)
+
+static uint getKBufferIndex(uint slotIndex, uint rayIndex, uint numRays)
+{
+    return slotIndex * numRays + rayIndex;
+}
+
+#endif // RTX_USE_GLOBAL_KBUFFER

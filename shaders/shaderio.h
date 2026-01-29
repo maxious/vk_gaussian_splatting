@@ -122,7 +122,11 @@
 #define RTX_BINDING_OUTIMAGE 0        // Ray tracer output image
 #define RTX_BINDING_TLAS_SPLATS 1     // Top-level acceleration structure for splats
 #define RTX_BINDING_TLAS_MESH 2       // Top-level acceleration structure for meshes
-#define RTX_BINDING_PAYLOAD_BUFFER 3  // the alternative to payload stack (less efficient)
+// Global SoA K-buffer bindings (GRTX optimization)
+// Structure-of-Arrays layout for coalesced memory access: buffer[i * numRays + rayIndex]
+// This reduces ray payload register pressure and improves occupancy
+#define RTX_BINDING_KBUFFER_DIST 3   // float[K * numRays] - hit distances
+#define RTX_BINDING_KBUFFER_ID 12    // int[K * numRays] - splat IDs
 #define RTX_BINDING_AUX1 4            // Ray tracer auxiliary output image, when using hybrid mode + temporal sampling
 #define RTX_BINDING_OUTDEPTH 5        // depth buffer
 // DLSS-RR G-buffer outputs (when WITH_DLSS_RR is defined)
@@ -407,8 +411,18 @@ struct PushConstantRay
 #ifndef __cplusplus
 struct HitPayload
 {
+#if RTX_USE_GLOBAL_KBUFFER
+  // GRTX optimization: Minimal payload when using global K-buffer
+  // Ray index is passed to anyhit for global buffer access
+  uint rayIndex;   // Linear ray index (y * width + x)
+  uint numRays;    // Total rays (width * height)
+  // Still need mesh hit data for closest-hit shader
+  int   id[2];     // [0]=objId, [1]=matId for mesh hits
+  float dist[7];   // [0]=hitDist, [1-6]=worldPos/worldNrm for mesh hits
+#else
   int   id[PAYLOAD_ARRAY_SIZE];
   float dist[PAYLOAD_ARRAY_SIZE];
+#endif
 #if WIREFRAME
   float2 bary[PAYLOAD_ARRAY_SIZE];  // hit barycentrics
 #endif
