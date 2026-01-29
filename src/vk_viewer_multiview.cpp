@@ -183,6 +183,11 @@ void VkViewer::renderMultiviewRaster(VkCommandBuffer cmd, uint32_t splatCount)
   renderingInfo.pColorAttachments    = &colorAttachment;
   renderingInfo.pDepthAttachment     = &depthAttachment;
 
+  if(m_enableDepthRendering)
+  {
+    updateDepthRendering(cmd);
+  }
+
   vkCmdBeginRendering(cmd, &renderingInfo);
 
   // Set viewport and scissor for per-eye rendering
@@ -253,7 +258,6 @@ void VkViewer::renderMultiviewRaster(VkCommandBuffer cmd, uint32_t splatCount)
   // Draw VDZ depth mesh if depth rendering is enabled
   if(m_enableDepthRendering)
   {
-    updateDepthRendering(cmd);
     drawVdzMesh(cmd);
   }
 

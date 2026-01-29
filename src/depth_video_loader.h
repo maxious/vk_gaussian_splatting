@@ -124,6 +124,7 @@ struct PlaybackFrame
     // HW Decoding Support
     VkImage rgbImage = VK_NULL_HANDLE;
     VkFormat rgbFormat = VK_FORMAT_UNDEFINED;
+    VkImageLayout rgbLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     VkSemaphore rgbSemaphore = VK_NULL_HANDLE;
     std::shared_ptr<void> hwFrameRef; // Keep alive the AVFrame/VkImage
     

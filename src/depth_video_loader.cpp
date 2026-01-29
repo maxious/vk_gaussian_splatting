@@ -910,6 +910,7 @@ void VideoDepthPlaybackManager::prebufferThread()
             // Hardware decoded frame
             pf.rgbImage = videoFrame.image;
             pf.rgbFormat = videoFrame.format;
+            pf.rgbLayout = videoFrame.layout;
             pf.rgbSemaphore = videoFrame.semaphore;
             pf.hwFrameRef = videoFrame.hwFrameRef; // Keep reference alive
         } else {

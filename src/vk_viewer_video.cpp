@@ -83,11 +83,9 @@ void VkViewer::updateDepthRendering(VkCommandBuffer cmd)
                 vkCreateImageView(m_device, &viewInfo, nullptr, &m_videoTexture.view);
                 updateDescriptor = true;
                 
-                // Transition layout if needed? FFmpeg usually leaves it in VIDEO_DECODE_DST
-                // We need SHADER_READ_ONLY.
-                // We should add a barrier here.
+                // Transition layout if needed
                 VkImageMemoryBarrier barrier = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-                barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED; // We don't know previous, so discard
+                barrier.oldLayout = pf.rgbLayout; 
                 barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
                 barrier.srcAccessMask = 0; // Handled by semaphore ideally, or assume decode done
                 barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
@@ -96,8 +94,11 @@ void VkViewer::updateDepthRendering(VkCommandBuffer cmd)
                 
                 // If semaphore provided, we should wait on it? 
                 // Currently single queue, so execution barrier might suffice if on same queue.
-                vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 
-                                     0, 0, nullptr, 0, nullptr, 1, &barrier);
+                if (pf.rgbLayout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+                {
+                    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 
+                                         0, 0, nullptr, 0, nullptr, 1, &barrier);
+                }
             }
         }
         else if (!pf.rgbRGBA.empty())

@@ -626,6 +626,11 @@ void VkViewer::renderSingleView(FrameRenderContext& ctx, const RenderView& view)
                                           VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
                                           {VK_IMAGE_ASPECT_DEPTH_BIT, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS}});
 
+    if(ctx.hasDepthContent)
+    {
+      updateDepthRendering(ctx.cmd);
+    }
+
     vkCmdBeginRendering(ctx.cmd, &renderingInfo);
 
     vkCmdSetViewportWithCount(ctx.cmd, 1, &view.viewport);
@@ -643,7 +648,6 @@ void VkViewer::renderSingleView(FrameRenderContext& ctx, const RenderView& view)
 
     if(ctx.hasDepthContent)
     {
-      updateDepthRendering(ctx.cmd);
       drawVdzMesh(ctx.cmd);
     }
 
