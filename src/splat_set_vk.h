@@ -104,13 +104,15 @@ public:
   void deinitDataStorage();
 
   // initDataStorage must be invoked prior to creation of the splat model
-  void rtxInitSplatModel(SplatSet& splatSet, bool useInstances, bool useAABBs, bool compressBlas, int kernelDegree, float kernelMinResponse, bool kernelAdaptiveClamping);
+  void rtxInitSplatModel(SplatSet& splatSet, bool useInstances, bool useAABBs, bool useSpheres, bool compressBlas, int kernelDegree, float kernelMinResponse, bool kernelAdaptiveClamping);
 
   void rtxDeinitSplatModel()
   {
     m_alloc->destroyBuffer(m_splatModel.vertexBuffer);
     m_alloc->destroyBuffer(m_splatModel.indexBuffer);
     m_alloc->destroyBuffer(m_splatModel.aabbBuffer);
+    m_alloc->destroyBuffer(m_splatModel.sphereCenterBuffer);
+    m_alloc->destroyBuffer(m_splatModel.sphereRadiusBuffer);
     rtxValid = false;
   }
 
@@ -181,6 +183,11 @@ public:
     // AABB related
     uint32_t     nbAABB;
     nvvk::Buffer aabbBuffer;
+
+    // Sphere related (Blackwell native primitives)
+    uint32_t     nbSpheres{0};
+    nvvk::Buffer sphereCenterBuffer;  // Device buffer of sphere centers (vec3)
+    nvvk::Buffer sphereRadiusBuffer;  // Device buffer of sphere radii (float)
 
   } m_splatModel;
 
@@ -276,6 +283,7 @@ private:
   uint32_t m_format{};
 
   bool  m_rtxUseAABBs;
+  bool  m_rtxUseSpheres;
   bool  m_rtxUseInstances;
   bool  m_rtxCompressBlas;
   int   m_rtxKernelDegree;

@@ -91,8 +91,22 @@ bool particleDensityHitInstance(in float3   canonicalRayOrigin,
 void main()
 {
   float hitT;
-#if RTX_USE_INSTANCES
-  // allways testing the same unit particle, no data fetch inside Hit test function
+
+#if RTX_USE_SPHERES
+  // Blackwell native sphere primitives - hardware handles ray-sphere intersection
+  // We still need intersection shader to compute the density t_closest (Gaussian center)
+  // not the surface hit t that hardware provides
+  
+  // For sphere primitives, ObjectRayOrigin/Direction are already in unit sphere space
+  // The hardware has already tested ray-sphere intersection at radius 3.0
+  // We compute t_closest = point on ray closest to sphere center (Gaussian peak)
+  if (particleDensityHitInstance(ObjectRayOrigin(), ObjectRayDirection(), RayTMin(), RayTCurrent(), 9.0F, hitT)) {
+      BuiltInTriangleIntersectionAttributes attr;
+      attr.barycentrics = float2(0.0, 0.0);
+      ReportHit(hitT, 0, attr);
+  }
+#elif RTX_USE_INSTANCES
+  // AABB mode with instances - testing unit particle transformed by instance
   if (particleDensityHitInstance(ObjectRayOrigin(), ObjectRayDirection(), RayTMin(), RayTCurrent(), 9.0F, hitT)) {
       BuiltInTriangleIntersectionAttributes attr;
       attr.barycentrics = float2(0.0, 0.0); // TODO: providing barycentrics will help rendering wireframe

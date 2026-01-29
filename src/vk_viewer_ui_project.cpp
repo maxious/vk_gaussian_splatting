@@ -174,6 +174,7 @@ bool VkViewerUI::loadProjectIfNeeded()
 
       LOAD1(prmRtxData.compressBlas, item, "compressBlas");
       LOAD1(prmRtxData.useAABBs, item, "useAABBs");
+      LOAD1(prmRtxData.useSpheres, item, "useSpheres");
       LOAD1(prmRtxData.useTlasInstances, item, "useTlasInstances");
 
       m_requestUpdateSplatData = true;
@@ -410,6 +411,7 @@ bool VkViewerUI::saveProject(std::string path)
 
       item["compressBlas"]     = prmRtxData.compressBlas;
       item["useAABBs"]         = prmRtxData.useAABBs;
+      item["useSpheres"]       = prmRtxData.useSpheres;
       item["useTlasInstances"] = prmRtxData.useTlasInstances;
 
       data["splatsGlobals"] = item;

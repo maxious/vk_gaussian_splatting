@@ -534,23 +534,34 @@ void VkViewerUI::guiDrawRendererProperties()
 
         ImGui::BeginDisabled(prmSelectedPipeline == PIPELINE_MESH_3DGUT);
 
-        int parametric = prmRtxData.useAABBs ? PARTICLE_FORMAT_PARAMETRIC : PARTICLE_FORMAT_ICOSAHEDRON;
+        int particleFormat = prmRtxData.useSpheres ? PARTICLE_FORMAT_SPHERE :
+                             prmRtxData.useAABBs ? PARTICLE_FORMAT_PARAMETRIC : PARTICLE_FORMAT_ICOSAHEDRON;
 
         if(PE::entry(
-               "Particles format", [&]() { return m_ui.enumCombobox(GUI_PARTICLE_FORMAT, "##ID", &parametric); },
-               "This is a convenience shortcut to switch the Radiance Field use AABB property.\n"
-               "Note that activating parametric will force the use of TLAS instance.\n"))
+               "Particles format", [&]() { return m_ui.enumCombobox(GUI_PARTICLE_FORMAT, "##ID", &particleFormat); },
+               "Icosahedron: 20-triangle mesh per splat (slow)\n"
+               "AABB + parametric: Axis-aligned bounding box with intersection shader (fast)\n"
+               "Sphere (Blackwell): Native hardware ray-sphere intersection (RTX 50 series only, fastest)\n"))
         {
-          if(parametric == PARTICLE_FORMAT_ICOSAHEDRON)
+          if(particleFormat == PARTICLE_FORMAT_ICOSAHEDRON)
           {
-            prmRtxData.useAABBs = false;
+            prmRtxData.useAABBs   = false;
+            prmRtxData.useSpheres = false;
           }
-          if(parametric == PARTICLE_FORMAT_PARAMETRIC)
+          else if(particleFormat == PARTICLE_FORMAT_PARAMETRIC)
           {
             prmRtxData.useAABBs         = true;
+            prmRtxData.useSpheres       = false;
             prmRtxData.useTlasInstances = true;
           }
+          else if(particleFormat == PARTICLE_FORMAT_SPHERE)
+          {
+            prmRtxData.useAABBs         = false;  // Spheres replace AABBs
+            prmRtxData.useSpheres       = true;
+            prmRtxData.useTlasInstances = true;  // Sphere mode requires instances
+          }
           m_requestUpdateSplatData = true;
+          m_requestUpdateShaders   = true;  // Need to recompile shaders for RTX_USE_SPHERES
         }
 
         if(PE::Checkbox("Adaptive clamp", &prmRtx.kernelAdaptiveClamping))

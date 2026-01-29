@@ -993,10 +993,11 @@ void SplatSetVk::rtxCreateSplatIcosahedron(std::vector<glm::vec3>& vertices,
   }
 }
 
-void SplatSetVk::rtxInitSplatModel(SplatSet& splatSet, bool useInstances, bool useAABBs, bool compressBlas, int kernelDegree, float kernelMinResponse, bool kernelAdaptiveClamping)
+void SplatSetVk::rtxInitSplatModel(SplatSet& splatSet, bool useInstances, bool useAABBs, bool useSpheres, bool compressBlas, int kernelDegree, float kernelMinResponse, bool kernelAdaptiveClamping)
 {
   // stored for later use by rtxComputeTransformMatrix and rtxInitAccelerationStructures
   m_rtxUseAABBs               = useAABBs;
+  m_rtxUseSpheres             = useSpheres;
   m_rtxUseInstances           = useInstances;
   m_rtxCompressBlas           = compressBlas;
   m_rtxKernelDegree           = kernelDegree;
@@ -1007,9 +1008,22 @@ void SplatSetVk::rtxInitSplatModel(SplatSet& splatSet, bool useInstances, bool u
   std::vector<uint32_t>  indices;
   std::vector<SplatAabb> aabbs;
 
+  // Sphere data for Blackwell native primitives
+  std::vector<glm::vec3> sphereCenters;
+  std::vector<float>     sphereRadii;
+
   if(useInstances)
   {
     rtxCreateSplatIcosahedron(vertices, indices, aabbs);
+
+    // For sphere mode with instances, create a unit sphere at origin
+    // The TLAS instance transform will scale/position it per-splat
+    if(useSpheres)
+    {
+      sphereCenters.push_back(glm::vec3(0.0f));
+      // Radius 3.0 = 3σ coverage for Gaussian density
+      sphereRadii.push_back(3.0f);
+    }
   }
   else
   {
@@ -1026,6 +1040,7 @@ void SplatSetVk::rtxInitSplatModel(SplatSet& splatSet, bool useInstances, bool u
   m_splatModel.nbVertices = static_cast<uint32_t>(vertices.size());
   m_splatModel.nbIndices  = static_cast<uint32_t>(indices.size());
   m_splatModel.nbAABB     = static_cast<uint32_t>(aabbs.size());
+  m_splatModel.nbSpheres  = static_cast<uint32_t>(sphereCenters.size());
 
   // Create the buffers on Device and copy vertices and indices
   VkCommandBuffer    cmd             = m_app->createTempCmdBuffer();
@@ -1051,6 +1066,22 @@ void SplatSetVk::rtxInitSplatModel(SplatSet& splatSet, bool useInstances, bool u
   NVVK_CHECK(m_uploader->appendBuffer(m_splatModel.aabbBuffer, 0, std::span(aabbs)));
   NVVK_DBG_NAME(m_splatModel.aabbBuffer.buffer);
 
+  // Sphere buffers for Blackwell native primitives
+  if(useSpheres && !sphereCenters.empty())
+  {
+    NVVK_CHECK(m_alloc->createBuffer(m_splatModel.sphereCenterBuffer, sphereCenters.size() * sizeof(glm::vec3),
+                                     rayTracingFlags));
+    NVVK_CHECK(m_uploader->appendBuffer(m_splatModel.sphereCenterBuffer, 0, std::span(sphereCenters)));
+    NVVK_DBG_NAME(m_splatModel.sphereCenterBuffer.buffer);
+
+    NVVK_CHECK(m_alloc->createBuffer(m_splatModel.sphereRadiusBuffer, sphereRadii.size() * sizeof(float),
+                                     rayTracingFlags));
+    NVVK_CHECK(m_uploader->appendBuffer(m_splatModel.sphereRadiusBuffer, 0, std::span(sphereRadii)));
+    NVVK_DBG_NAME(m_splatModel.sphereRadiusBuffer.buffer);
+
+    LOGI("Sphere primitives created: %u spheres (Blackwell native mode)\n", m_splatModel.nbSpheres);
+  }
+
   m_uploader->cmdUploadAppended(cmd);
   m_app->submitAndWaitTempCmdBuffer(cmd);
   m_uploader->releaseStaging();
@@ -1058,8 +1089,41 @@ void SplatSetVk::rtxInitSplatModel(SplatSet& splatSet, bool useInstances, bool u
 
 nvvk::AccelerationStructureGeometryInfo SplatSetVk::rtxCreateSplatModelAccelerationStructureGeometryInfo()
 {
+  // Use Blackwell native sphere primitives (VK_NV_ray_tracing_linear_swept_spheres)
+  if(m_rtxUseSpheres && m_splatModel.nbSpheres > 0)
+  {
+    // Sphere geometry data - hardware ray-sphere intersection
+    VkAccelerationStructureGeometrySpheresDataNV spheres{};
+    spheres.sType                  = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_SPHERES_DATA_NV;
+    spheres.vertexFormat           = VK_FORMAT_R32G32B32_SFLOAT;  // vec3 sphere center
+    spheres.vertexData.deviceAddress = m_splatModel.sphereCenterBuffer.address;
+    spheres.vertexStride           = sizeof(glm::vec3);
+    spheres.radiusFormat           = VK_FORMAT_R32_SFLOAT;  // float radius
+    spheres.radiusData.deviceAddress = m_splatModel.sphereRadiusBuffer.address;
+    spheres.radiusStride           = sizeof(float);
+    spheres.indexType              = VK_INDEX_TYPE_NONE_KHR;  // No indexing, direct access
+    spheres.indexData.deviceAddress = 0;
+    spheres.indexStride            = 0;
+
+    // Geometry wrapping the sphere data via pNext chain
+    // Note: VK_GEOMETRY_TYPE_AABBS_KHR is used as base, spheres data in pNext
+    VkAccelerationStructureGeometryKHR geometry{};
+    geometry.sType        = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+    geometry.pNext        = &spheres;  // Sphere data attached via pNext
+    geometry.geometryType = VK_GEOMETRY_TYPE_SPHERES_NV;
+    geometry.flags        = VK_GEOMETRY_NO_DUPLICATE_ANY_HIT_INVOCATION_BIT_KHR;
+
+    VkAccelerationStructureBuildRangeInfoKHR rangeInfo{};
+    rangeInfo.firstVertex     = 0;
+    rangeInfo.primitiveCount  = m_splatModel.nbSpheres;
+    rangeInfo.primitiveOffset = 0;
+    rangeInfo.transformOffset = 0;
+
+    LOGI("Using Blackwell native sphere primitives: %u spheres\n", m_splatModel.nbSpheres);
+    return nvvk::AccelerationStructureGeometryInfo{.geometry = geometry, .rangeInfo = rangeInfo};
+  }
   // use icosa mesh
-  if(!m_rtxUseAABBs)
+  else if(!m_rtxUseAABBs)
   {
     // Describe buffer as array of glm::vec3 wint uint32 indices.
     VkAccelerationStructureGeometryTrianglesDataKHR triangles{};

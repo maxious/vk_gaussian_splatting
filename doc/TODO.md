@@ -29,12 +29,24 @@ Based on [GRTX: Efficient Ray Tracing for 3D Gaussian-Based Rendering](https://a
 
 ### Medium Priority
 
-- [ ] **Blackwell native sphere primitives**
-  - Use `VK_KHR_ray_tracing_sphere` on RTX 5090 for hardware ray-sphere intersection
-  - Build BLAS with single radius-3 sphere instead of AABB
-  - Compute density `t_closest` in any-hit (not surface hit `t`)
-  - Requires Vulkan 1.4 SDK with sphere extension support
-  - Effort: 1 day
+- [x] **Blackwell native sphere primitives** ✅ IMPLEMENTED
+  - Uses `VK_NV_ray_tracing_linear_swept_spheres` extension for hardware ray-sphere intersection
+  - Build BLAS with single radius-3 sphere (3σ coverage) instead of AABB
+  - Intersection shader computes density `t_closest` (Gaussian center), not surface hit `t`
+  - Controlled by `prmRtxData.useSpheres` parameter (UI: "Sphere (Blackwell)")
+  - Requires RTX 50 series (Blackwell) GPU with extension support
+  - Falls back to AABB mode if extension not available
+  - Files modified:
+    - `src/main.cpp` - Enable VK_NV_ray_tracing_linear_swept_spheres extension
+    - `src/parameters.h` - Added `useSpheres` option in RtxVramDataParameters
+    - `src/splat_set_vk.h` - Added sphere buffers to SplatModel struct
+    - `src/splat_set_vk.cpp` - Sphere buffer creation and BLAS building with VkAccelerationStructureGeometrySpheresDataNV
+    - `src/vk_viewer_shaders.cpp` - Added RTX_USE_SPHERES macro
+    - `shaders/shaderio.h` - Added PARTICLE_FORMAT_SPHERE constant
+    - `shaders/threedgrt_raytrace.rint.slang` - Sphere intersection handling
+    - `src/vk_viewer_ui.cpp` - Added "Sphere (Blackwell)" to particle format dropdown
+    - `src/vk_viewer_ui_renderer.cpp` - UI logic for sphere mode selection
+    - `src/vk_viewer_ui_project.cpp` - Save/load useSpheres setting
 
 ### Low Priority / Research
 

@@ -69,6 +69,7 @@
 // used only by UI but here to be easier to find
 #define PARTICLE_FORMAT_ICOSAHEDRON 0
 #define PARTICLE_FORMAT_PARAMETRIC 1
+#define PARTICLE_FORMAT_SPHERE 2  // Blackwell native sphere primitives (VK_NV_ray_tracing_linear_swept_spheres)
 
 // degree of the splat kernel, RTX
 #define KERNEL_DEGREE_QUINTIC 5

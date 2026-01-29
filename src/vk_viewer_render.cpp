@@ -345,8 +345,8 @@ void VkViewer::processUpdateRequests(void)
       // RTX specific - only update when using RTX pipeline
       m_splatSetVk.rtxDeinitAccelerationStructures();
       m_splatSetVk.rtxDeinitSplatModel();
-      m_splatSetVk.rtxInitSplatModel(m_splatSet, prmRtxData.useTlasInstances, prmRtxData.useAABBs, prmRtxData.compressBlas,
-                                     prmRtx.kernelDegree, prmRtx.kernelMinResponse, prmRtx.kernelAdaptiveClamping);
+      m_splatSetVk.rtxInitSplatModel(m_splatSet, prmRtxData.useTlasInstances, prmRtxData.useAABBs, prmRtxData.useSpheres,
+                                     prmRtxData.compressBlas, prmRtx.kernelDegree, prmRtx.kernelMinResponse, prmRtx.kernelAdaptiveClamping);
       m_splatSetVk.rtxInitAccelerationStructures(m_splatSet);
     }
 

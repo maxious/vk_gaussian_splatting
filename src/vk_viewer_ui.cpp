@@ -120,6 +120,7 @@ void VkViewerUI::onAttach(nvapp::Application* app)
 
   m_ui.enumAdd(GUI_PARTICLE_FORMAT, PARTICLE_FORMAT_ICOSAHEDRON, "Icosahedron");
   m_ui.enumAdd(GUI_PARTICLE_FORMAT, PARTICLE_FORMAT_PARAMETRIC, "AABB + parametric");
+  m_ui.enumAdd(GUI_PARTICLE_FORMAT, PARTICLE_FORMAT_SPHERE, "Sphere (Blackwell)");
 
   m_ui.enumAdd(GUI_CAMERA_TYPE, CAMERA_PINHOLE, "Pinhole");
   m_ui.enumAdd(GUI_CAMERA_TYPE, CAMERA_FISHEYE, "Fisheye");

@@ -80,6 +80,11 @@ struct RtxVramDataParameters
   // AABB mode is faster: eliminates 20-triangle icosahedron traversal overhead
   // and uses efficient particleDensityHitInstance path in intersection shader
   bool useAABBs = true;
+  // Blackwell native sphere primitives (VK_NV_ray_tracing_linear_swept_spheres)
+  // When enabled, uses hardware ray-sphere intersection instead of AABB+intersection shader
+  // Only available on RTX 50 series (Blackwell) and newer GPUs
+  // Falls back to AABB mode if extension not supported
+  bool useSpheres = false;
   // if true, use one instance per splat in TLAS and single splat model in BLAS
   // otherwise, only one instance in TLAS and all splats transformed in BLAS
   bool useTlasInstances = true;

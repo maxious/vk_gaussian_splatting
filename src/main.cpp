@@ -140,6 +140,15 @@ int main(int argc, char** argv)
   };
   vkSetup.deviceExtensions.emplace_back(VK_NV_RAY_TRACING_INVOCATION_REORDER_EXTENSION_NAME, &serFeatures, false);
 
+  // Blackwell native sphere primitives (VK_NV_ray_tracing_linear_swept_spheres)
+  // Enables hardware-accelerated ray-sphere intersection for Gaussian splats
+  VkPhysicalDeviceRayTracingLinearSweptSpheresFeaturesNV sphereFeatures = {
+      .sType                       = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_LINEAR_SWEPT_SPHERES_FEATURES_NV,
+      .spheres                     = VK_TRUE,
+      .linearSweptSpheres          = VK_FALSE,  // We only need spheres, not LSS
+  };
+  vkSetup.deviceExtensions.emplace_back(VK_NV_RAY_TRACING_LINEAR_SWEPT_SPHERES_EXTENSION_NAME, &sphereFeatures, false);
+
 #ifdef WITH_DLSS_RR
   // Required for DLSS-RR CUDA-Vulkan interop
   vkSetup.deviceExtensions.emplace_back(VK_NVX_BINARY_IMPORT_EXTENSION_NAME, nullptr, false);
