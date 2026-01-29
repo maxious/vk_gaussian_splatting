@@ -280,11 +280,6 @@ if (NOT ENABLE_VIDEO_DECODER OR NOT FFmpeg_FOUND)
      list(FILTER SOURCE_FILES EXCLUDE REGEX "video_decoder\\.cpp$")
 endif()
 
-# Exclude Vulkan Video Decoder if disabled
-if (NOT ENABLE_VULKAN_VIDEO OR NOT VULKAN_VIDEO_HEADERS_AVAILABLE OR NOT FFmpeg_FOUND)
-     list(FILTER SOURCE_FILES EXCLUDE REGEX "vulkan_video_decoder\\.cpp$")
-endif()
-
 # Note: src/nvvk_swapchain_override.cpp implements the HDR support for the swapchain,
 # overriding the default implementation in nvpro_core2 without modifying the submodule.
 # Remove "unity build" partial source files that are #included by vk_viewer.cpp and vk_viewer_ui.cpp

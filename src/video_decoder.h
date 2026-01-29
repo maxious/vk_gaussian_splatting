@@ -19,6 +19,7 @@
 
 #pragma once
 
+#include <volk.h>
 #include <filesystem>
 #include <memory>
 #include <vector>
@@ -32,6 +33,7 @@ struct AVCodecContext;
 struct AVFrame;
 struct AVPacket;
 struct SwsContext;
+struct AVBufferRef;
 
 namespace vk_viewer {
 
@@ -39,11 +41,19 @@ namespace vk_viewer {
  * @brief Decoded video frame data
  */
 struct DecodedFrame {
-    std::vector<uint8_t> data;  // RGBA pixel data
+    std::vector<uint8_t> data;  // RGBA pixel data (empty if hardware decoding is used)
     int width;
     int height;
     double timestamp;  // In seconds
     int64_t pts;       // Presentation timestamp
+    
+    // Vulkan HW Decoding fields
+    VkImage image = VK_NULL_HANDLE;
+    VkImageView view = VK_NULL_HANDLE; // Optional: View might be created by consumer
+    VkFormat format = VK_FORMAT_UNDEFINED;
+    VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
+    VkSemaphore semaphore = VK_NULL_HANDLE; // Sync semaphore if provided by FFmpeg
+    std::shared_ptr<void> hwFrameRef; // Holds reference to underlying AVFrame to keep it alive
 };
 
 /**
@@ -51,11 +61,18 @@ struct DecodedFrame {
  *
  * Based on the ffplay.c pattern with send_packet/receive_frame decoding loop.
  * Decodes video frames to RGBA format suitable for texture upload.
+ * Now supports Vulkan Hardware Acceleration (Zero-Copy).
  */
 class VideoDecoder {
 public:
     VideoDecoder();
     ~VideoDecoder();
+
+    /**
+     * @brief Initialize Vulkan context for Hardware Acceleration
+     * Must be called before open() to enable HW decoding.
+     */
+    void initializeVulkan(VkInstance instance, VkPhysicalDevice physicalDevice, VkDevice device, uint32_t queueFamilyIndex, uint32_t queueIndex = 0);
 
     /**
      * @brief Open and initialize video file
@@ -138,6 +155,11 @@ public:
      */
     bool isPaused() const { return m_paused.load(); }
 
+    /**
+     * @brief Check if HW acceleration is active
+     */
+    bool isHWAccelerated() const { return m_hwDeviceContext != nullptr; }
+
 private:
     /**
      * @brief Decoding thread function
@@ -164,6 +186,11 @@ private:
      */
     void processFrame();
 
+    /**
+     * @brief Initialize HW device context
+     */
+    bool initHWDevice();
+
     // FFmpeg contexts
     AVFormatContext* m_formatContext;
     AVCodecContext* m_codecContext;
@@ -171,6 +198,14 @@ private:
     AVFrame* m_avFrame;
     AVFrame* m_rgbaFrame;
     AVPacket* m_packet;
+    AVBufferRef* m_hwDeviceContext = nullptr; // FFmpeg HW Device Context
+
+    // Vulkan Context (for HW Decoding)
+    VkInstance m_vkInstance = VK_NULL_HANDLE;
+    VkPhysicalDevice m_vkPhysicalDevice = VK_NULL_HANDLE;
+    VkDevice m_vkDevice = VK_NULL_HANDLE;
+    uint32_t m_vkQueueFamilyIndex = 0;
+    uint32_t m_vkQueueIndex = 0;
 
     // Video stream information
     int m_videoStreamIndex;

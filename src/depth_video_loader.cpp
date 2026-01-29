@@ -816,7 +816,12 @@ VideoDepthPlaybackManager::~VideoDepthPlaybackManager()
     close();
 }
 
-bool VideoDepthPlaybackManager::openFromMetadata(const std::filesystem::path& metadataPath)
+    bool VideoDepthPlaybackManager::openFromMetadata(const std::filesystem::path& metadataPath,
+                                                     VkInstance instance,
+                                                     VkPhysicalDevice physicalDevice,
+                                                     VkDevice device,
+                                                     uint32_t queueFamilyIndex,
+                                                     uint32_t queueIndex)
 {
     if (!loadDepthVideoMetadata(metadataPath, m_metadata))
     {
@@ -826,6 +831,12 @@ bool VideoDepthPlaybackManager::openFromMetadata(const std::filesystem::path& me
 
 #ifdef WITH_VIDEO_DECODER
     m_videoDecoder = std::make_unique<VideoDecoder>();
+    
+    // Initialize Vulkan for HW decoding if context provided
+    if (device != VK_NULL_HANDLE) {
+        m_videoDecoder->initializeVulkan(instance, physicalDevice, device, queueFamilyIndex, queueIndex);
+    }
+    
     if (!m_videoDecoder->open(m_metadata.videoPath))
     {
         LOGE("Failed to open video: %s\n", m_metadata.videoPath.c_str());
@@ -894,7 +905,18 @@ void VideoDepthPlaybackManager::prebufferThread()
         pf.timestampSec = videoFrame.timestamp;
         pf.width = static_cast<uint32_t>(videoFrame.width);
         pf.height = static_cast<uint32_t>(videoFrame.height);
-        pf.rgbRGBA = std::move(videoFrame.data);
+        
+        if (videoFrame.image != VK_NULL_HANDLE) {
+            // Hardware decoded frame
+            pf.rgbImage = videoFrame.image;
+            pf.rgbFormat = videoFrame.format;
+            pf.rgbSemaphore = videoFrame.semaphore;
+            pf.hwFrameRef = videoFrame.hwFrameRef; // Keep reference alive
+        } else {
+            // Software decoded frame
+            pf.rgbRGBA = std::move(videoFrame.data);
+        }
+
         pf.depthMeters = std::move(depthFrame.data);
         pf.zMin = m_metadata.zMin;
         pf.zMax = m_metadata.zMax;

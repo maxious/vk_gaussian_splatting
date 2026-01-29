@@ -465,7 +465,7 @@ void VkViewer::enableDepthVideoPlayback(const std::string& metadataPath)
   }
 
   m_videoDepthManager = std::make_unique<VideoDepthPlaybackManager>();
-  if(!m_videoDepthManager->openFromMetadata(metadataPath))
+  if(!m_videoDepthManager->openFromMetadata(metadataPath, m_app->getInstance(), m_app->getPhysicalDevice(), m_app->getDevice(), m_app->getQueue(0).familyIndex, 0))
   {
     LOGE("Failed to open depth video from: %s\n", metadataPath.c_str());
     m_videoDepthManager.reset();

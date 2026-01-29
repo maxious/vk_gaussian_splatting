@@ -28,6 +28,7 @@
 #include <memory>
 #include <thread>
 #include <chrono>
+#include <volk.h>
 
 #include "video_decoder.h"
 
@@ -117,8 +118,14 @@ struct PlaybackFrame
     uint32_t width = 0;
     uint32_t height = 0;
     
-    std::vector<uint8_t> rgbRGBA;      // RGBA8 video data
+    std::vector<uint8_t> rgbRGBA;      // RGBA8 video data (CPU fallback)
     std::vector<float> depthMeters;    // Per-pixel depth in meters
+    
+    // HW Decoding Support
+    VkImage rgbImage = VK_NULL_HANDLE;
+    VkFormat rgbFormat = VK_FORMAT_UNDEFINED;
+    VkSemaphore rgbSemaphore = VK_NULL_HANDLE;
+    std::shared_ptr<void> hwFrameRef; // Keep alive the AVFrame/VkImage
     
     float zMin = 0.0f;
     float zMax = 1.0f;
@@ -325,9 +332,19 @@ public:
     /**
      * @brief Open video and depth video from metadata.json
      * @param metadataPath Path to metadata.json or directory containing it
+     * @param instance Vulkan instance (optional, for HW decoding)
+     * @param physicalDevice Physical device (optional, for HW decoding)
+     * @param device Vulkan device (optional, for HW decoding)
+     * @param queueFamilyIndex Queue family index (optional, for HW decoding)
+     * @param queueIndex Queue index (optional, for HW decoding)
      * @return true if successfully opened both video and depth
      */
-    bool openFromMetadata(const std::filesystem::path& metadataPath);
+    bool openFromMetadata(const std::filesystem::path& metadataPath,
+                          VkInstance instance = VK_NULL_HANDLE,
+                          VkPhysicalDevice physicalDevice = VK_NULL_HANDLE,
+                          VkDevice device = VK_NULL_HANDLE,
+                          uint32_t queueFamilyIndex = 0,
+                          uint32_t queueIndex = 0);
 
     /**
      * @brief Close and cleanup

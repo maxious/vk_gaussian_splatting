@@ -26,9 +26,23 @@ extern "C" {
 #include <libavformat/avformat.h>
 #include <libavutil/imgutils.h>
 #include <libswscale/swscale.h>
+#include <libavutil/hwcontext.h>
+#include <libavutil/hwcontext_vulkan.h>
 }
 
 namespace vk_viewer {
+
+// Static callback for FFmpeg to select HW format
+static enum AVPixelFormat get_hw_format(AVCodecContext *ctx, const enum AVPixelFormat *pix_fmts)
+{
+    const enum AVPixelFormat *p;
+    for (p = pix_fmts; *p != -1; p++) {
+        if (*p == AV_PIX_FMT_VULKAN)
+            return *p;
+    }
+    LOGW("Failed to get HW surface format, falling back to software decoding.\n");
+    return AV_PIX_FMT_NONE;
+}
 
 VideoDecoder::VideoDecoder()
     : m_formatContext(nullptr)
@@ -48,7 +62,64 @@ VideoDecoder::VideoDecoder()
     , m_maxQueueSize(10)
     , m_seekRequested(false)
     , m_seekTimestamp(0.0)
+    , m_hwDeviceContext(nullptr)
 {
+}
+
+void VideoDecoder::initializeVulkan(VkInstance instance, VkPhysicalDevice physicalDevice, VkDevice device, uint32_t queueFamilyIndex, uint32_t queueIndex)
+{
+    m_vkInstance = instance;
+    m_vkPhysicalDevice = physicalDevice;
+    m_vkDevice = device;
+    m_vkQueueFamilyIndex = queueFamilyIndex;
+    m_vkQueueIndex = queueIndex;
+}
+
+bool VideoDecoder::initHWDevice()
+{
+    if (m_vkDevice == VK_NULL_HANDLE) {
+        return false;
+    }
+
+    // Allocate Vulkan HW device context
+    m_hwDeviceContext = av_hwdevice_ctx_alloc(AV_HWDEVICE_TYPE_VULKAN);
+    if (!m_hwDeviceContext) {
+        LOGE("Failed to create FFmpeg Vulkan HW device context.\n");
+        return false;
+    }
+
+    AVHWDeviceContext* hwctx = (AVHWDeviceContext*)m_hwDeviceContext->data;
+    AVVulkanDeviceContext* vkctx = (AVVulkanDeviceContext*)hwctx->hwctx;
+
+    // Populate with existing Vulkan context
+    vkctx->inst = m_vkInstance;
+    vkctx->phys_dev = m_vkPhysicalDevice;
+    vkctx->act_dev = m_vkDevice;
+    
+    // Configure queues - FFmpeg needs to know which queues to use
+    // We assign the same queue family for all operations if not specified otherwise
+    vkctx->queue_family_index = m_vkQueueFamilyIndex;
+    vkctx->nb_graphics_queues = 1;
+    vkctx->queue_family_tx_index = m_vkQueueFamilyIndex;
+    vkctx->nb_tx_queues = 1;
+    vkctx->queue_family_comp_index = m_vkQueueFamilyIndex;
+    vkctx->nb_comp_queues = 1;
+    // queue_family_video_index might not exist in older FFmpeg versions
+    // If it exists, we would set it, but to be safe we rely on the main queue family
+    // or auto-detection if FFmpeg manages its own queues (which it doesn't here since we provide act_dev)
+    
+    // Initialize the context
+    int ret = av_hwdevice_ctx_init(m_hwDeviceContext);
+    if (ret < 0) {
+        char errbuf[AV_ERROR_MAX_STRING_SIZE];
+        av_strerror(ret, errbuf, sizeof(errbuf));
+        LOGE("Failed to initialize FFmpeg Vulkan HW device: %s\n", errbuf);
+        av_buffer_unref(&m_hwDeviceContext);
+        return false;
+    }
+
+    LOGI("FFmpeg Vulkan HW context initialized successfully.\n");
+    return true;
 }
 
 VideoDecoder::~VideoDecoder()
@@ -126,6 +197,18 @@ bool VideoDecoder::open(const std::filesystem::path& filepath)
         return false;
     }
 
+    // Initialize HW device if Vulkan is available
+    bool hwInitSuccess = false;
+    if (m_vkDevice != VK_NULL_HANDLE) {
+        if (initHWDevice()) {
+            // Configure codec for HW decoding
+            m_codecContext->hw_device_ctx = av_buffer_ref(m_hwDeviceContext);
+            m_codecContext->get_format = get_hw_format;
+            hwInitSuccess = true;
+            LOGI("FFmpeg HW decoding enabled.\n");
+        }
+    }
+
     // Get video info
     m_width = m_codecContext->width;
     m_height = m_codecContext->height;
@@ -137,17 +220,31 @@ bool VideoDecoder::open(const std::filesystem::path& filepath)
         m_duration = m_formatContext->duration * av_q2d(AV_TIME_BASE_Q);
     }
 
-    // Initialize scaling context for RGBA conversion
-    m_swsContext = sws_getContext(
-        m_width, m_height, m_codecContext->pix_fmt,
-        m_width, m_height, AV_PIX_FMT_RGBA,
-        SWS_BILINEAR, nullptr, nullptr, nullptr
-    );
+    // Initialize scaling context for RGBA conversion (only used for SW fallback)
+    if (!hwInitSuccess) {
+        m_swsContext = sws_getContext(
+            m_width, m_height, m_codecContext->pix_fmt,
+            m_width, m_height, AV_PIX_FMT_RGBA,
+            SWS_BILINEAR, nullptr, nullptr, nullptr
+        );
 
-    if (!m_swsContext) {
-        LOGE("Failed to create scaling context\n");
-        close();
-        return false;
+        if (!m_swsContext) {
+            LOGE("Failed to create scaling context\n");
+            close();
+            return false;
+        }
+        
+        // Allocate RGBA buffer for SW fallback
+        int num_bytes = av_image_get_buffer_size(AV_PIX_FMT_RGBA, m_width, m_height, 1);
+        uint8_t* buffer = (uint8_t*)av_malloc(num_bytes * sizeof(uint8_t));
+        if (!buffer) {
+            LOGE("Failed to allocate RGBA buffer\n");
+            close();
+            return false;
+        }
+
+        av_image_fill_arrays(m_rgbaFrame->data, m_rgbaFrame->linesize, buffer,
+                             AV_PIX_FMT_RGBA, m_width, m_height, 1);
     }
 
     // Allocate frames
@@ -161,20 +258,10 @@ bool VideoDecoder::open(const std::filesystem::path& filepath)
         return false;
     }
 
-    // Allocate RGBA buffer
-    int num_bytes = av_image_get_buffer_size(AV_PIX_FMT_RGBA, m_width, m_height, 1);
-    uint8_t* buffer = (uint8_t*)av_malloc(num_bytes * sizeof(uint8_t));
-    if (!buffer) {
-        LOGE("Failed to allocate RGBA buffer\n");
-        close();
-        return false;
-    }
+    // For HW decoding, we don't allocate RGBA buffer upfront, frames come from GPU
 
-    av_image_fill_arrays(m_rgbaFrame->data, m_rgbaFrame->linesize, buffer,
-                         AV_PIX_FMT_RGBA, m_width, m_height, 1);
-
-    LOGI("Video decoder opened: %dx%d @ %.2f fps, duration: %.2f s\n",
-         m_width, m_height, m_frameRate, m_duration);
+    LOGI("Video decoder opened: %dx%d @ %.2f fps, duration: %.2f s%s\n",
+         m_width, m_height, m_frameRate, m_duration, hwInitSuccess ? " (HW Accelerated)" : "");
 
     return true;
 }
@@ -424,10 +511,6 @@ void VideoDecoder::decodeFrames()
 
 void VideoDecoder::processFrame()
 {
-    // Scale to RGBA
-    sws_scale(m_swsContext, m_avFrame->data, m_avFrame->linesize,
-              0, m_height, m_rgbaFrame->data, m_rgbaFrame->linesize);
-
     // Create decoded frame
     DecodedFrame frame;
     frame.width = m_width;
@@ -438,10 +521,34 @@ void VideoDecoder::processFrame()
     AVRational time_base = m_formatContext->streams[m_videoStreamIndex]->time_base;
     frame.timestamp = m_avFrame->pts * av_q2d(time_base);
 
-    // Copy RGBA data
-    int num_bytes = av_image_get_buffer_size(AV_PIX_FMT_RGBA, m_width, m_height, 1);
-    frame.data.resize(num_bytes);
-    memcpy(frame.data.data(), m_rgbaFrame->data[0], num_bytes);
+    if (m_avFrame->format == AV_PIX_FMT_VULKAN) {
+        // HW Decoding path
+        AVVkFrame* vkFrame = (AVVkFrame*)m_avFrame->data[0];
+        frame.image = vkFrame->img[0];
+        frame.layout = vkFrame->layout[0];
+        frame.format = VK_FORMAT_UNDEFINED; // We might want to look this up from FFmpeg map if needed
+        frame.semaphore = vkFrame->sem[0];
+        
+        // Clone the AVFrame to keep it alive
+        AVFrame* clonedFrame = av_frame_clone(m_avFrame);
+        if (clonedFrame) {
+            frame.hwFrameRef = std::shared_ptr<void>(clonedFrame, [](void* p) {
+                AVFrame* f = static_cast<AVFrame*>(p);
+                av_frame_free(&f);
+            });
+        }
+    } else {
+        // SW Fallback path
+        if (m_swsContext && m_rgbaFrame->data[0]) {
+            sws_scale(m_swsContext, m_avFrame->data, m_avFrame->linesize,
+                      0, m_height, m_rgbaFrame->data, m_rgbaFrame->linesize);
+
+            // Copy RGBA data
+            int num_bytes = av_image_get_buffer_size(AV_PIX_FMT_RGBA, m_width, m_height, 1);
+            frame.data.resize(num_bytes);
+            memcpy(frame.data.data(), m_rgbaFrame->data[0], num_bytes);
+        }
+    }
 
     // Add to queue
     {
@@ -488,9 +595,8 @@ void VideoDecoder::cleanupFFmpeg()
         m_codecContext = nullptr;
     }
 
-    if (m_formatContext) {
-        avformat_close_input(&m_formatContext);
-        m_formatContext = nullptr;
+    if (m_hwDeviceContext) {
+        av_buffer_unref(&m_hwDeviceContext);
     }
 
     m_videoStreamIndex = -1;

@@ -7,7 +7,6 @@ add_executable(unit_tests
     test_depth.cpp
     test_npz_loader.cpp
     test_lod_loader.cpp
-    test_vulkan_video.cpp
     test_morton_order.cpp
 )
 
@@ -18,27 +17,6 @@ target_sources(unit_tests PRIVATE
     ../src/lod_loader.cpp
     ../src/sog_loader.cpp
 )
-
-# Conditionally add Vulkan Video decoder sources if enabled
-if(WITH_VULKAN_VIDEO_ENABLED)
-    message(STATUS "Tests: Vulkan Video support enabled")
-    target_sources(unit_tests PRIVATE
-        ../src/vulkan_video_decoder.cpp
-    )
-    target_compile_definitions(unit_tests PRIVATE WITH_VULKAN_VIDEO)
-    target_link_libraries(unit_tests PRIVATE nvpro2::nvvk)
-    # FFmpeg for bitstream parsing
-    target_include_directories(unit_tests PRIVATE
-        ${AVCODEC_INCLUDE_DIR}
-        ${AVFORMAT_INCLUDE_DIR}
-        ${AVUTIL_INCLUDE_DIR}
-    )
-    target_link_libraries(unit_tests PRIVATE
-        ${AVCODEC_LIBRARY}
-        ${AVFORMAT_LIBRARY}
-        ${AVUTIL_LIBRARY}
-    )
-endif()
 
 # Include directories for src files and tests
 target_include_directories(unit_tests PRIVATE

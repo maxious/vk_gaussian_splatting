@@ -35,66 +35,140 @@ void VkViewer::updateDepthRendering(VkCommandBuffer cmd)
     if(!m_videoDepthManager->getFrameAtTime(t, pf))
         return;
 
-    if (pf.width > 0 && pf.height > 0 && !pf.rgbRGBA.empty())
+    // Handle RGB Frame (HW or SW)
+    if (pf.width > 0 && pf.height > 0)
     {
         bool updateDescriptor = false;
-        if(m_videoTexture.width != pf.width || m_videoTexture.height != pf.height || m_videoTexture.image.image == VK_NULL_HANDLE)
+        bool isHWFrame = (pf.rgbImage != VK_NULL_HANDLE);
+
+        if (isHWFrame) 
         {
-            vkDeviceWaitIdle(m_device);
-            if(m_videoTexture.view != VK_NULL_HANDLE) { vkDestroyImageView(m_device, m_videoTexture.view, nullptr); m_videoTexture.view = VK_NULL_HANDLE; }
-            if(m_videoTexture.image.image != VK_NULL_HANDLE) { m_alloc.destroyImage(m_videoTexture.image); m_videoTexture.image = {}; }
+            // Hardware Decoded Frame (Zero-Copy)
+            // Just update the descriptor if the image handle changed
+            if (m_videoTexture.image.image != pf.rgbImage)
+            {
+                // We don't own this image, so we don't destroy it.
+                // But we need to ensure m_videoTexture doesn't think it owns a previous SW image.
+                if (m_videoTexture.image.image != VK_NULL_HANDLE && m_videoTexture.image.allocation != nullptr) {
+                    m_alloc.destroyImage(m_videoTexture.image);
+                }
+                
+                if (m_videoTexture.view != VK_NULL_HANDLE) { 
+                    vkDestroyImageView(m_device, m_videoTexture.view, nullptr); 
+                    m_videoTexture.view = VK_NULL_HANDLE; 
+                }
 
-            VkImageCreateInfo info = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
-            info.imageType = VK_IMAGE_TYPE_2D;
-            info.format = VK_FORMAT_R8G8B8A8_UNORM;
-            info.extent = {pf.width, pf.height, 1};
-            info.mipLevels = 1;
-            info.arrayLayers = 1;
-            info.samples = VK_SAMPLE_COUNT_1_BIT;
-            info.tiling = VK_IMAGE_TILING_OPTIMAL;
-            info.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-            info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-            info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-            
-            m_alloc.createImage(m_videoTexture.image, info);
+                // Update internal tracking
+                m_videoTexture.image.image = pf.rgbImage;
+                m_videoTexture.image.allocation = nullptr; // Imported/External
+                m_videoTexture.width = pf.width;
+                m_videoTexture.height = pf.height;
 
-            VkImageViewCreateInfo viewInfo = {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-            viewInfo.image = m_videoTexture.image.image;
-            viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-            viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
-            viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-            vkCreateImageView(m_device, &viewInfo, nullptr, &m_videoTexture.view);
-            
-            m_videoTexture.width = pf.width;
-            m_videoTexture.height = pf.height;
-            updateDescriptor = true;
+                // Create View
+                VkImageViewCreateInfo viewInfo = {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+                viewInfo.image = pf.rgbImage;
+                viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+                // Format comes from FFmpeg (likely VK_FORMAT_G8_B8R8_2PLANE_420_UNORM or similar for NV12)
+                // If it's undefined, default to R8G8B8A8_UNORM (unlikely to work for HW, but fallback)
+                viewInfo.format = (pf.rgbFormat != VK_FORMAT_UNDEFINED) ? pf.rgbFormat : VK_FORMAT_R8G8B8A8_UNORM;
+                
+                // Mappings for YCbCr if needed. For now assume identity or handled by sampler conversion
+                viewInfo.components = {
+                    VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY,
+                    VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY
+                };
+
+                viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+                
+                vkCreateImageView(m_device, &viewInfo, nullptr, &m_videoTexture.view);
+                updateDescriptor = true;
+                
+                // Transition layout if needed? FFmpeg usually leaves it in VIDEO_DECODE_DST
+                // We need SHADER_READ_ONLY.
+                // We should add a barrier here.
+                VkImageMemoryBarrier barrier = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+                barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED; // We don't know previous, so discard
+                barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                barrier.srcAccessMask = 0; // Handled by semaphore ideally, or assume decode done
+                barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+                barrier.image = pf.rgbImage;
+                barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+                
+                // If semaphore provided, we should wait on it? 
+                // Currently single queue, so execution barrier might suffice if on same queue.
+                vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 
+                                     0, 0, nullptr, 0, nullptr, 1, &barrier);
+            }
         }
+        else if (!pf.rgbRGBA.empty())
+        {
+            // Software Decoded Frame (Upload)
+            if(m_videoTexture.width != pf.width || m_videoTexture.height != pf.height || m_videoTexture.image.image == VK_NULL_HANDLE || m_videoTexture.image.allocation == nullptr)
+            {
+                vkDeviceWaitIdle(m_device);
+                if(m_videoTexture.view != VK_NULL_HANDLE) { vkDestroyImageView(m_device, m_videoTexture.view, nullptr); m_videoTexture.view = VK_NULL_HANDLE; }
+                if(m_videoTexture.image.image != VK_NULL_HANDLE) { 
+                    // If we are switching from HW to SW, we might have an image handle but no allocation.
+                    // If allocation is null, we assume it's external and don't destroy it.
+                    // But if it IS internal, we must destroy it.
+                    if (m_videoTexture.image.allocation != nullptr) {
+                        m_alloc.destroyImage(m_videoTexture.image); 
+                    }
+                    m_videoTexture.image = {}; 
+                }
 
-        VkImageMemoryBarrier barrier = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-        barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        barrier.srcAccessMask = 0;
-        barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        barrier.image = m_videoTexture.image.image;
-        barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+                VkImageCreateInfo info = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+                info.imageType = VK_IMAGE_TYPE_2D;
+                info.format = VK_FORMAT_R8G8B8A8_UNORM;
+                info.extent = {pf.width, pf.height, 1};
+                info.mipLevels = 1;
+                info.arrayLayers = 1;
+                info.samples = VK_SAMPLE_COUNT_1_BIT;
+                info.tiling = VK_IMAGE_TILING_OPTIMAL;
+                info.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+                info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+                info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+                
+                m_alloc.createImage(m_videoTexture.image, info);
 
-        VkDeviceSize imageSize = pf.rgbRGBA.size();
-        m_uploader.appendImage(m_videoTexture.image, imageSize, pf.rgbRGBA.data());
-        m_uploader.cmdUploadAppended(cmd);
+                VkImageViewCreateInfo viewInfo = {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+                viewInfo.image = m_videoTexture.image.image;
+                viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+                viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+                viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+                vkCreateImageView(m_device, &viewInfo, nullptr, &m_videoTexture.view);
+                
+                m_videoTexture.width = pf.width;
+                m_videoTexture.height = pf.height;
+                updateDescriptor = true;
+            }
 
-        barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+            VkImageMemoryBarrier barrier = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+            barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            barrier.srcAccessMask = 0;
+            barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            barrier.image = m_videoTexture.image.image;
+            barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+            VkDeviceSize imageSize = pf.rgbRGBA.size();
+            m_uploader.appendImage(m_videoTexture.image, imageSize, pf.rgbRGBA.data());
+            m_uploader.cmdUploadAppended(cmd);
+
+            barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+        }
 
         if(updateDescriptor && m_descriptorSet != VK_NULL_HANDLE)
         {
             VkDescriptorImageInfo imageInfo{};
             imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
             imageInfo.imageView = m_videoTexture.view;
-            imageInfo.sampler = m_sampler;
+            imageInfo.sampler = m_sampler; // Note: YCbCr might need immutable sampler with conversion
 
             VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
             write.dstSet = m_descriptorSet;
