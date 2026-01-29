@@ -143,7 +143,6 @@ bool VideoDecoder::initHWDevice()
          (void*)m_vkInstance, (void*)m_vkDevice, m_vkQueueFamilyIndex);
     // Initialize the context
     int ret = av_hwdevice_ctx_init(m_hwDeviceContext);
-    LOGI("av_hwdevice_ctx_init returned %d\n", ret);
     if (ret < 0) {
         char errbuf[AV_ERROR_MAX_STRING_SIZE];
         av_strerror(ret, errbuf, sizeof(errbuf));
@@ -164,7 +163,6 @@ VideoDecoder::~VideoDecoder()
 
 bool VideoDecoder::open(const std::filesystem::path& filepath)
 {
-    LOGI("VideoDecoder::open: %s\n", filepath.string().c_str());
     if (m_formatContext) {
         LOGE("Video decoder already open\n");
         return false;
@@ -178,9 +176,7 @@ bool VideoDecoder::open(const std::filesystem::path& filepath)
     }
 
     // Open input file
-    LOGI("Opening input file: %s\n", filepath.string().c_str());
     int ret = avformat_open_input(&m_formatContext, filepath.string().c_str(), nullptr, nullptr);
-    LOGI("avformat_open_input returned %d\n", ret);
     if (ret < 0) {
         LOGE("Failed to open input file: %s\n", filepath.string().c_str());
         cleanupFFmpeg();
@@ -188,9 +184,7 @@ bool VideoDecoder::open(const std::filesystem::path& filepath)
     }
 
     // Find stream info
-    LOGI("Finding stream info...\n");
     ret = avformat_find_stream_info(m_formatContext, nullptr);
-    LOGI("avformat_find_stream_info returned %d\n", ret);
     if (ret < 0) {
         LOGE("Failed to find stream info\n");
         close();
@@ -198,9 +192,7 @@ bool VideoDecoder::open(const std::filesystem::path& filepath)
     }
 
     // Find video stream
-    LOGI("Finding video stream...\n");
     m_videoStreamIndex = av_find_best_stream(m_formatContext, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
-    LOGI("av_find_best_stream returned %d\n", m_videoStreamIndex);
     if (m_videoStreamIndex < 0) {
         LOGE("No video stream found\n");
         close();
@@ -224,9 +216,7 @@ bool VideoDecoder::open(const std::filesystem::path& filepath)
     }
 
     // Copy codec parameters
-    LOGI("Copying codec parameters...\n");
     ret = avcodec_parameters_to_context(m_codecContext, codecpar);
-    LOGI("avcodec_parameters_to_context returned %d\n", ret);
     if (ret < 0) {
         LOGE("Failed to copy codec parameters\n");
         close();
@@ -234,9 +224,7 @@ bool VideoDecoder::open(const std::filesystem::path& filepath)
     }
 
     // Open codec
-    LOGI("Opening codec...\n");
     ret = avcodec_open2(m_codecContext, codec, nullptr);
-    LOGI("avcodec_open2 returned %d\n", ret);
     if (ret < 0) {
         LOGE("Failed to open codec\n");
         close();
@@ -268,7 +256,6 @@ bool VideoDecoder::open(const std::filesystem::path& filepath)
 
     // Initialize scaling context for RGBA conversion (only used for SW fallback)
     if (!hwInitSuccess) {
-        LOGI("Initializing scaling context for SW path (%dx%d, pix_fmt=%d)...\n", m_width, m_height, m_codecContext->pix_fmt);
         m_swsContext = sws_getContext(
             m_width, m_height, m_codecContext->pix_fmt,
             m_width, m_height, AV_PIX_FMT_RGBA,
@@ -283,7 +270,6 @@ bool VideoDecoder::open(const std::filesystem::path& filepath)
         
         // Allocate RGBA buffer for SW fallback
         int num_bytes = av_image_get_buffer_size(AV_PIX_FMT_RGBA, m_width, m_height, 1);
-        LOGI("Allocating RGBA buffer (%d bytes)...\n", num_bytes);
         uint8_t* buffer = (uint8_t*)av_malloc(num_bytes * sizeof(uint8_t));
         if (!buffer) {
             LOGE("Failed to allocate RGBA buffer\n");
@@ -304,7 +290,6 @@ bool VideoDecoder::open(const std::filesystem::path& filepath)
     }
 
     // Allocate frames
-    LOGI("Allocating packets/frames...\n");
     m_avFrame = av_frame_alloc();
     m_packet = av_packet_alloc();
 
