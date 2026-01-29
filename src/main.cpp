@@ -158,12 +158,21 @@ int main(int argc, char** argv)
 #ifdef WITH_VULKAN_VIDEO
   // Vulkan Video extensions for hardware-accelerated video decode
   // These are optional - will gracefully degrade to FFmpeg if not available
+  vkSetup.instanceExtensions.push_back(VK_KHR_EXTERNAL_MEMORY_CAPABILITIES_EXTENSION_NAME);
+  vkSetup.instanceExtensions.push_back(VK_KHR_EXTERNAL_SEMAPHORE_CAPABILITIES_EXTENSION_NAME);
+
   vkSetup.deviceExtensions.emplace_back(VK_KHR_VIDEO_QUEUE_EXTENSION_NAME, nullptr, false);
   vkSetup.deviceExtensions.emplace_back(VK_KHR_VIDEO_DECODE_QUEUE_EXTENSION_NAME, nullptr, false);
   vkSetup.deviceExtensions.emplace_back(VK_KHR_VIDEO_DECODE_H265_EXTENSION_NAME, nullptr, false);
   vkSetup.deviceExtensions.emplace_back(VK_KHR_VIDEO_DECODE_H264_EXTENSION_NAME, nullptr, false);
   // YCbCr conversion for sampling decoded video frames
   vkSetup.deviceExtensions.emplace_back(VK_KHR_SAMPLER_YCBCR_CONVERSION_EXTENSION_NAME, nullptr, false);
+
+  // FFmpeg Vulkan HW acceleration requirements
+  vkSetup.deviceExtensions.emplace_back(VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME, nullptr, false);
+  vkSetup.deviceExtensions.emplace_back(VK_KHR_EXTERNAL_SEMAPHORE_EXTENSION_NAME, nullptr, false);
+  vkSetup.deviceExtensions.emplace_back("VK_KHR_external_memory_fd", nullptr, false);
+  vkSetup.deviceExtensions.emplace_back("VK_KHR_external_semaphore_fd", nullptr, false);
 #endif
 
   if(!appInfo.headless)

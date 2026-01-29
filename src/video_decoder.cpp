@@ -92,24 +92,58 @@ bool VideoDecoder::initHWDevice()
     AVVulkanDeviceContext* vkctx = (AVVulkanDeviceContext*)hwctx->hwctx;
 
     // Populate with existing Vulkan context
+    vkctx->get_proc_addr = vkGetInstanceProcAddr;
     vkctx->inst = m_vkInstance;
     vkctx->phys_dev = m_vkPhysicalDevice;
     vkctx->act_dev = m_vkDevice;
     
+    // We must inform FFmpeg about enabled extensions if we provide the device
+    static const char* inst_exts[] = {
+        "VK_KHR_get_physical_device_properties2",
+        VK_KHR_EXTERNAL_MEMORY_CAPABILITIES_EXTENSION_NAME,
+        VK_KHR_EXTERNAL_SEMAPHORE_CAPABILITIES_EXTENSION_NAME,
+        VK_EXT_DEBUG_UTILS_EXTENSION_NAME
+    };
+    vkctx->enabled_inst_extensions = inst_exts;
+    vkctx->nb_enabled_inst_extensions = 4;
+
+    static const char* dev_exts[] = {
+        VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+        VK_KHR_VIDEO_QUEUE_EXTENSION_NAME,
+        VK_KHR_VIDEO_DECODE_QUEUE_EXTENSION_NAME,
+        VK_KHR_VIDEO_DECODE_H264_EXTENSION_NAME,
+        VK_KHR_VIDEO_DECODE_H265_EXTENSION_NAME,
+        VK_KHR_SAMPLER_YCBCR_CONVERSION_EXTENSION_NAME,
+        "VK_KHR_external_memory",
+        "VK_KHR_external_memory_fd",
+        "VK_KHR_external_semaphore",
+        "VK_KHR_external_semaphore_fd",
+        "VK_EXT_external_memory_dma_buf"
+    };
+    vkctx->enabled_dev_extensions = dev_exts;
+    vkctx->nb_enabled_dev_extensions = 11;
+    
     // Configure queues - FFmpeg needs to know which queues to use
-    // We assign the same queue family for all operations if not specified otherwise
+    vkctx->nb_qf = 1;
+    vkctx->qf[0].idx = m_vkQueueFamilyIndex;
+    vkctx->qf[0].num = 1;
+    // We assume the provided queue family supports these. 
+    // In a shared context, FFmpeg will use the device as-is.
+    vkctx->qf[0].flags = (VkQueueFlagBits)(VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT);
+    
+    // For compatibility with some FFmpeg versions
     vkctx->queue_family_index = m_vkQueueFamilyIndex;
     vkctx->nb_graphics_queues = 1;
     vkctx->queue_family_tx_index = m_vkQueueFamilyIndex;
     vkctx->nb_tx_queues = 1;
     vkctx->queue_family_comp_index = m_vkQueueFamilyIndex;
     vkctx->nb_comp_queues = 1;
-    // queue_family_video_index might not exist in older FFmpeg versions
-    // If it exists, we would set it, but to be safe we rely on the main queue family
-    // or auto-detection if FFmpeg manages its own queues (which it doesn't here since we provide act_dev)
     
+    LOGI("Initializing FFmpeg Vulkan HW device context (inst=%p, dev=%p, qf=%d)...\n", 
+         (void*)m_vkInstance, (void*)m_vkDevice, m_vkQueueFamilyIndex);
     // Initialize the context
     int ret = av_hwdevice_ctx_init(m_hwDeviceContext);
+    LOGI("av_hwdevice_ctx_init returned %d\n", ret);
     if (ret < 0) {
         char errbuf[AV_ERROR_MAX_STRING_SIZE];
         av_strerror(ret, errbuf, sizeof(errbuf));
@@ -130,19 +164,23 @@ VideoDecoder::~VideoDecoder()
 
 bool VideoDecoder::open(const std::filesystem::path& filepath)
 {
+    LOGI("VideoDecoder::open: %s\n", filepath.string().c_str());
     if (m_formatContext) {
         LOGE("Video decoder already open\n");
         return false;
     }
 
     // Initialize FFmpeg contexts
+    LOGI("Initializing FFmpeg...\n");
     if (!initializeFFmpeg()) {
         LOGE("Failed to initialize FFmpeg\n");
         return false;
     }
 
     // Open input file
+    LOGI("Opening input file: %s\n", filepath.string().c_str());
     int ret = avformat_open_input(&m_formatContext, filepath.string().c_str(), nullptr, nullptr);
+    LOGI("avformat_open_input returned %d\n", ret);
     if (ret < 0) {
         LOGE("Failed to open input file: %s\n", filepath.string().c_str());
         cleanupFFmpeg();
@@ -150,7 +188,9 @@ bool VideoDecoder::open(const std::filesystem::path& filepath)
     }
 
     // Find stream info
+    LOGI("Finding stream info...\n");
     ret = avformat_find_stream_info(m_formatContext, nullptr);
+    LOGI("avformat_find_stream_info returned %d\n", ret);
     if (ret < 0) {
         LOGE("Failed to find stream info\n");
         close();
@@ -158,7 +198,9 @@ bool VideoDecoder::open(const std::filesystem::path& filepath)
     }
 
     // Find video stream
+    LOGI("Finding video stream...\n");
     m_videoStreamIndex = av_find_best_stream(m_formatContext, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
+    LOGI("av_find_best_stream returned %d\n", m_videoStreamIndex);
     if (m_videoStreamIndex < 0) {
         LOGE("No video stream found\n");
         close();
@@ -182,7 +224,9 @@ bool VideoDecoder::open(const std::filesystem::path& filepath)
     }
 
     // Copy codec parameters
+    LOGI("Copying codec parameters...\n");
     ret = avcodec_parameters_to_context(m_codecContext, codecpar);
+    LOGI("avcodec_parameters_to_context returned %d\n", ret);
     if (ret < 0) {
         LOGE("Failed to copy codec parameters\n");
         close();
@@ -190,7 +234,9 @@ bool VideoDecoder::open(const std::filesystem::path& filepath)
     }
 
     // Open codec
+    LOGI("Opening codec...\n");
     ret = avcodec_open2(m_codecContext, codec, nullptr);
+    LOGI("avcodec_open2 returned %d\n", ret);
     if (ret < 0) {
         LOGE("Failed to open codec\n");
         close();
@@ -222,6 +268,7 @@ bool VideoDecoder::open(const std::filesystem::path& filepath)
 
     // Initialize scaling context for RGBA conversion (only used for SW fallback)
     if (!hwInitSuccess) {
+        LOGI("Initializing scaling context for SW path (%dx%d, pix_fmt=%d)...\n", m_width, m_height, m_codecContext->pix_fmt);
         m_swsContext = sws_getContext(
             m_width, m_height, m_codecContext->pix_fmt,
             m_width, m_height, AV_PIX_FMT_RGBA,
@@ -236,6 +283,7 @@ bool VideoDecoder::open(const std::filesystem::path& filepath)
         
         // Allocate RGBA buffer for SW fallback
         int num_bytes = av_image_get_buffer_size(AV_PIX_FMT_RGBA, m_width, m_height, 1);
+        LOGI("Allocating RGBA buffer (%d bytes)...\n", num_bytes);
         uint8_t* buffer = (uint8_t*)av_malloc(num_bytes * sizeof(uint8_t));
         if (!buffer) {
             LOGE("Failed to allocate RGBA buffer\n");
@@ -243,16 +291,24 @@ bool VideoDecoder::open(const std::filesystem::path& filepath)
             return false;
         }
 
+        m_rgbaFrame = av_frame_alloc();
+        if (!m_rgbaFrame) {
+             LOGE("Failed to allocate RGBA frame\n");
+             av_free(buffer);
+             close();
+             return false;
+        }
+
         av_image_fill_arrays(m_rgbaFrame->data, m_rgbaFrame->linesize, buffer,
                              AV_PIX_FMT_RGBA, m_width, m_height, 1);
     }
 
     // Allocate frames
+    LOGI("Allocating packets/frames...\n");
     m_avFrame = av_frame_alloc();
-    m_rgbaFrame = av_frame_alloc();
     m_packet = av_packet_alloc();
 
-    if (!m_avFrame || !m_rgbaFrame || !m_packet) {
+    if (!m_avFrame || !m_packet) {
         LOGE("Failed to allocate frames/packet\n");
         close();
         return false;
