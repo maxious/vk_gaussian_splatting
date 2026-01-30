@@ -598,12 +598,10 @@ bool DepthVideoLoader::decodeNextFrame()
                     break;
                 }
 
-                const uint8_t* srcData[1] = { m_avFrame->data[0] };
-                int srcLinesize[1] = { m_avFrame->linesize[0] };
                 uint8_t* dstData[1] = { m_grayscaleFrame->data[0] };
                 int dstLinesize[1] = { m_grayscaleFrame->linesize[0] };
 
-                sws_scale(m_swsContext, srcData, srcLinesize, 0, m_height, dstData, dstLinesize);
+                sws_scale(m_swsContext, m_avFrame->data, m_avFrame->linesize, 0, m_height, dstData, dstLinesize);
 
                 size_t frameSize = m_width * m_height;
                 m_currentFrameData.resize(frameSize);
@@ -642,12 +640,10 @@ bool DepthVideoLoader::decodeNextFrame()
                 break;
             }
 
-            const uint8_t* srcData[1] = { m_avFrame->data[0] };
-            int srcLinesize[1] = { m_avFrame->linesize[0] };
             uint8_t* dstData[1] = { m_grayscaleFrame->data[0] };
             int dstLinesize[1] = { m_grayscaleFrame->linesize[0] };
 
-            sws_scale(m_swsContext, srcData, srcLinesize, 0, m_height, dstData, dstLinesize);
+            sws_scale(m_swsContext, m_avFrame->data, m_avFrame->linesize, 0, m_height, dstData, dstLinesize);
 
             size_t frameSize = m_width * m_height;
             m_currentFrameData.resize(frameSize);

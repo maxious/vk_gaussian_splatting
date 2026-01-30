@@ -176,7 +176,14 @@ bool VideoDecoder::open(const std::filesystem::path& filepath)
         return false;
     }
 
+    // FFmpeg Vulkan HW decoding is currently disabled. The integration with the app's
+    // Vulkan device context is incomplete - FFmpeg creates its own internal device
+    // which conflicts with the app's device, causing synchronization issues and
+    // render chain freezes. Using software decoding for now (sws_scale to RGBA).
+    // TODO: Properly share Vulkan device context with FFmpeg (requires passing
+    // AVVulkanDeviceContext with vkGetInstanceProcAddr, enabled extensions, etc.)
     bool hwInitSuccess = false;
+#if 0  // Disabled: FFmpeg Vulkan HW decoding causes render chain freezes
     if (m_vkDevice != VK_NULL_HANDLE) {
         if (initHWDevice()) {
             m_codecContext->hw_device_ctx = av_buffer_ref(m_hwDeviceContext);
@@ -185,6 +192,7 @@ bool VideoDecoder::open(const std::filesystem::path& filepath)
             LOGI("FFmpeg HW decoding enabled.\n");
         }
     }
+#endif
 
     m_width = m_codecContext->width;
     m_height = m_codecContext->height;
@@ -270,10 +278,6 @@ void VideoDecoder::startDecoding()
 
 void VideoDecoder::stopDecoding()
 {
-    if (!m_running) {
-        return;
-    }
-
     m_stopRequested = true;
     m_running = false;
     m_paused = false;
