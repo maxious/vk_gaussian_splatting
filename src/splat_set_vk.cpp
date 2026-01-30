@@ -1285,4 +1285,141 @@ void SplatSetVk::rtxInitAccelerationStructures(SplatSet& splatSet)
   rtxValid = true;
 }
 
+////////////////////////////////////////////////////////////////////////////////
+// PTLAS (VK_NV_partitioned_acceleration_structure) support
+// Enables GPU-driven partial TLAS updates for sparse FreeTimeGS animations
+////////////////////////////////////////////////////////////////////////////////
+
+void SplatSetVk::rtxInitPtlasPartitions(SplatSet& splatSet, float cellSize)
+{
+  const uint32_t splatCount = static_cast<uint32_t>(splatSet.size());
+  if(splatCount == 0)
+    return;
+
+  auto startTime = std::chrono::high_resolution_clock::now();
+
+  // Store cell size
+  ptlas.cellSize = cellSize;
+
+  // Compute scene AABB
+  ptlas.sceneMin = glm::vec3(std::numeric_limits<float>::max());
+  ptlas.sceneMax = glm::vec3(std::numeric_limits<float>::lowest());
+
+  for(uint32_t i = 0; i < splatCount; ++i)
+  {
+    glm::vec3 pos(splatSet.positions[i * 3 + 0], splatSet.positions[i * 3 + 1], splatSet.positions[i * 3 + 2]);
+    ptlas.sceneMin = glm::min(ptlas.sceneMin, pos);
+    ptlas.sceneMax = glm::max(ptlas.sceneMax, pos);
+  }
+
+  // Add small padding to avoid edge cases
+  ptlas.sceneMin -= glm::vec3(0.001f);
+  ptlas.sceneMax += glm::vec3(0.001f);
+
+  // Compute grid dimensions
+  glm::vec3 sceneSize = ptlas.sceneMax - ptlas.sceneMin;
+  ptlas.gridDims = glm::max(glm::ivec3(1), glm::ivec3(glm::ceil(sceneSize / cellSize)));
+  ptlas.numPartitions = ptlas.gridDims.x * ptlas.gridDims.y * ptlas.gridDims.z;
+
+  // Allocate per-splat partition IDs
+  ptlas.splatPartitionIds.resize(splatCount);
+
+  // Allocate partition splat lists
+  ptlas.partitionSplatLists.resize(ptlas.numPartitions);
+  for(auto& list : ptlas.partitionSplatLists)
+    list.clear();
+
+  // Assign splats to partitions
+  for(uint32_t i = 0; i < splatCount; ++i)
+  {
+    glm::vec3 pos(splatSet.positions[i * 3 + 0], splatSet.positions[i * 3 + 1], splatSet.positions[i * 3 + 2]);
+    uint32_t partitionIdx = ptlas.getPartitionIndex(pos);
+    ptlas.splatPartitionIds[i] = partitionIdx;
+    ptlas.partitionSplatLists[partitionIdx].push_back(i);
+  }
+
+  // Initialize dirty tracking
+  ptlas.dirtyPartitions.resize(ptlas.numPartitions, false);
+
+  auto endTime = std::chrono::high_resolution_clock::now();
+  auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
+
+  // Log partition statistics
+  uint32_t maxSplatsPerPartition = 0;
+  uint32_t emptyPartitions = 0;
+  for(const auto& list : ptlas.partitionSplatLists)
+  {
+    maxSplatsPerPartition = std::max(maxSplatsPerPartition, static_cast<uint32_t>(list.size()));
+    if(list.empty())
+      emptyPartitions++;
+  }
+
+  LOGI("PTLAS partitioning: %u splats -> %u partitions (%dx%dx%d grid, cell=%.2f)\n", splatCount, ptlas.numPartitions,
+       ptlas.gridDims.x, ptlas.gridDims.y, ptlas.gridDims.z, cellSize);
+  LOGI("  Max splats/partition: %u, Empty partitions: %u/%u\n", maxSplatsPerPartition, emptyPartitions, ptlas.numPartitions);
+  LOGI("  Partitioning completed in %lld ms\n", static_cast<long long>(duration.count()));
+}
+
+void SplatSetVk::rtxBuildPtlas(SplatSet& splatSet)
+{
+  // PTLAS requires the extension to be available
+  if(!ptlas.extensionSupported)
+  {
+    LOGW("PTLAS: Extension VK_NV_partitioned_acceleration_structure not supported\n");
+    return;
+  }
+
+  if(ptlas.numPartitions == 0)
+  {
+    LOGW("PTLAS: No partitions initialized. Call rtxInitPtlasPartitions first.\n");
+    return;
+  }
+
+  // For now, log what would happen and note this is a stub for when we have Blackwell hardware
+  uint32_t dirtyCount = ptlas.countDirty();
+
+  if(dirtyCount == 0)
+  {
+    LOGD("PTLAS: No dirty partitions, skipping update\n");
+    return;
+  }
+
+  LOGI("PTLAS: Would update %u/%u dirty partitions (%.1f%% of TLAS)\n", dirtyCount, ptlas.numPartitions,
+       100.0f * dirtyCount / ptlas.numPartitions);
+
+  // TODO: Implement actual PTLAS building when running on Blackwell hardware
+  // The implementation would:
+  // 1. Upload VkPartitionedAccelerationStructureWriteInstanceDataNV for dirty instances
+  // 2. Build VkBuildPartitionedAccelerationStructureIndirectCommandNV with WRITE_INSTANCE op
+  // 3. Call vkCmdBuildPartitionedAccelerationStructuresNV
+  //
+  // For now, we fall back to regular TLAS rebuild which the caller handles
+
+  ptlas.clearDirty();
+}
+
+void SplatSetVk::rtxDeinitPtlas()
+{
+  // Clean up PTLAS device resources
+  if(ptlas.ptlas != VK_NULL_HANDLE)
+  {
+    vkDestroyAccelerationStructureKHR(m_app->getDevice(), ptlas.ptlas, nullptr);
+    ptlas.ptlas = VK_NULL_HANDLE;
+  }
+
+  if(ptlas.ptlasBuffer.buffer != VK_NULL_HANDLE)
+    m_alloc->destroyBuffer(ptlas.ptlasBuffer);
+  if(ptlas.ptlasInstancesBuffer.buffer != VK_NULL_HANDLE)
+    m_alloc->destroyBuffer(ptlas.ptlasInstancesBuffer);
+  if(ptlas.ptlasBuildOpsBuffer.buffer != VK_NULL_HANDLE)
+    m_alloc->destroyBuffer(ptlas.ptlasBuildOpsBuffer);
+  if(ptlas.ptlasOpCountBuffer.buffer != VK_NULL_HANDLE)
+    m_alloc->destroyBuffer(ptlas.ptlasOpCountBuffer);
+  if(ptlas.ptlasScratchBuffer.buffer != VK_NULL_HANDLE)
+    m_alloc->destroyBuffer(ptlas.ptlasScratchBuffer);
+
+  // Reset all state
+  ptlas = PtlasData{};
+}
+
 }  // namespace vk_viewer

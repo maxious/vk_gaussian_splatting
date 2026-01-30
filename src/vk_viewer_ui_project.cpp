@@ -176,6 +176,11 @@ bool VkViewerUI::loadProjectIfNeeded()
       LOAD1(prmRtxData.useAABBs, item, "useAABBs");
       LOAD1(prmRtxData.useSpheres, item, "useSpheres");
       LOAD1(prmRtxData.useTlasInstances, item, "useTlasInstances");
+      LOAD1(prmRtxData.useScratchPooling, item, "useScratchPooling");
+      LOAD1(prmRtxData.scratchPoolSizeMB, item, "scratchPoolSizeMB");
+      LOAD1(prmRtxData.usePtlas, item, "usePtlas");
+      LOAD1(prmRtxData.ptlasCellSize, item, "ptlasCellSize");
+      LOAD1(prmRtxData.ptlasMaxInstancesPerPartition, item, "ptlasMaxInstancesPerPartition");
 
       m_requestUpdateSplatData = true;
       m_requestUpdateSplatAs   = true;
@@ -413,6 +418,11 @@ bool VkViewerUI::saveProject(std::string path)
       item["useAABBs"]         = prmRtxData.useAABBs;
       item["useSpheres"]       = prmRtxData.useSpheres;
       item["useTlasInstances"] = prmRtxData.useTlasInstances;
+      item["useScratchPooling"] = prmRtxData.useScratchPooling;
+      item["scratchPoolSizeMB"] = prmRtxData.scratchPoolSizeMB;
+      item["usePtlas"]          = prmRtxData.usePtlas;
+      item["ptlasCellSize"]     = prmRtxData.ptlasCellSize;
+      item["ptlasMaxInstancesPerPartition"] = prmRtxData.ptlasMaxInstancesPerPartition;
 
       data["splatsGlobals"] = item;
     }

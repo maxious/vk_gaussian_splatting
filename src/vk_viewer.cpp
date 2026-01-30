@@ -428,6 +428,7 @@ void VkViewer::deinitAll()
   deinitScene();
   m_splatSetVk.resetTransform();
   m_splatSetVk.deinitDataStorage();
+  m_splatSetVk.rtxDeinitPtlas();
   m_splatSetVk.rtxDeinitSplatModel();
   m_splatSetVk.rtxDeinitAccelerationStructures();
   m_meshSetVk.deinitDataStorage();
@@ -465,7 +466,22 @@ void VkViewer::enableDepthVideoPlayback(const std::string& metadataPath)
   }
 
   m_videoDepthManager = std::make_unique<VideoDepthPlaybackManager>();
-  if(!m_videoDepthManager->openFromMetadata(metadataPath, m_app->getInstance(), m_app->getPhysicalDevice(), m_app->getDevice(), m_app->getQueue(0).familyIndex, 0))
+
+  uint32_t videoQueueFamily = m_app->getQueue(0).familyIndex;
+  uint32_t count            = 0;
+  vkGetPhysicalDeviceQueueFamilyProperties(m_app->getPhysicalDevice(), &count, nullptr);
+  std::vector<VkQueueFamilyProperties> families(count);
+  vkGetPhysicalDeviceQueueFamilyProperties(m_app->getPhysicalDevice(), &count, families.data());
+  for(uint32_t i = 0; i < count; i++)
+  {
+    if(families[i].queueFlags & VK_QUEUE_VIDEO_DECODE_BIT_KHR)
+    {
+      videoQueueFamily = i;
+      break;
+    }
+  }
+
+  if(!m_videoDepthManager->openFromMetadata(metadataPath, m_app->getInstance(), m_app->getPhysicalDevice(), m_app->getDevice(), videoQueueFamily, 0))
   {
     LOGE("Failed to open depth video from: %s\n", metadataPath.c_str());
     m_videoDepthManager.reset();

@@ -343,11 +343,18 @@ void VkViewer::processUpdateRequests(void)
     if((m_requestUpdateSplatData || m_requestUpdateSplatAs) && prmSelectedPipeline == PIPELINE_RTX)
     {
       // RTX specific - only update when using RTX pipeline
+      m_splatSetVk.rtxDeinitPtlas();  // Clean up PTLAS before rebuilding AS
       m_splatSetVk.rtxDeinitAccelerationStructures();
       m_splatSetVk.rtxDeinitSplatModel();
       m_splatSetVk.rtxInitSplatModel(m_splatSet, prmRtxData.useTlasInstances, prmRtxData.useAABBs, prmRtxData.useSpheres,
                                      prmRtxData.compressBlas, prmRtx.kernelDegree, prmRtx.kernelMinResponse, prmRtx.kernelAdaptiveClamping);
       m_splatSetVk.rtxInitAccelerationStructures(m_splatSet);
+
+      // Initialize PTLAS partitioning for FreeTimeGS sparse updates
+      if(prmRtxData.usePtlas && m_splatSet.has_time_data)
+      {
+        m_splatSetVk.rtxInitPtlasPartitions(m_splatSet, prmRtxData.ptlasCellSize);
+      }
     }
 
     if(m_requestUpdateMeshData || m_requestDeleteSelectedMesh)

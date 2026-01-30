@@ -23,6 +23,9 @@
 #include <vector>
 #include <algorithm>
 
+#include <glm/vec3.hpp>
+#include <glm/gtc/type_ptr.hpp>
+
 #include <vulkan/vulkan_core.h>
 
 #include <nvapp/application.hpp>
@@ -199,6 +202,97 @@ public:
   };
 
   nvvk::AccelerationStructureHelper rtAccelerationStructures;  // provides access to BLAS and TLAS
+
+  // RTXMU-style persistent scratch buffer for AS builds (reduces allocation churn)
+  nvvk::Buffer rtScratchBufferPool;
+  VkDeviceSize rtScratchBufferPoolSize{0};
+
+  // PTLAS (VK_NV_partitioned_acceleration_structure) support for sparse FreeTimeGS updates
+  // Enables GPU-driven partial TLAS updates - only rebuild partitions with animated splats
+  struct PtlasData
+  {
+    bool enabled{false};           // Whether PTLAS is active for this splat set
+    bool extensionSupported{false}; // Whether the extension is available
+
+    // Partition grid parameters
+    glm::vec3 sceneMin{0.0f};       // Scene AABB minimum
+    glm::vec3 sceneMax{0.0f};       // Scene AABB maximum
+    glm::ivec3 gridDims{0};         // Number of partitions in each dimension
+    float cellSize{1.0f};           // World-space cell size
+
+    // Per-splat partition assignment
+    std::vector<uint32_t> splatPartitionIds;  // Maps splatIdx -> partitionIdx
+
+    // Per-partition data
+    uint32_t numPartitions{0};
+    std::vector<std::vector<uint32_t>> partitionSplatLists;  // partitionIdx -> list of splatIdx
+
+    // Dirty tracking for incremental updates
+    std::vector<bool> dirtyPartitions;  // Bitset of partitions needing rebuild
+
+    // PTLAS device resources (only valid when extension supported)
+    VkAccelerationStructureKHR ptlas{VK_NULL_HANDLE};
+    nvvk::Buffer ptlasBuffer;              // Backing buffer for PTLAS
+    nvvk::Buffer ptlasInstancesBuffer;     // Device buffer for instance definitions
+    nvvk::Buffer ptlasBuildOpsBuffer;      // Device buffer for build operations
+    nvvk::Buffer ptlasOpCountBuffer;       // Device buffer for operation count (1 uint32)
+    nvvk::Buffer ptlasScratchBuffer;       // Scratch buffer for PTLAS builds
+
+    // Helper to compute partition index from world position
+    uint32_t getPartitionIndex(const glm::vec3& pos) const
+    {
+      if(numPartitions == 0)
+        return 0;
+      glm::ivec3 cell = glm::clamp(
+          glm::ivec3((pos - sceneMin) / cellSize),
+          glm::ivec3(0),
+          gridDims - glm::ivec3(1));
+      return cell.x + cell.y * gridDims.x + cell.z * gridDims.x * gridDims.y;
+    }
+
+    // Mark a partition as dirty (needs rebuild)
+    void markDirty(uint32_t partitionIdx)
+    {
+      if(partitionIdx < dirtyPartitions.size())
+        dirtyPartitions[partitionIdx] = true;
+    }
+
+    // Mark partitions for splats that moved
+    void markSplatDirty(uint32_t splatIdx, const glm::vec3& newPos)
+    {
+      if(splatIdx >= splatPartitionIds.size())
+        return;
+      uint32_t oldPartition = splatPartitionIds[splatIdx];
+      uint32_t newPartition = getPartitionIndex(newPos);
+      markDirty(oldPartition);
+      if(newPartition != oldPartition)
+      {
+        markDirty(newPartition);
+        splatPartitionIds[splatIdx] = newPartition;
+      }
+    }
+
+    // Clear all dirty flags
+    void clearDirty()
+    {
+      std::fill(dirtyPartitions.begin(), dirtyPartitions.end(), false);
+    }
+
+    // Count dirty partitions
+    uint32_t countDirty() const
+    {
+      return static_cast<uint32_t>(std::count(dirtyPartitions.begin(), dirtyPartitions.end(), true));
+    }
+  } ptlas;
+
+  // Initialize PTLAS partitioning for a splat set
+  void rtxInitPtlasPartitions(SplatSet& splatSet, float cellSize);
+
+  // Build or update PTLAS (uses dirty tracking for incremental updates)
+  void rtxBuildPtlas(SplatSet& splatSet);
+
+  // Deinit PTLAS resources
+  void rtxDeinitPtlas();
 
   // data storage memory usage statistics
   struct ModelMemoryStats

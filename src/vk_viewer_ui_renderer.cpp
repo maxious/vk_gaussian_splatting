@@ -567,6 +567,45 @@ void VkViewerUI::guiDrawRendererProperties()
         if(PE::Checkbox("Adaptive clamp", &prmRtx.kernelAdaptiveClamping))
           m_requestUpdateSplatData = true;
 
+        // RTXMU-style scratch buffer pooling
+        if(PE::entry(
+               "Scratch pooling",
+               [&]() { return ImGui::Checkbox("##ID", &prmRtxData.useScratchPooling); },
+               "Reuse a persistent scratch buffer for AS builds (RTXMU optimization)\n"
+               "Reduces allocation churn and memory fragmentation"))
+        {
+          // No immediate action needed - takes effect on next AS build
+        }
+
+        if(prmRtxData.useScratchPooling)
+        {
+          int poolSizeMB = static_cast<int>(prmRtxData.scratchPoolSizeMB);
+          if(PE::InputInt("Pool size (MB)", &poolSizeMB))
+          {
+            prmRtxData.scratchPoolSizeMB = std::clamp(static_cast<uint32_t>(poolSizeMB), 1u, 256u);
+          }
+        }
+
+        // PTLAS for FreeTimeGS sparse updates
+        if(PE::entry(
+               "PTLAS (Blackwell)",
+               [&]() { return ImGui::Checkbox("##ID", &prmRtxData.usePtlas); },
+               "Partitioned TLAS for sparse FreeTimeGS updates\n"
+               "Only rebuilds partitions containing animated splats\n"
+               "Requires RTX 50 series (Blackwell) or newer"))
+        {
+          m_requestUpdateSplatData = true;
+        }
+
+        if(prmRtxData.usePtlas)
+        {
+          if(PE::InputFloat("PTLAS cell size", &prmRtxData.ptlasCellSize, 0.1f, 10.0f, "%.2f"))
+          {
+            prmRtxData.ptlasCellSize = std::clamp(prmRtxData.ptlasCellSize, 0.1f, 100.0f);
+            m_requestUpdateSplatData = true;
+          }
+        }
+
         PE::InputFloat("Alpha clamp", &prmFrame.alphaClamp, 0.0, 3.0, "%.2f", ImGuiInputTextFlags_EnterReturnsTrue);
 
         PE::InputFloat("Minimum transmittance", &prmFrame.minTransmittance, 0.0, 1.0, "%.2f", ImGuiInputTextFlags_EnterReturnsTrue);

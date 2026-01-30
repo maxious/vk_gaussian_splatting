@@ -88,6 +88,23 @@ struct RtxVramDataParameters
   // if true, use one instance per splat in TLAS and single splat model in BLAS
   // otherwise, only one instance in TLAS and all splats transformed in BLAS
   bool useTlasInstances = true;
+
+  // RTXMU-style acceleration structure memory optimizations
+  // When enabled, reuses a persistent scratch buffer instead of per-build allocation
+  bool useScratchPooling = true;
+  // Maximum scratch buffer size for pooling (32MB default)
+  // Larger values allow more parallel builds but use more memory
+  uint32_t scratchPoolSizeMB = 32;
+
+  // VK_NV_partitioned_acceleration_structure (PTLAS) for sparse FreeTimeGS updates
+  // When enabled, partitions TLAS into spatial cells for incremental updates
+  // Only available on Blackwell (RTX 50 series) and newer GPUs
+  bool usePtlas = false;
+  // World-space cell size for PTLAS partitioning (in scene units)
+  // Smaller values = more partitions = finer-grained updates but more overhead
+  float ptlasCellSize = 1.0f;
+  // Maximum number of instances per partition (for PTLAS sizing)
+  uint32_t ptlasMaxInstancesPerPartition = 1024;
 };
 
 // Parameters that controls data storage

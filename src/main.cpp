@@ -149,6 +149,15 @@ int main(int argc, char** argv)
   };
   vkSetup.deviceExtensions.emplace_back(VK_NV_RAY_TRACING_LINEAR_SWEPT_SPHERES_EXTENSION_NAME, &sphereFeatures, false);
 
+  // VK_NV_partitioned_acceleration_structure (PTLAS) for sparse FreeTimeGS updates
+  // Enables GPU-driven partial TLAS updates - only rebuild changed partitions
+  // Ideal for 4D Gaussian splats where <10% of splats animate per frame
+  VkPhysicalDevicePartitionedAccelerationStructureFeaturesNV ptlasFeatures = {
+      .sType                            = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PARTITIONED_ACCELERATION_STRUCTURE_FEATURES_NV,
+      .partitionedAccelerationStructure = VK_TRUE,
+  };
+  vkSetup.deviceExtensions.emplace_back(VK_NV_PARTITIONED_ACCELERATION_STRUCTURE_EXTENSION_NAME, &ptlasFeatures, false);
+
 #ifdef WITH_DLSS_RR
   // Required for DLSS-RR CUDA-Vulkan interop
   vkSetup.deviceExtensions.emplace_back(VK_NVX_BINARY_IMPORT_EXTENSION_NAME, nullptr, false);
@@ -161,18 +170,58 @@ int main(int argc, char** argv)
   vkSetup.instanceExtensions.push_back(VK_KHR_EXTERNAL_MEMORY_CAPABILITIES_EXTENSION_NAME);
   vkSetup.instanceExtensions.push_back(VK_KHR_EXTERNAL_SEMAPHORE_CAPABILITIES_EXTENSION_NAME);
 
-  vkSetup.deviceExtensions.emplace_back(VK_KHR_VIDEO_QUEUE_EXTENSION_NAME, nullptr, false);
-  vkSetup.deviceExtensions.emplace_back(VK_KHR_VIDEO_DECODE_QUEUE_EXTENSION_NAME, nullptr, false);
-  vkSetup.deviceExtensions.emplace_back(VK_KHR_VIDEO_DECODE_H265_EXTENSION_NAME, nullptr, false);
-  vkSetup.deviceExtensions.emplace_back(VK_KHR_VIDEO_DECODE_H264_EXTENSION_NAME, nullptr, false);
+  vkSetup.queues.push_back(VK_QUEUE_VIDEO_DECODE_BIT_KHR);
+
+  static VkPhysicalDeviceVideoMaintenance1FeaturesKHR videoMaintenanceFeatures = {
+      .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VIDEO_MAINTENANCE_1_FEATURES_KHR,
+      .videoMaintenance1 = VK_TRUE
+  };
+  static VkPhysicalDeviceSynchronization2FeaturesKHR sync2Features = {
+      .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES_KHR,
+      .synchronization2 = VK_TRUE
+  };
+
+  static VkVideoProfileInfoKHR videoProfiles[] = {
+      {
+          .sType               = VK_STRUCTURE_TYPE_VIDEO_PROFILE_INFO_KHR,
+          .videoCodecOperation = VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR,
+          .chromaSubsampling   = VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
+          .lumaBitDepth        = VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+          .chromaBitDepth      = VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+      },
+      {
+          .sType               = VK_STRUCTURE_TYPE_VIDEO_PROFILE_INFO_KHR,
+          .videoCodecOperation = VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR,
+          .chromaSubsampling   = VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
+          .lumaBitDepth        = VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+          .chromaBitDepth      = VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+      },
+      {
+          .sType               = VK_STRUCTURE_TYPE_VIDEO_PROFILE_INFO_KHR,
+          .videoCodecOperation = VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR,
+          .chromaSubsampling   = VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
+          .lumaBitDepth        = VK_VIDEO_COMPONENT_BIT_DEPTH_10_BIT_KHR,
+          .chromaBitDepth      = VK_VIDEO_COMPONENT_BIT_DEPTH_10_BIT_KHR,
+      }};
+
+  static VkVideoProfileListInfoKHR videoProfileList = {
+      .sType = VK_STRUCTURE_TYPE_VIDEO_PROFILE_LIST_INFO_KHR, .profileCount = 3, .pProfiles = videoProfiles};
+
+  vkSetup.deviceExtensions.emplace_back(VK_KHR_VIDEO_QUEUE_EXTENSION_NAME, nullptr, true);
+  vkSetup.deviceExtensions.emplace_back(VK_KHR_VIDEO_DECODE_QUEUE_EXTENSION_NAME, nullptr, true);
+  vkSetup.deviceExtensions.emplace_back(VK_KHR_VIDEO_DECODE_H265_EXTENSION_NAME, nullptr, true);
+  vkSetup.deviceExtensions.emplace_back(VK_KHR_VIDEO_DECODE_H264_EXTENSION_NAME, nullptr, true);
+  vkSetup.deviceExtensions.emplace_back(VK_KHR_VIDEO_MAINTENANCE_1_EXTENSION_NAME, &videoMaintenanceFeatures, true);
+  
   // YCbCr conversion for sampling decoded video frames
   vkSetup.deviceExtensions.emplace_back(VK_KHR_SAMPLER_YCBCR_CONVERSION_EXTENSION_NAME, nullptr, false);
 
   // FFmpeg Vulkan HW acceleration requirements
   vkSetup.deviceExtensions.emplace_back(VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME, nullptr, false);
   vkSetup.deviceExtensions.emplace_back(VK_KHR_EXTERNAL_SEMAPHORE_EXTENSION_NAME, nullptr, false);
-  vkSetup.deviceExtensions.emplace_back("VK_KHR_external_memory_fd", nullptr, false);
-  vkSetup.deviceExtensions.emplace_back("VK_KHR_external_semaphore_fd", nullptr, false);
+  vkSetup.deviceExtensions.emplace_back(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME, nullptr, false);
+  vkSetup.deviceExtensions.emplace_back(VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME, nullptr, false);
+  vkSetup.deviceExtensions.emplace_back(VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME, &sync2Features, false);
 #endif
 
   if(!appInfo.headless)
@@ -211,6 +260,26 @@ int main(int argc, char** argv)
     LOGE("Error in Vulkan context creation\n");
     return 1;
   }
+
+#ifdef WITH_VULKAN_VIDEO
+  LOGI("Vulkan Video Extensions Status:\n");
+  auto logExt = [&](const char* name) {
+    LOGI("  %s: %s\n", name, vkContext.hasExtensionEnabled(name) ? "Enabled" : "Not Supported/Enabled");
+  };
+  logExt(VK_KHR_VIDEO_QUEUE_EXTENSION_NAME);
+  logExt(VK_KHR_VIDEO_DECODE_QUEUE_EXTENSION_NAME);
+  logExt(VK_KHR_VIDEO_DECODE_H264_EXTENSION_NAME);
+  logExt(VK_KHR_VIDEO_DECODE_H265_EXTENSION_NAME);
+  logExt(VK_KHR_VIDEO_MAINTENANCE_1_EXTENSION_NAME);
+  logExt(VK_KHR_SAMPLER_YCBCR_CONVERSION_EXTENSION_NAME);
+  logExt(VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME);
+
+  LOGI("Vulkan Queues Info:\n");
+  for(const auto& q : vkContext.getQueueInfos())
+  {
+    LOGI("  Family: %d, Index: %d\n", q.familyIndex, q.queueIndex);
+  }
+#endif
 
   /////////////////////////////////
   // Application setup
