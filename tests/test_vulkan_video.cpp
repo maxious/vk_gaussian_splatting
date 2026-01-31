@@ -19,7 +19,7 @@
 
 #include "doctest.h"
 
-#ifdef WITH_VULKAN_VIDEO
+#if defined(WITH_VULKAN_VIDEO) && defined(WITH_VIDEO_DECODER)
 #include "../src/vulkan_video_decoder.h"
 #include <volk.h>
 #include <cstring>
@@ -102,12 +102,12 @@ TEST_CASE("DpbSlot default state")
     CHECK_FALSE(slot.inUse);
 }
 
-#else // WITH_VULKAN_VIDEO
+#else // WITH_VULKAN_VIDEO && WITH_VIDEO_DECODER
 
-TEST_CASE("Vulkan Video disabled - placeholder test")
+TEST_CASE("Vulkan Video or Video Decoder disabled - placeholder test")
 {
-    // When Vulkan Video is disabled, just verify the test framework works
+    // When Vulkan Video or Video Decoder is disabled, just verify the test framework works
     CHECK(true);
 }
 
-#endif // WITH_VULKAN_VIDEO
+#endif // WITH_VULKAN_VIDEO && WITH_VIDEO_DECODER

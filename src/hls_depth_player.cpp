@@ -282,10 +282,6 @@ std::vector<float> HlsDepthPlayer::unpackDepthFromGrayscale(const uint8_t*, int,
     return {};
 }
 
-HlsDecodedFrame HlsDepthPlayer::separateFrame(const DecodedFrame&) {
-    return {};
-}
-
 #endif
 
 } // namespace vk_viewer

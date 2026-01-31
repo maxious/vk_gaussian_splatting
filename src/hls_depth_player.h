@@ -24,7 +24,9 @@
 #include <mutex>
 #include <atomic>
 
+#ifdef WITH_VIDEO_DECODER
 #include "video_decoder.h"
+#endif
 
 namespace vk_viewer {
 
@@ -77,7 +79,13 @@ public:
     bool getNextFrame(HlsDecodedFrame& frame);
     bool seekToTime(double timestamp);
 
-    bool isRunning() const { return m_decoder && m_decoder->isRunning(); }
+    bool isRunning() const {
+#ifdef WITH_VIDEO_DECODER
+        return m_decoder && m_decoder->isRunning();
+#else
+        return false;
+#endif
+    }
     const HlsDepthMetadata& getMetadata() const { return m_metadata; }
     double getCurrentTime() const;
     void pause();
@@ -85,9 +93,11 @@ public:
 
 private:
     std::vector<float> unpackDepthFromGrayscale(const uint8_t* grayscaleData, int width, int height);
+#ifdef WITH_VIDEO_DECODER
     HlsDecodedFrame separateFrame(const DecodedFrame& frame);
 
     std::unique_ptr<VideoDecoder> m_decoder;
+#endif
     HlsDepthMetadata m_metadata;
 
     std::vector<HlsDecodedFrame> m_frameQueue;

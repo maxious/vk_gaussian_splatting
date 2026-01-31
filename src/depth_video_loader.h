@@ -29,7 +29,9 @@
 #include <thread>
 #include <chrono>
 
+#ifdef WITH_VIDEO_DECODER
 #include "video_decoder.h"
+#endif
 
 #ifdef WITH_VIDEO_DECODER
 extern "C" {
@@ -417,7 +419,9 @@ private:
     void prebufferThread();
     void updatePlaybackTime();
     
+#ifdef WITH_VIDEO_DECODER
     std::unique_ptr<VideoDecoder> m_videoDecoder;
+#endif
     std::unique_ptr<DepthVideoLoader> m_depthLoader;
     DepthVideoMetadata m_metadata;
     
