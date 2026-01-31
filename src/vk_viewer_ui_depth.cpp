@@ -408,13 +408,6 @@ void VkViewerUI::guiDrawDepthStreamProperties()
   {
     PE::begin("##Offline Video+Depth");
 
-<<<<<<< HEAD
-    if(!m_videoDepthPlaybackMode
-#ifdef WITH_VIDEO_DECODER
-     && !m_hlsPlaybackMode
-#endif
-    )
-=======
 #ifdef WITH_VIDEO_DECODER
     bool hlsMode = m_hlsPlaybackMode;
 #else
@@ -422,7 +415,6 @@ void VkViewerUI::guiDrawDepthStreamProperties()
 #endif
 
     if(!m_videoDepthPlaybackMode && !hlsMode)
->>>>>>> origin/bolt/optimization/precompute-modelview-13434515112384284274
     {
       PE::entry("Load Video+Depth", [this]() {
         static std::filesystem::path videoPath;

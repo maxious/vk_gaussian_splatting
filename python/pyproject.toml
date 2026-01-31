@@ -112,6 +112,17 @@ matrix3d = [
     "sentencepiece>=0.2",
 ]
 
+# Diffusion repair models (Qwen-Image-Edit, FLUX.2 Klein with LoRAs)
+# Supports GGUF quantized models from ComfyUI for low VRAM usage
+diffusion-repair = [
+    "diffusers>=0.32",
+    "accelerate>=0.30",
+    "transformers>=4.51.3",
+    "sentencepiece>=0.2",
+    "scipy>=1.11",
+    "gguf>=0.6",  # For loading GGUF quantized models
+]
+
 # TRELLIS.2 GPU extensions (require CUDA compilation - install separately)
 trellis2 = [
     # TRELLIS.2 core dependencies are vendored in offline/vkgs_trellis2/
