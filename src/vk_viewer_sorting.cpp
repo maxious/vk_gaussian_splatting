@@ -97,7 +97,7 @@ void VkViewer::tryConsumeAndUploadCpuSortingResult(VkCommandBuffer cmd, const ui
   }
 }
 
-void VkViewer::processSortingOnGPU(VkCommandBuffer cmd, const uint32_t splatCount, bool skipRadixSort)
+void VkViewer::processSortingOnGPU(VkCommandBuffer cmd, const uint32_t splatCount, const glm::mat4& viewMatrix, bool skipRadixSort)
 {
   NVVK_DBG_SCOPE(cmd);
 
@@ -148,6 +148,8 @@ void VkViewer::processSortingOnGPU(VkCommandBuffer cmd, const uint32_t splatCoun
     // Model transform
     m_pcRaster.modelMatrix        = m_splatSetVk.transform;
     m_pcRaster.modelMatrixInverse = m_splatSetVk.transformInverse;
+    // OPTIMIZATION: Reuse modelMatrixRotScaleInverse for ModelView matrix (dist shader doesn't use RotScaleInverse)
+    m_pcRaster.modelMatrixRotScaleInverse = m_splatSetVk.transform * viewMatrix;
 
     vkCmdPushConstants(cmd, m_pipelineLayout,
                        VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_MESH_BIT_EXT | VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
@@ -183,7 +185,7 @@ void VkViewer::processSortingOnGPU(VkCommandBuffer cmd, const uint32_t splatCoun
   }
 }
 
-void VkViewer::drawSplatPrimitives(VkCommandBuffer cmd, const uint32_t splatCount)
+void VkViewer::drawSplatPrimitives(VkCommandBuffer cmd, const uint32_t splatCount, const glm::mat4* viewMatrix)
 {
   NVVK_DBG_SCOPE(cmd);
 
@@ -203,6 +205,13 @@ void VkViewer::drawSplatPrimitives(VkCommandBuffer cmd, const uint32_t splatCoun
   // cast to mat3 extracts only the rot/scale part of the transform
   glm::mat3 rotScale                    = glm::mat3(m_splatSetVk.transform);
   m_pcRaster.modelMatrixRotScaleInverse = glm::inverse(rotScale);
+
+  // OPTIMIZATION: Reuse modelMatrixRotScaleInverse for ModelView matrix in standard raster pipelines
+  // These pipelines do not use modelMatrixRotScaleInverse, so we can repurpose the slot
+  if (viewMatrix && (prmSelectedPipeline == PIPELINE_VERT || prmSelectedPipeline == PIPELINE_MESH || prmSelectedPipeline == PIPELINE_HYBRID))
+  {
+      m_pcRaster.modelMatrixRotScaleInverse = m_splatSetVk.transform * (*viewMatrix);
+  }
 
   vkCmdPushConstants(cmd, m_pipelineLayout,
                      VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_MESH_BIT_EXT | VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,

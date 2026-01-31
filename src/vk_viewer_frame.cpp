@@ -522,7 +522,7 @@ void VkViewer::prepareSceneForFrame(FrameRenderContext& ctx)
     // Process sorting - distance computation always runs, but radix sort can be skipped
     // when camera is stationary (temporal stability optimization)
     bool skipRadixSort = !shouldSort;
-    processSortingOnGPU(ctx.cmd, ctx.splatCount, skipRadixSort);
+    processSortingOnGPU(ctx.cmd, ctx.splatCount, ctx.viewMatrix, skipRadixSort);
     
     // Update last camera state after sorting (only if we actually sorted)
     if (shouldSort)
@@ -638,7 +638,7 @@ void VkViewer::renderSingleView(FrameRenderContext& ctx, const RenderView& view)
 
     if(ctx.shadersValid && ctx.hasSplats)
     {
-      drawSplatPrimitives(ctx.cmd, ctx.splatCount);
+      drawSplatPrimitives(ctx.cmd, ctx.splatCount, &view.view);
     }
 
     if(ctx.hasDepthContent)

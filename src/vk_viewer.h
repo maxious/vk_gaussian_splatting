@@ -305,9 +305,9 @@ private:
 
   void tryConsumeAndUploadCpuSortingResult(VkCommandBuffer cmd, const uint32_t splatCount);
 
-  void processSortingOnGPU(VkCommandBuffer cmd, const uint32_t splatCount, bool skipRadixSort = false);
+  void processSortingOnGPU(VkCommandBuffer cmd, const uint32_t splatCount, const glm::mat4& viewMatrix, bool skipRadixSort = false);
 
-  void drawSplatPrimitives(VkCommandBuffer cmd, const uint32_t splatCount);
+  void drawSplatPrimitives(VkCommandBuffer cmd, const uint32_t splatCount, const glm::mat4* viewMatrix = nullptr);
 
   void drawMeshPrimitives(VkCommandBuffer cmd);
 

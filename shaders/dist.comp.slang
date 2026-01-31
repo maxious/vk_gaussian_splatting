@@ -50,8 +50,9 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 
   float4 splatPos = float4(fetchCenter(id), 1.0);
 
-  // Row-major: multiply in reverse order (vector * matrix * matrix)
-  float4 viewPos      = mul(mul(splatPos, pcRaster.modelMatrix), frameInfo.viewMatrix);
+  // Row-major: multiply in reverse order (vector * matrix)
+  // Optimization: use precomputed modelViewMatrix (stored in modelMatrixRotScaleInverse for this shader)
+  float4 viewPos      = mul(splatPos, pcRaster.modelMatrixRotScaleInverse);
   // TODO: projection matrix is not correct with fisheye, this is a coarse aprox to compute depth
   float4 ndcPos       = mul(viewPos, frameInfo.projectionMatrix);
   ndcPos            = ndcPos / ndcPos.w;
