@@ -122,6 +122,7 @@ private:
     void*                                    m_swsContext = nullptr;
 #endif
 
+
     uint8_t* m_audioBuffer = nullptr;
     int m_audioBufferSize = 0;
 

@@ -126,10 +126,19 @@ void main(
   float4x4 viewMatrix = (frameInfo.multiviewEnabled != 0) ? frameInfo.viewMatrixArray[viewIndex] : frameInfo.viewMatrix;
   float4x4 projMatrix = (frameInfo.multiviewEnabled != 0) ? frameInfo.projectionMatrixArray[viewIndex] : frameInfo.projectionMatrix;
   float3 cameraPos = (frameInfo.multiviewEnabled != 0) ? frameInfo.cameraPositionArray[viewIndex] : frameInfo.cameraPosition;
+
+  float4x4 modelViewMatrix;
+  if (frameInfo.multiviewEnabled != 0) {
+      modelViewMatrix = mul(pcRaster.modelMatrix, viewMatrix);
+  } else {
+      modelViewMatrix = pcRaster.modelMatrixRotScaleInverse;
+  }
 #else
   float4x4 viewMatrix = frameInfo.viewMatrix;
   float4x4 projMatrix = frameInfo.projectionMatrix;
   float3 cameraPos = frameInfo.cameraPosition;
+
+  const float4x4 modelViewMatrix = pcRaster.modelMatrixRotScaleInverse;
 #endif
 
   if(baseIndex < splatCount)
@@ -138,8 +147,6 @@ void main(
 
     tris[localIndex * 2 + 0] = uint3(0, 2, 1) + localIndex * 4;
     tris[localIndex * 2 + 1] = uint3(2, 0, 3) + localIndex * 4;
-
-    const float4x4 modelViewMatrix = mul(pcRaster.modelMatrix, viewMatrix);
 
     // Fetches are done as early as possible.
     float4       splatColor  = fetchColor(splatIndex);

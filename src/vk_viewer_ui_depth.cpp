@@ -408,11 +408,21 @@ void VkViewerUI::guiDrawDepthStreamProperties()
   {
     PE::begin("##Offline Video+Depth");
 
+<<<<<<< HEAD
     if(!m_videoDepthPlaybackMode
 #ifdef WITH_VIDEO_DECODER
      && !m_hlsPlaybackMode
 #endif
     )
+=======
+#ifdef WITH_VIDEO_DECODER
+    bool hlsMode = m_hlsPlaybackMode;
+#else
+    bool hlsMode = false;
+#endif
+
+    if(!m_videoDepthPlaybackMode && !hlsMode)
+>>>>>>> origin/bolt/optimization/precompute-modelview-13434515112384284274
     {
       PE::entry("Load Video+Depth", [this]() {
         static std::filesystem::path videoPath;
@@ -667,22 +677,22 @@ void VkViewerUI::guiDrawDepthStreamProperties()
         return changed;
       });
 
-if(ImGui::Button("Stop Playback"))
-    {
-      m_enableDepthRendering = false;
-      m_videoDepthPlaybackMode = false;
+      if(ImGui::Button("Stop Playback"))
+      {
+        m_enableDepthRendering = false;
+        m_videoDepthPlaybackMode = false;
 #ifdef WITH_VIDEO_DECODER
-      m_hlsPlaybackMode = false;
-      if(m_videoDepthManager)
-      {
-        m_videoDepthManager->close();
-        m_videoDepthManager.reset();
-      }
-      if(m_hlsPlayer)
-      {
-        m_hlsPlayer->stop();
-        m_hlsPlayer.reset();
-      }
+        m_hlsPlaybackMode = false;
+        if(m_videoDepthManager)
+        {
+          m_videoDepthManager->close();
+          m_videoDepthManager.reset();
+        }
+        if(m_hlsPlayer)
+        {
+          m_hlsPlayer->stop();
+          m_hlsPlayer.reset();
+        }
 #endif
       }
     }

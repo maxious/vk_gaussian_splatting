@@ -887,16 +887,23 @@ void VkViewer::updateXrLocomotion(float deltaTime)
   const auto& locomotion = m_xr->getLocomotionInput();
 
   // Check if in depth-only mode (depth content but no splats or meshes)
-  bool hasDepthContent = m_enableDepthRendering || m_videoDepthPlaybackMode
 #ifdef WITH_VIDEO_DECODER
-                        || m_hlsPlaybackMode
+  bool hasDepthContent = m_enableDepthRendering || m_videoDepthPlaybackMode || m_hlsPlaybackMode;
+#else
+  bool hasDepthContent = m_enableDepthRendering || m_videoDepthPlaybackMode;
 #endif
-    ;
   bool hasSplats = m_splatSet.positions.size() > 0 || m_splatLoader.getStatus() == SplatLoaderAsync::State::STATE_READY;
   bool hasMeshes = !m_meshSetVk.instances.empty();
   bool isDepthOnlyMode = hasDepthContent && !hasSplats && !hasMeshes;
 
   // Handle depth video mode controls
+#ifdef WITH_VIDEO_DECODER
+  bool isHls = m_hlsPlaybackMode;
+#else
+  bool isHls = false;
+#endif
+  // Use local isHls instead of m_hlsPlaybackMode for subsequent checks if possible,
+  // or guard usages.
   if(isDepthOnlyMode && hasDepthContent)
   {
     // Left stick: plane tilt with spring-back on release

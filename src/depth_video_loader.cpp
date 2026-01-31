@@ -951,12 +951,14 @@ void VideoDepthPlaybackManager::close()
         m_depthLoader.reset();
     }
 
+#ifdef WITH_VIDEO_DECODER
     if (m_videoDecoder)
     {
         m_videoDecoder->stopDecoding();
         m_videoDecoder->close();
         m_videoDecoder.reset();
     }
+#endif
 
     m_isPlaying.store(false);
     m_paused.store(true);

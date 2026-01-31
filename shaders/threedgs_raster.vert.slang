@@ -89,13 +89,22 @@ VertexOutput main(VertexInput input)
   float4x4 viewMatrix = (frameInfo.multiviewEnabled != 0) ? frameInfo.viewMatrixArray[input.viewIndex] : frameInfo.viewMatrix;
   float4x4 projMatrix = (frameInfo.multiviewEnabled != 0) ? frameInfo.projectionMatrixArray[input.viewIndex] : frameInfo.projectionMatrix;
   float3 cameraPos = (frameInfo.multiviewEnabled != 0) ? frameInfo.cameraPositionArray[input.viewIndex] : frameInfo.cameraPosition;
+
+  float4x4 modelViewMatrix;
+  if (frameInfo.multiviewEnabled != 0) {
+      modelViewMatrix = mul(pcRaster.modelMatrix, viewMatrix);
+  } else {
+      // Optimization: use precomputed modelViewMatrix (stored in modelMatrixRotScaleInverse)
+      modelViewMatrix = pcRaster.modelMatrixRotScaleInverse;
+  }
 #else
   float4x4 viewMatrix = frameInfo.viewMatrix;
   float4x4 projMatrix = frameInfo.projectionMatrix;
   float3 cameraPos = frameInfo.cameraPosition;
-#endif
 
-  const float4x4 modelViewMatrix = mul(pcRaster.modelMatrix, viewMatrix);
+  // Optimization: use precomputed modelViewMatrix (stored in modelMatrixRotScaleInverse)
+  const float4x4 modelViewMatrix = pcRaster.modelMatrixRotScaleInverse;
+#endif
 
   // Fetch data as early as possible
   const float3x3 cov3Dm      = fetchCovariance(splatIndex);
