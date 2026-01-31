@@ -114,11 +114,13 @@ private:
     bool initFFmpeg();
     void cleanup();
 
+#ifdef WITH_VIDEO_DECODER
     AVFormatContext*                         m_formatContext = nullptr;
     AVCodecContext*                          m_codecContext = nullptr;
     AVCodecParameters*                       m_codecParameters = nullptr;
     SwrContext*                              m_resampler = nullptr;
     void*                                    m_swsContext = nullptr;
+#endif
     
     uint8_t* m_audioBuffer = nullptr;
     int m_audioBufferSize = 0;

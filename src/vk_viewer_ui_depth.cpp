@@ -408,7 +408,13 @@ void VkViewerUI::guiDrawDepthStreamProperties()
   {
     PE::begin("##Offline Video+Depth");
 
-    if(!m_videoDepthPlaybackMode && !m_hlsPlaybackMode)
+#ifdef WITH_VIDEO_DECODER
+    bool hlsMode = m_hlsPlaybackMode;
+#else
+    bool hlsMode = false;
+#endif
+
+    if(!m_videoDepthPlaybackMode && !hlsMode)
     {
       PE::entry("Load Video+Depth", [this]() {
         static std::filesystem::path videoPath;
@@ -667,8 +673,8 @@ void VkViewerUI::guiDrawDepthStreamProperties()
       {
         m_enableDepthRendering = false;
         m_videoDepthPlaybackMode = false;
-        m_hlsPlaybackMode = false;
 #ifdef WITH_VIDEO_DECODER
+        m_hlsPlaybackMode = false;
         if(m_videoDepthManager)
         {
           m_videoDepthManager->close();

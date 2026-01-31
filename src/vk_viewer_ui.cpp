@@ -230,7 +230,11 @@ void VkViewerUI::onPreRender()
 
   // Depth video specific controls (when in depth-only mode, camera manipulator is ineffective)
   bool isDepthOnlyMode = m_enableDepthRendering && !m_splatLoader.getStatus() == SplatLoaderAsync::State::STATE_READY && m_meshSetVk.instances.empty();
+#ifdef WITH_VIDEO_DECODER
   bool hasDepthContent = m_enableDepthRendering || m_videoDepthPlaybackMode || m_hlsPlaybackMode;
+#else
+  bool hasDepthContent = m_enableDepthRendering || m_videoDepthPlaybackMode;
+#endif
 
   if(hasDepthContent && prmFrame.vdzParallaxStrength > 0.0f)
   {
@@ -302,11 +306,13 @@ void VkViewerUI::onPreRender()
     }
     if(ImGui::IsKeyDown(ImGuiKey_End))
     {
+#ifdef WITH_VIDEO_DECODER
       if(m_hlsPlaybackMode && m_hlsMetadata.duration > 0)
       {
         m_playbackTimeOffset = m_hlsMetadata.duration * 1000.0;
       }
       else
+#endif
       {
         m_playbackTimeOffset = 0.0;  // Default to start
       }
