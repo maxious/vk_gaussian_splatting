@@ -227,6 +227,15 @@ def main():
     )
     postprocess_parser.add_argument("-v", "--verbose", action="store_true")
 
+    any4d_parser = subparsers.add_parser("any4d", help="Generate 4DV from Any4D output")
+    any4d_parser.add_argument("--input", "-i", type=Path, required=True, help="Input images folder")
+    any4d_parser.add_argument("--output", "-o", type=Path, required=True, help="Output .4dv file")
+    any4d_parser.add_argument("--model-path", type=str, default=None, help="Any4D checkpoint path")
+    any4d_parser.add_argument("--fps", type=float, default=30.0, help="Frame rate")
+    any4d_parser.add_argument("--num-splats", type=int, default=100_000, help="Number of splats")
+    any4d_parser.add_argument("--device", type=str, default="cuda", help="Device to use")
+    any4d_parser.add_argument("-v", "--verbose", action="store_true")
+
     images_parser = subparsers.add_parser(
         "images", help="Process images with DA3 and export to Gaussian PLY files"
     )
@@ -411,6 +420,18 @@ def main():
             ply_pattern=args.pattern,
             flip_y=getattr(args, "flip_y", False),
             format=args.format,
+        )
+
+    elif args.command == "any4d":
+        from .any4d_to_4dv import run_any4d_export
+
+        run_any4d_export(
+            args.input,
+            args.output,
+            model_path=args.model_path,
+            fps=args.fps,
+            num_splats=args.num_splats,
+            device=args.device,
         )
 
     elif args.command == "images":
