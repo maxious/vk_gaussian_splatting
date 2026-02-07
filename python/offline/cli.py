@@ -236,6 +236,28 @@ def main():
     any4d_parser.add_argument("--device", type=str, default="cuda", help="Device to use")
     any4d_parser.add_argument("-v", "--verbose", action="store_true")
 
+    omnimatte_parser = subparsers.add_parser(
+        "omnimatte", help="OmnimatteZero: Background Generation & Object Extraction"
+    )
+    omnimatte_parser.add_argument(
+        "--input", "-i", type=Path, required=True, help="Input video file"
+    )
+    omnimatte_parser.add_argument(
+        "--mask", "-m", type=Path, required=True, help="Input mask video (total mask)"
+    )
+    omnimatte_parser.add_argument(
+        "--output", "-o", type=Path, required=True, help="Output directory"
+    )
+    omnimatte_parser.add_argument("--steps", type=int, default=30, help="Inference steps")
+    omnimatte_parser.add_argument(
+        "--extract-foreground",
+        action="store_true",
+        help="Extract foreground layer after background generation",
+    )
+    omnimatte_parser.add_argument("--width", type=int, default=768)
+    omnimatte_parser.add_argument("--height", type=int, default=512)
+    omnimatte_parser.add_argument("--device", type=str, default="cuda")
+
     images_parser = subparsers.add_parser(
         "images", help="Process images with DA3 and export to Gaussian PLY files"
     )
@@ -433,6 +455,33 @@ def main():
             num_splats=args.num_splats,
             device=args.device,
         )
+
+    elif args.command == "omnimatte":
+        from .processors.omnimatte import OmnimatteProcessor
+
+        processor = OmnimatteProcessor(device=args.device)
+        output_dir = args.output
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        bg_output = output_dir / "background.mp4"
+        processor.remove_object(
+            args.input,
+            args.mask,
+            bg_output,
+            num_inference_steps=args.steps,
+            height=args.height,
+            width=args.width,
+        )
+
+        if args.extract_foreground:
+            fg_output = output_dir / "foreground.mp4"
+            processor.extract_foreground(
+                args.input,
+                bg_output,
+                fg_output,
+                height=args.height,
+                width=args.width,
+            )
 
     elif args.command == "images":
         export_images_to_gaussian_plys(
