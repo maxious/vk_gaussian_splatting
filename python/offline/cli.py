@@ -257,6 +257,13 @@ def main():
     omnimatte_parser.add_argument("--width", type=int, default=768)
     omnimatte_parser.add_argument("--height", type=int, default=512)
     omnimatte_parser.add_argument("--device", type=str, default="cuda")
+    omnimatte_parser.add_argument(
+        "--gguf",
+        type=Path,
+        default=None,
+        help="Path to GGUF quantized model file (from calcuis/ltxv-gguf). "
+        "If provided, uses GGUF instead of Diffusers repo (lower VRAM).",
+    )
 
     images_parser = subparsers.add_parser(
         "images", help="Process images with DA3 and export to Gaussian PLY files"
@@ -459,7 +466,9 @@ def main():
     elif args.command == "omnimatte":
         from .processors.omnimatte import OmnimatteProcessor
 
-        processor = OmnimatteProcessor(device=args.device)
+        processor = OmnimatteProcessor(
+            device=args.device, gguf_path=str(args.gguf) if args.gguf else None
+        )
         output_dir = args.output
         output_dir.mkdir(parents=True, exist_ok=True)
 

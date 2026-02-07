@@ -34,10 +34,12 @@ class OmnimatteProcessor:
     def __init__(
         self,
         model_id: str = "a-r-r-o-w/LTX-Video-0.9.7-diffusers",
+        gguf_path: str | None = None,
         device: str = "cuda",
         dtype: torch.dtype = torch.bfloat16,
     ):
         self.model_id = model_id
+        self.gguf_path = gguf_path
         self.device = device
         self.dtype = dtype
         self.pipe = None
@@ -48,17 +50,21 @@ class OmnimatteProcessor:
         if self.pipe is not None:
             return
 
-        logger.info(f"Loading OmnimatteZero pipeline from {self.model_id}...")
-        self.pipe = OmnimatteZero.from_pretrained(self.model_id, torch_dtype=self.dtype).to(
-            self.device
-        )
+        logger.info(f"Loading OmnimatteZero pipeline...")
+        if self.gguf_path:
+            # Load from GGUF quantized checkpoint (much lower VRAM)
+            logger.info(f"Loading from GGUF: {self.gguf_path}")
+            self.pipe = OmnimatteZero.from_single_file(
+                self.gguf_path,
+                torch_dtype=self.dtype,
+            ).to(self.device)
+        else:
+            # Load from Diffusers repository (full precision)
+            logger.info(f"Loading from Diffusers: {self.model_id}")
+            self.pipe = OmnimatteZero.from_pretrained(self.model_id, torch_dtype=self.dtype).to(
+                self.device
+            )
 
-        # Load the custom VAE wrapper (or just use standard VAE and helper funcs)
-        # We use standard VAE loaded by pipeline, but we might need the custom wrapper class for easy Arithmetic?
-        # Actually, we can just do arithmetic on tensors.
-        # But let's stick to the script pattern if possible.
-        # The script replaces pipe.vae with MyAutoencoderKLLTXVideo.
-        # We can just use the loaded VAE and do the math ourselves.
         logger.info("OmnimatteZero loaded.")
 
     def remove_object(
