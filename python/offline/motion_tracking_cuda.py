@@ -206,6 +206,7 @@ def match_gaussians_sliding_window_cuda(
     window_size: int = 3,
     all_opacities: Optional[List[np.ndarray]] = None,
     opacity_weight: float = 0.0,
+    all_flows: Optional[List[np.ndarray]] = None,
 ) -> List[Tuple[int, int, int, int]]:
     """
     Match Gaussians using GPU-accelerated KNN.
@@ -220,6 +221,9 @@ def match_gaussians_sliding_window_cuda(
         opacity_weight: Weight for opacity in distance calculation.
                         0 = disabled (default), 0.1-0.5 = typical values.
                         Higher values favor matching points with similar opacity.
+        all_flows: Optional list of (N_i, 3) flow vectors per frame.
+                     If provided, uses flow to predict positions for matching.
+                     flow[i] is motion from frame i to i+1.
 
     Returns:
         List of (frame_a, idx_a, frame_b, idx_b) tuples
@@ -236,6 +240,12 @@ def match_gaussians_sliding_window_cuda(
         gpu_opacities = [torch.from_numpy(o).cuda().float() for o in all_opacities]
         logger.info(f"Using opacity matching with weight={opacity_weight}")
 
+    # Prepare flow tensors if provided
+    gpu_flows: Optional[List[torch.Tensor]] = None
+    if all_flows is not None:
+        gpu_flows = [torch.from_numpy(f).cuda().float() for f in all_flows]
+        logger.info("Using flow priors for motion tracking")
+
     n_frames = len(all_means)
     all_matches = []
     max_dist_sq = max_distance * max_distance
@@ -244,6 +254,7 @@ def match_gaussians_sliding_window_cuda(
         means_a = gpu_means[frame_a]
         n_a = len(means_a)
         opacity_a = gpu_opacities[frame_a] if gpu_opacities else None
+        flow_a = gpu_flows[frame_a] if gpu_flows else None
 
         # Track matches for frame_a
         matched_a = torch.zeros(n_a, dtype=torch.bool, device="cuda")
@@ -254,15 +265,35 @@ def match_gaussians_sliding_window_cuda(
             frame_b = frame_a + offset
             means_b = gpu_means[frame_b]
             opacity_b = gpu_opacities[frame_b] if gpu_opacities else None
+            flow_b = gpu_flows[frame_b] if gpu_flows else None
 
             # Forward search: A -> B
+            # Use flow to predict A's position at frame B: A + flow_a * offset
+            target_query_points = means_a
+            if flow_a is not None:
+                target_query_points = means_a + flow_a * offset
+
             dist_ab, idx_ab = knn_search_cutile(
-                means_a, means_b, attr_a=opacity_a, attr_b=opacity_b, attr_weight=opacity_weight
+                target_query_points,
+                means_b,
+                attr_a=opacity_a,
+                attr_b=opacity_b,
+                attr_weight=opacity_weight,
             )
 
             # Backward search: B -> A (for mutual check)
+            # Use flow to predict B's position at frame A: B - flow_b * offset
+            # Note: This assumes flow_b is approximately flow_a, which holds for smooth motion
+            target_query_points_b = means_b
+            if flow_b is not None:
+                target_query_points_b = means_b - flow_b * offset
+
             dist_ba, idx_ba = knn_search_cutile(
-                means_b, means_a, attr_a=opacity_b, attr_b=opacity_a, attr_weight=opacity_weight
+                target_query_points_b,
+                means_a,
+                attr_a=opacity_b,
+                attr_b=opacity_a,
+                attr_weight=opacity_weight,
             )
 
             # Check mutual match: idx_ba[idx_ab[i]] == i
@@ -325,6 +356,7 @@ def compute_motion_vectors_cuda(
     match_distance_ratio: float = 0.02,
     window_size: int = 3,
     opacity_weight: float = 0.1,
+    all_flows: Optional[List[np.ndarray]] = None,
 ):
     """
     Compute motion vectors using CUDA for matching.
@@ -336,6 +368,7 @@ def compute_motion_vectors_cuda(
         match_distance_ratio: Ratio of scene diagonal for auto max_distance
         window_size: Number of frames to search forward
         opacity_weight: Weight for opacity in matching (0=disabled, 0.1-0.5 typical)
+        all_flows: Optional list of (N_i, 3) flow vectors per frame
     """
     if len(frames) < 2:
         # Fallback for single frame
@@ -371,6 +404,7 @@ def compute_motion_vectors_cuda(
         window_size=window_size,
         all_opacities=all_opacities_np,
         opacity_weight=opacity_weight,
+        all_flows=all_flows,
     )
     logger.info(f"Found {len(matches)} matches using cuTile")
 
@@ -439,6 +473,7 @@ def compute_motion_vectors_delta_compression_cuda(
     match_distance_ratio: float = 0.02,
     window_size: int = 3,
     opacity_weight: float = 0.1,
+    all_flows: Optional[List[np.ndarray]] = None,
 ) -> tuple[
     np.ndarray,
     np.ndarray,
@@ -465,6 +500,7 @@ def compute_motion_vectors_delta_compression_cuda(
         match_distance_ratio: Ratio of scene diagonal for auto max_distance
         window_size: Number of frames to search forward
         opacity_weight: Weight for opacity in matching (0=disabled, 0.1-0.5 typical)
+        all_flows: Optional list of (N_i, 3) flow vectors per frame
     """
     if len(frames) < 2:
         # Fallback for single frame
@@ -501,6 +537,7 @@ def compute_motion_vectors_delta_compression_cuda(
         window_size=window_size,
         all_opacities=all_opacities_np,
         opacity_weight=opacity_weight,
+        all_flows=all_flows,
     )
     logger.info(f"Found {len(matches)} matches using cuTile")
 

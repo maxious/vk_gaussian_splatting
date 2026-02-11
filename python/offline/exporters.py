@@ -330,6 +330,26 @@ def export_video_to_gaussian_plys(
             depth_process_res=process_res,
             remove_overlap=True,
         )
+    elif "motioncrafter" in model_id.lower():
+        from .processors.motioncrafter import MotionCrafterProcessor
+
+        config_path = None
+        model_path = None
+
+        if ":" in model_id:
+            parts = model_id.split(":", 1)
+            p = parts[1]
+            if p.endswith(".yaml"):
+                config_path = p
+            else:
+                model_path = p
+
+        processor = MotionCrafterProcessor(
+            model_path=model_path,
+            config_path=config_path,
+            device=device,
+            process_res=process_res,
+        )
     else:
         processor = DA3GaussianProcessor(
             model_id=model_id,
@@ -413,9 +433,19 @@ def export_video_to_gaussian_plys(
 
     from .motion_tracking_cuda import compute_motion_vectors_cuda
 
+    # Extract flow priors if available (from MotionCrafter)
+    all_flows = None
+    if all_frames and hasattr(all_frames[0], "flow") and all_frames[0].flow is not None:
+        logger.info("Extracting flow priors for motion tracking...")
+        all_flows = [f.flow for f in all_frames]
+        # If any flow is None, disable flow priors to avoid crashes
+        if any(f is None for f in all_flows):
+            logger.warning("Some frames missing flow data, disabling flow priors")
+            all_flows = None
+
     logger.info("Computing motion vectors (GPU-accelerated with cuTile)...")
     (means, scales, rotations, colors, opacities, motion, time_center, time_scale) = (
-        compute_motion_vectors_cuda(all_frames, fps)
+        compute_motion_vectors_cuda(all_frames, fps, all_flows=all_flows)
     )
 
     # Zero out motion for static splats (motion magnitude <= 0.001)
@@ -619,6 +649,26 @@ def export_images_to_gaussian_plys(
             refine_boundaries=refine_boundaries,
             boundary_min_angle=boundary_min_angle,
         )
+    elif "motioncrafter" in model_id.lower():
+        from .processors.motioncrafter import MotionCrafterProcessor
+
+        config_path = None
+        model_path = None
+
+        if ":" in model_id:
+            parts = model_id.split(":", 1)
+            p = parts[1]
+            if p.endswith(".yaml"):
+                config_path = p
+            else:
+                model_path = p
+
+        processor = MotionCrafterProcessor(
+            model_path=model_path,
+            config_path=config_path,
+            device=device,
+            process_res=process_res,
+        )
     elif "sharp" in model_id.lower():
         model_path = (
             model_id if Path(model_id).exists() or "\\" in model_id or "/" in model_id else None
@@ -755,6 +805,18 @@ def export_images_to_gaussian_plys(
 
     # FreeTimeGS mode - support delta compression as alternative
     mode_lower = mode.lower()
+
+    # Extract flow priors if available (from MotionCrafter)
+    all_flows = None
+    if all_frames and hasattr(all_frames[0], "flow") and all_frames[0].flow is not None:
+        logger.info("Extracting flow priors for motion tracking...")
+        all_flows = [f.flow for f in all_frames]
+        # Ensure flows are not None (some frames might be skipped or fail)
+        # If any flow is None, we should probably disable flow priors to avoid crashes
+        if any(f is None for f in all_flows):
+            logger.warning("Some frames missing flow data, disabling flow priors")
+            all_flows = None
+
     if "delta" in mode_lower:
         from .motion_tracking_cuda import compute_motion_vectors_delta_compression_cuda
 
@@ -775,7 +837,11 @@ def export_images_to_gaussian_plys(
             time_scale,
             compression_scale,
         ) = compute_motion_vectors_delta_compression_cuda(
-            frames, fps, compression_ratio_target=compression_ratio, use_int8=use_int8
+            all_frames,
+            fps,
+            compression_ratio_target=compression_ratio,
+            use_int8=use_int8,
+            all_flows=all_flows,
         )
 
         output_path.parent.mkdir(parents=True, exist_ok=True)

@@ -28,6 +28,7 @@ class GaussianFrame:
     rotations: np.ndarray  # (N, 4) quaternion wxyz
     colors: np.ndarray  # (N, 3) SH DC term (f_dc)
     opacities: np.ndarray  # (N,) logit opacity
+    flow: np.ndarray | None = None  # (N, 3) Scene flow (dx, dy, dz)
 
     def __len__(self) -> int:
         """Return the number of Gaussians in this frame."""

@@ -130,10 +130,11 @@ def main():
         "--model",
         type=str,
         default="depth-anything/DA3-GIANT",
-        help="Model: DA3/MoGe/SHARP for depth, 'sam3dbody' for humans, 'hybrid' for SAM 3D Body + depth "
+        help="Model: DA3/MoGe/SHARP/MotionCrafter for depth, 'sam3dbody' for humans, 'hybrid' for SAM 3D Body + depth "
         "(default: depth-anything/DA3-GIANT). "
         "SAM 3D Body: sam3dbody:facebook/sam-3d-body-vith. "
-        "Hybrid: hybrid:human+depth (e.g., hybrid:facebook/sam-3d-body-vith+depth-anything/DA3-GIANT)",
+        "Hybrid: hybrid:human+depth (e.g., hybrid:facebook/sam-3d-body-vith+depth-anything/DA3-GIANT). "
+        "MotionCrafter: motioncrafter:path/to/config.yaml or motioncrafter:path/to/checkpoint.ckpt",
     )
     export_parser.add_argument("--frame-skip", type=int, default=5, help="Process every Nth frame")
     export_parser.add_argument(
@@ -299,7 +300,7 @@ def main():
         type=str,
         default="depth-anything/DA3-GIANT",
         help="Model ID. Options: 'depth-anything/DA3-GIANT', 'sharp', 'microsoft/TRELLIS-image-large', "
-        "'microsoft/TRELLIS.2-4B', 'fastgs' (high-quality training, requires COLMAP dataset)",
+        "'microsoft/TRELLIS.2-4B', 'fastgs' (high-quality training, requires COLMAP dataset), 'motioncrafter'",
     )
     images_parser.add_argument(
         "--pattern", type=str, default="*.jpg", help="Glob pattern for image files"
