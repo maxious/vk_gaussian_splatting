@@ -34,13 +34,6 @@ bool particleDensityHitCustom(in float3   rayOrigin,
                               in float  maxParticleSquaredDistance,
                               out float hitDistance)
 {
-  float3 particlePosition;
-  float3 particleScale;
-  float3x3 particleInvRotation;
-
-  fetchParticlePSR(frameInfo, particleId, particlePosition, particleScale, particleInvRotation);
-
-  // Apply temporal culling in intersection test
   float2 timeData = fetchTime(particleId);
   float t_scale = timeData.x; // JS Order: x = scale
   float t_center = timeData.y; // JS Order: y = center
@@ -49,10 +42,9 @@ bool particleDensityHitCustom(in float3   rayOrigin,
   if (frameInfo.temporalCulling != 0 && t_center > -5.0) {
       if (t_scale > 1e-5) {
           float v = dt / t_scale;
-          float temporalOpacity = exp(-0.5 * v * v);
-          if (temporalOpacity < 0.004) {
+          if (v * v > 11.042922) {
               hitDistance = 0.0;
-              return false; // Cull if faded out
+              return false;
           }
       } else {
           if (abs(dt) > 1e-5) {
@@ -61,6 +53,12 @@ bool particleDensityHitCustom(in float3   rayOrigin,
           }
       }
   }
+
+  float3 particlePosition;
+  float3 particleScale;
+  float3x3 particleInvRotation;
+
+  fetchParticlePSR(frameInfo, particleId, particlePosition, particleScale, particleInvRotation);
 
   float3 canonicalRayOrigin;
   float3 canonicalRayDirection;

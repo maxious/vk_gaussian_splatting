@@ -54,15 +54,14 @@ void main(inout HitPayload payload
   const uint rayIndex = payload.rayIndex;
   const uint numRays = payload.numRays;
   
-  // Get last slot distance for early out test
-  uint lastIdx = getKBufferIndex(PAYLOAD_ARRAY_SIZE - 1, rayIndex, numRays);
+  uint idxStep = numRays;
+  uint lastIdx = rayIndex + (PAYLOAD_ARRAY_SIZE - 1) * idxStep;
   if (splatDist < gKDist[lastIdx])
   {
-    // insert/sorted from min dist to max dist using global K-buffer
+    uint idx = rayIndex;
     [unroll]
-    for(int i = 0; i < PAYLOAD_ARRAY_SIZE; ++i)
+    for(int i = 0; i < PAYLOAD_ARRAY_SIZE; ++i, idx += idxStep)
     {
-      uint idx = getKBufferIndex(i, rayIndex, numRays);
       const float distance = gKDist[idx];
       if(splatDist < distance)
       {

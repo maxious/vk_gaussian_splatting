@@ -44,103 +44,115 @@ uint encodeMinMaxFp32(float val)
   return bits;
 }
 
+groupshared uint sVisibleCount;
+groupshared uint sBaseInstanceIndex;
+
 [numthreads(DISTANCE_COMPUTE_WORKGROUP_SIZE, 1, 1)]
 [shader("compute")]
-void main(uint3 dispatchThreadID : SV_DispatchThreadID)
+void main(uint3 dispatchThreadID : SV_DispatchThreadID, uint3 groupThreadID : SV_GroupThreadID)
 {
-  uint id;
-  
-  if (frameInfo.chunkCullingEnabled != 0)
+  const uint localIndex = groupThreadID.x;
+  if(localIndex == 0)
   {
-    // Chunk culling mode: compute which splat this thread processes
-    // Each visible chunk contributes CHUNK_SIZE splats
+    sVisibleCount = 0;
+    sBaseInstanceIndex = 0;
+  }
+  GroupMemoryBarrierWithGroupSync();
+
+  uint  id = 0;
+  bool  idValid = false;
+  bool  isVisible = false;
+  float depth = 0.0;
+
+  if(frameInfo.chunkCullingEnabled != 0)
+  {
     const uint totalVisibleChunks = visibleChunkCount[0];
-    const uint localIdx = dispatchThreadID.x;
-    
-    // Compute which visible chunk and which splat within that chunk
-    const uint chunkLocalIdx = localIdx / CHUNK_SIZE;
-    const uint splatInChunk = localIdx % CHUNK_SIZE;
-    
-    if (chunkLocalIdx >= totalVisibleChunks)
-      return;
-    
-    // Get the actual chunk index from the visible chunk list
-    const uint actualChunkIdx = visibleChunks[chunkLocalIdx];
-    
-    // Compute the actual splat ID
-    id = actualChunkIdx * CHUNK_SIZE + splatInChunk;
-    
-    // Bounds check for the last chunk which may be partial
-    if (id >= frameInfo.splatCount)
-      return;
+    const uint localDispatchIdx = dispatchThreadID.x;
+
+    const uint chunkLocalIdx = localDispatchIdx / CHUNK_SIZE;
+    const uint splatInChunk = localDispatchIdx % CHUNK_SIZE;
+
+    if(chunkLocalIdx < totalVisibleChunks)
+    {
+      const uint actualChunkIdx = visibleChunks[chunkLocalIdx];
+      id = actualChunkIdx * CHUNK_SIZE + splatInChunk;
+      idValid = id < frameInfo.splatCount;
+    }
   }
   else
   {
-    // Standard mode: one thread per splat
     id = dispatchThreadID.x;
-    if (id >= frameInfo.splatCount)
-      return;
+    idValid = id < frameInfo.splatCount;
   }
 
-  float4 splatPos = float4(fetchCenter(id), 1.0);
+  if(idValid)
+  {
+    float4 splatPos = float4(fetchCenter(id), 1.0);
 
-  // Row-major: multiply in reverse order (vector * matrix * matrix)
-  float4 viewPos = mul(mul(splatPos, pcRaster.modelMatrix), frameInfo.viewMatrix);
-  // TODO: projection matrix is not correct with fisheye, this is a coarse aprox to compute depth
-  float4 ndcPos = mul(viewPos, frameInfo.projectionMatrix);
-  ndcPos = ndcPos / ndcPos.w;
-  const float depth = ndcPos.z;
+    // Row-major: multiply in reverse order (vector * matrix)
+    float4 viewPos = mul(splatPos, pcRaster.modelMatrixRotScaleInverse);
+    // TODO: projection matrix is not correct with fisheye, this is a coarse aprox to compute depth
+    float4 ndcPos = mul(viewPos, frameInfo.projectionMatrix);
+    ndcPos = ndcPos / ndcPos.w;
+    depth = ndcPos.z;
+    isVisible = true;
 
 #if FRUSTUM_CULLING_MODE == FRUSTUM_CULLING_AT_DIST
-  // When using chunk culling, we can skip per-splat frustum culling for splats
-  // that passed the chunk-level test (conservative AABB culling)
-  // But we still apply fine-grained culling if chunk culling is disabled
-  if (frameInfo.chunkCullingEnabled == 0)
-  {
+    if(frameInfo.chunkCullingEnabled == 0)
+    {
 #if CAMERA_TYPE == CAMERA_PINHOLE
-    // valid only when center is inside NDC clip space.
-    const float clip = 1.0f + frameInfo.frustumDilation;
-    if (abs(ndcPos.x) > clip || abs(ndcPos.y) > clip || ndcPos.z < 0.f - frameInfo.frustumDilation || ndcPos.z > 1.0)
-      return;
+      const float clip = 1.0f + frameInfo.frustumDilation;
+      if(abs(ndcPos.x) > clip || abs(ndcPos.y) > clip || ndcPos.z < 0.f - frameInfo.frustumDilation || ndcPos.z > 1.0)
+        isVisible = false;
 #else
-    // Fisheye camera
-    CameraModelParameters sensorModel = initPerfectFisheyeCamera(frameInfo.viewport, frameInfo.focal);
+      CameraModelParameters sensorModel = initPerfectFisheyeCamera(frameInfo.viewport, frameInfo.focal);
 
-    // Fisheye projection to perform culling
-    float2 projected;
-    bool isValid = projectPointFisheye(sensorModel.ocvFisheyeParams, frameInfo.viewport,
-                                       float3(1.0, 1.0, -1.0) * viewPos.xyz, GUT_IN_IMAGE_MARGIN_FACTOR, projected);
+      float2 projected;
+      bool isValid = projectPointFisheye(sensorModel.ocvFisheyeParams, frameInfo.viewport,
+                                         float3(1.0, 1.0, -1.0) * viewPos.xyz, GUT_IN_IMAGE_MARGIN_FACTOR, projected);
 
-    if (!isValid)
-      return;
+      if(!isValid)
+        isVisible = false;
 
-    if (ndcPos.z < 0.f - frameInfo.frustumDilation || ndcPos.z > 1.0)
-      return;
+      if(ndcPos.z < 0.f - frameInfo.frustumDilation || ndcPos.z > 1.0)
+        isVisible = false;
+#endif
+    }
+    else
+    {
+      if(ndcPos.z < 0.f - frameInfo.frustumDilation || ndcPos.z > 1.0)
+        isVisible = false;
+    }
 #endif
   }
-  else
-  {
-    // With chunk culling enabled, still do depth check but skip XY frustum test
-    // since chunk AABB already passed frustum test
-    if (ndcPos.z < 0.f - frameInfo.frustumDilation || ndcPos.z > 1.0)
-      return;
-  }
-#endif
 
-  // Increments the visible splat counter in the indirect buffer
-  uint original;
-  InterlockedAdd(indirectBuffer[0].instanceCount, 1, original);
-  const uint instance_index = original;
-  
-  // Stores the distance
-  distances[instance_index] = encodeMinMaxFp32(-depth);
-  
-  // Stores the base index
-  indices[instance_index] = id;
-  
-  // Set the workgroup count for the mesh shading pipeline
-  if (instance_index % RASTER_MESH_WORKGROUP_SIZE == 0)
+  uint localSlot = 0;
+  if(isVisible)
   {
-    InterlockedAdd(indirectBuffer[0].groupCountX, 1);
+    InterlockedAdd(sVisibleCount, 1, localSlot);
+  }
+
+  GroupMemoryBarrierWithGroupSync();
+
+  if(localIndex == 0 && sVisibleCount > 0)
+  {
+    InterlockedAdd(indirectBuffer[0].instanceCount, sVisibleCount, sBaseInstanceIndex);
+
+    const uint prevGroupCount = (sBaseInstanceIndex + RASTER_MESH_WORKGROUP_SIZE - 1) / RASTER_MESH_WORKGROUP_SIZE;
+    const uint nextGroupCount = (sBaseInstanceIndex + sVisibleCount + RASTER_MESH_WORKGROUP_SIZE - 1) / RASTER_MESH_WORKGROUP_SIZE;
+    const uint groupDelta = nextGroupCount - prevGroupCount;
+    if(groupDelta > 0)
+    {
+      InterlockedAdd(indirectBuffer[0].groupCountX, groupDelta);
+    }
+  }
+
+  GroupMemoryBarrierWithGroupSync();
+
+  if(isVisible)
+  {
+    const uint instance_index = sBaseInstanceIndex + localSlot;
+    distances[instance_index] = encodeMinMaxFp32(-depth);
+    indices[instance_index] = id;
   }
 }

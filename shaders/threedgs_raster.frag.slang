@@ -174,34 +174,10 @@ FragmentOutput processFragment(float2 inFragPos, float4 inSplatCol, float3 baryC
   // Environment Depth Occlusion
   if (frameInfo.envDepthAvailable != 0)
   {
-      // 1. Reconstruct world position from SV_Position
-      // svPos.xy is in pixel coordinates (0..width, 0..height)
-      // svPos.z is depth (0..1)
-      // svPos.w is 1/w
-      
       float2 ndcXY = (svPos.xy / frameInfo.viewport) * 2.0 - 1.0;
       float4 clipPos = float4(ndcXY, svPos.z, 1.0);
-      
-      // Select appropriate inverse matrices
-      float4x4 viewInv, projInv;
-      if (frameInfo.multiviewEnabled != 0) {
-          viewInv = frameInfo.viewInverseArray[viewIndex];
-          projInv = frameInfo.projInverseArray[viewIndex];
-      } else {
-          viewInv = frameInfo.viewInverse;
-          projInv = frameInfo.projInverse;
-      }
-      
-      float4 viewPos = mul(clipPos, projInv);
-      viewPos /= viewPos.w;
-      float4 worldPos = mul(viewPos, viewInv);
-      
-      // 2. Project to Environment Depth Space
-      float4x4 envView = frameInfo.envDepthViewMatrixArray[viewIndex];
-      float4x4 envProj = frameInfo.envDepthProjectionMatrixArray[viewIndex];
-      
-      float4 envViewPos = mul(worldPos, envView);
-      float4 envClipPos = mul(envViewPos, envProj);
+
+      float4 envClipPos = mul(clipPos, frameInfo.envDepthMainClipToEnvClipArray[viewIndex]);
       float3 envNDC = envClipPos.xyz / envClipPos.w;
       
       // Check if inside env depth view frustum
@@ -241,9 +217,11 @@ FragmentOutput processFragment(float2 inFragPos, float4 inSplatCol, float3 baryC
   // the gaussian formula becomes the identity matrix. We're then left with (X - mean) * (X - mean),
   // and since 'mean' is zero, we have X * X, which is the same as A:
   float opacity = exp(-0.5 * A) * inSplatCol.a;
-  
-  // Apply alpha boost: pow(alpha, 1/boost) so boost > 1 increases opacity
-  opacity = pow(opacity, 1.0 / frameInfo.alphaBoost);
+
+  if(frameInfo.alphaBoost != 1.0)
+  {
+    opacity = pow(opacity, 1.0 / frameInfo.alphaBoost);
+  }
 #endif
 
   output.outColor = float4(inSplatCol.rgb, opacity);

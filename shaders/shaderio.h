@@ -318,6 +318,7 @@ struct FrameInfo
   float envDepthFar DEFAULT(100.0f);
   float4x4 envDepthViewMatrixArray[2];
   float4x4 envDepthProjectionMatrixArray[2];
+  float4x4 envDepthMainClipToEnvClipArray[2];
 
   // LCC packed storage parameters (for GPU-side decompression)
   float3 lccScaleMin DEFAULT(float3(0.00001f, 0.00001f, 0.00001f));  // Scale attribute min bounds

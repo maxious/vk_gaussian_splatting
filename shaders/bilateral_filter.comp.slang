@@ -67,82 +67,64 @@ void main(uint3 threadId : SV_DispatchThreadID)
     if (any(threadId.xy >= uint2(width, height)))
         return;
     
-    // Get current pixel UV coordinates
-    float2 uv = (float2(threadId.xy) + 0.5) / float2(width, height);
-    
-    // Sample current depth
     float4 currentDepthColor = depthTexture.Load(int3(threadId.xy, 0));
     float currentDepth = unpackPackedDepth(currentDepthColor);
-    
-    // Early exit if depth is invalid
+
     if (currentDepth < 0.0001)
     {
         outputTexture[threadId.xy] = float4(0.0, 0.0, 0.0, 1.0);
         return;
     }
-    
-    // Bilateral filter parameters
+
     float sigmaSpace = frameInfo.vdzBilateralSigmaSpace;
     float sigmaDepth = frameInfo.vdzBilateralSigmaDepth;
-    int kernelRadius = int(ceil(sigmaSpace * 2.0));  // Adaptive kernel size
-    
-    // Ensure minimum kernel size for quality
+    int kernelRadius = int(ceil(sigmaSpace * 2.0));
+
     kernelRadius = max(kernelRadius, 2);
-    kernelRadius = min(kernelRadius, 8);  // Clamp to reasonable size for performance
-    
-    float2 texelSize = float2(1.0 / float(width), 1.0 / float(height));
-    
-    float3 weightedSum = float3(0.0, 0.0, 0.0);
+    kernelRadius = min(kernelRadius, 8);
+
+    float invTwoSigmaSpaceSq = 0.5 / max(sigmaSpace * sigmaSpace, 1e-6);
+    float invTwoSigmaDepthSq = 0.5 / max(sigmaDepth * sigmaDepth, 1e-6);
+
+    float weightedDepthSum = 0.0;
     float totalWeight = 0.0;
-    
-    // Bilateral filtering loop
+
     for (int dy = -kernelRadius; dy <= kernelRadius; dy++)
     {
         for (int dx = -kernelRadius; dx <= kernelRadius; dx++)
         {
-            // Skip center pixel (will be weighted heavily anyway)
             if (dx == 0 && dy == 0)
                 continue;
-            
-            // Sample neighbor
+
             int2 neighborCoord = int2(threadId.xy) + int2(dx, dy);
-            
-            // Check bounds
+
             if (neighborCoord.x < 0 || neighborCoord.x >= int(width) ||
                 neighborCoord.y < 0 || neighborCoord.y >= int(height))
                 continue;
-            
-            float2 neighborUv = uv + float2(dx, dy) * texelSize;
-            float4 neighborDepthColor = depthTexture.Sample(neighborUv);
+
+            float4 neighborDepthColor = depthTexture.Load(int3(neighborCoord, 0));
             float neighborDepth = unpackPackedDepth(neighborDepthColor);
-            
-            // Skip invalid neighbors
+
             if (neighborDepth < 0.0001)
                 continue;
-            
-            // Spatial weight (Gaussian based on distance)
-            float spatialDist = sqrt(float(dx * dx + dy * dy));
-            float spatialWeight = gaussian(spatialDist, sigmaSpace);
-            
-            // Range weight (Gaussian based on depth difference)
-            float depthDiff = abs(neighborDepth - currentDepth);
-            float rangeWeight = gaussian(depthDiff, sigmaDepth);
-            
-            // Combined weight
+
+            float spatialDistSq = float(dx * dx + dy * dy);
+            float spatialWeight = exp(-spatialDistSq * invTwoSigmaSpaceSq);
+
+            float depthDiff = neighborDepth - currentDepth;
+            float rangeWeight = exp(-(depthDiff * depthDiff) * invTwoSigmaDepthSq);
+
             float weight = spatialWeight * rangeWeight;
-            
-            // Accumulate
-            weightedSum += float3(neighborDepth, neighborDepth, neighborDepth) * weight;
+
+            weightedDepthSum += neighborDepth * weight;
             totalWeight += weight;
         }
     }
-    
-    // Add center pixel with maximum weight
-    weightedSum += float3(currentDepth, currentDepth, currentDepth) * 1.0;
+
+    weightedDepthSum += currentDepth;
     totalWeight += 1.0;
-    
-    // Compute final filtered depth
-    float filteredDepth = weightedSum.r / totalWeight;
+
+    float filteredDepth = weightedDepthSum / totalWeight;
     
     // Write output
     outputTexture[threadId.xy] = packDepthForOutput(filteredDepth);

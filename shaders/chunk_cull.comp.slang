@@ -72,13 +72,17 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
   // Load chunk bounds
   ChunkBounds bounds = chunkBounds[chunkIdx];
   
-  // Transform AABB corners to world space using model matrix
-  float3 worldMin = mul(float4(bounds.minPos, 1.0), pcRaster.modelMatrix).xyz;
-  float3 worldMax = mul(float4(bounds.maxPos, 1.0), pcRaster.modelMatrix).xyz;
-  
-  // Handle negative scales that might flip min/max
-  float3 actualMin = min(worldMin, worldMax);
-  float3 actualMax = max(worldMin, worldMax);
+  float3 localCenter = 0.5 * (bounds.minPos + bounds.maxPos);
+  float3 localExtent = 0.5 * (bounds.maxPos - bounds.minPos);
+
+  float3 worldCenter = mul(float4(localCenter, 1.0), pcRaster.modelMatrix).xyz;
+  float3 axisX = mul(float4(localExtent.x, 0.0, 0.0, 0.0), pcRaster.modelMatrix).xyz;
+  float3 axisY = mul(float4(0.0, localExtent.y, 0.0, 0.0), pcRaster.modelMatrix).xyz;
+  float3 axisZ = mul(float4(0.0, 0.0, localExtent.z, 0.0), pcRaster.modelMatrix).xyz;
+  float3 worldExtent = abs(axisX) + abs(axisY) + abs(axisZ);
+
+  float3 actualMin = worldCenter - worldExtent;
+  float3 actualMax = worldCenter + worldExtent;
 
   // Test against frustum
   if (isAABBVisible(actualMin, actualMax))

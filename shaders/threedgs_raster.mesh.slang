@@ -189,16 +189,6 @@ void main(
     const float4 viewCenter = mul(float4(splatCenter, 1.0), modelViewMatrix);
     const float4 clipCenter  = mul(viewCenter, projMatrix);
 
-#if SHOW_SH_ONLY == 1
-    splatColor.rgb = float3(0.5, 0.5, 0.5);
-#endif
-
-    // fetch radiance from SH coefs > degree 0
-    // Row-major: vector * matrix (camera position transformed by inverse model matrix)
-    const float3 worldViewDir = normalize(splatCenter - mul(float4(cameraPos, 1.0), pcRaster.modelMatrixInverse).xyz);
-
-    splatColor.rgb += fetchViewDependentRadiance(splatIndex, worldViewDir);
-
     // alpha based culling
     if(splatColor.a < frameInfo.alphaCullThreshold)
     {
@@ -206,13 +196,6 @@ void main(
       emitDegeneratedQuad(localIndex, verts);
       return;
     }
-
-    // emit per primitive color as early as possible for perf reasons, 
-    // only for original 3DGS, see later on for MipSplatting
-#if MS_ANTIALIASING == 0
-    prims[localIndex * 2 + 0].outSplatCol = splatColor;
-    prims[localIndex * 2 + 1].outSplatCol = splatColor;
-#endif
 
 #if FRUSTUM_CULLING_MODE == FRUSTUM_CULLING_AT_RASTER
     const float clip = (1.0 + frameInfo.frustumDilation) * clipCenter.w;
@@ -269,6 +252,17 @@ void main(
       basisVector2 *= clampScale;
     }
 
+#if SHOW_SH_ONLY == 1
+    splatColor.rgb = float3(0.5, 0.5, 0.5);
+#endif
+
+    const float3 worldViewDir = normalize(splatCenter - mul(float4(cameraPos, 1.0), pcRaster.modelMatrixInverse).xyz);
+    splatColor.rgb += fetchViewDependentRadiance(splatIndex, worldViewDir);
+
+#if MS_ANTIALIASING == 0
+    prims[localIndex * 2 + 0].outSplatCol = splatColor;
+    prims[localIndex * 2 + 1].outSplatCol = splatColor;
+#endif
 #if MS_ANTIALIASING == 1
     // emit the color with alpha compensation
     prims[localIndex * 2 + 0].outSplatCol = splatColor;

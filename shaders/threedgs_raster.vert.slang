@@ -176,23 +176,6 @@ VertexOutput main(VertexInput input)
     return output;
   }
 
-#if SHOW_SH_ONLY == 1
-  splatColor.rgb = float3(0.5, 0.5, 0.5);
-#endif
-
-  // fetch radiance from SH coefs > degree 0
-  // Row-major: vector * matrix (camera position transformed by inverse model matrix)
-  const float3 worldViewDir =
-      normalize(splatCenter - mul(float4(cameraPos, 1.0), pcRaster.modelMatrixInverse).xyz);
-
-  splatColor.rgb += fetchViewDependentRadiance(splatIndex, worldViewDir);
-
-  // emit as early as possible for perf reasons, only for original 3DGS,
-  // see later on for MipSplatting = on
-#if MS_ANTIALIASING == 0
-  output.outFragCol = splatColor;
-#endif
-
   // Computes the projected covariance
   const float3 cov2Dv = threedgsCovarianceProjection(cov3Dm, viewCenter, frameInfo.focal, modelViewMatrix);
 
@@ -224,6 +207,17 @@ VertexOutput main(VertexInput input)
     basisVector2 *= clampScale;
   }
 
+#if SHOW_SH_ONLY == 1
+  splatColor.rgb = float3(0.5, 0.5, 0.5);
+#endif
+
+  const float3 worldViewDir =
+      normalize(splatCenter - mul(float4(cameraPos, 1.0), pcRaster.modelMatrixInverse).xyz);
+  splatColor.rgb += fetchViewDependentRadiance(splatIndex, worldViewDir);
+
+#if MS_ANTIALIASING == 0
+  output.outFragCol = splatColor;
+#endif
 #if MS_ANTIALIASING == 1
   // emit the color with alpha compensation
   output.outFragCol = splatColor;
