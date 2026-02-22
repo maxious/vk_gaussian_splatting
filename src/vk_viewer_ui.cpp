@@ -45,9 +45,7 @@
 
 namespace vk_viewer {
 
-VkViewerUI::VkViewerUI(nvutils::ProfilerManager*   profilerManager,
-                                         nvutils::ParameterRegistry* parameterRegistry,
-                                         bool*                       benchmarkEnabled)
+VkViewerUI::VkViewerUI(nvutils::ProfilerManager* profilerManager, nvutils::ParameterRegistry* parameterRegistry, bool* benchmarkEnabled)
     : VkViewer(profilerManager, parameterRegistry)
     , m_pBenchmarkEnabled(benchmarkEnabled)
 {
@@ -66,27 +64,27 @@ VkViewerUI::VkViewerUI(nvutils::ProfilerManager*   profilerManager,
                                   m_app->screenShot(m_screenshotFilename);
                                 }
                               }},
-                          {".png"}, &m_screenshotFilename);
+                         {".png"}, &m_screenshotFilename);
 
   parameterRegistry->add({.name = "screenshotDelay",
                           .help = "Take screenshot after N seconds and exit. Usage: --screenshotDelay 2.0 --screenshot output.png",
                           .callbackSuccess =
                               [&](const nvutils::ParameterBase* const) {
                                 m_autoScreenshotPending = (m_autoScreenshotDelay > 0.0f);
-                                m_autoScreenshotTimer = 0.0f;
+                                m_autoScreenshotTimer   = 0.0f;
                               }},
-                          &m_autoScreenshotDelay);
+                         &m_autoScreenshotDelay);
 
   m_supersplatClient = std::make_unique<SupersplatClient>();
 };
 
-VkViewerUI::~VkViewerUI(){
-    // Nothing to do here
+VkViewerUI::~VkViewerUI() {
+  // Nothing to do here
 };
 
 void VkViewerUI::onAttach(nvapp::Application* app)
 {
-    VkViewer::onAttach(app);
+  VkViewer::onAttach(app);
 
   // we hide the UI dy default in benchmark mode
   m_showUI = !(*m_pBenchmarkEnabled);
@@ -167,18 +165,17 @@ void VkViewerUI::onAttach(nvapp::Application* app)
 
 #ifdef WITH_COMFYUI
   m_comfyClient = std::make_unique<ComfyUIClient>();
-  m_comfyClient->setCompletionCallback([this](const ComfyUIClient::WorkflowResult& result) {
-    onComfyUIWorkflowComplete(result);
-  });
+  m_comfyClient->setCompletionCallback(
+      [this](const ComfyUIClient::WorkflowResult& result) { onComfyUIWorkflowComplete(result); });
 #endif
 }
 
 void VkViewerUI::onDetach()
 {
 #ifdef WITH_OPENXR
-    destroyHandMeshes();
+  destroyHandMeshes();
 #endif
-    VkViewer::onDetach();
+  VkViewer::onDetach();
 }
 
 void VkViewerUI::onResize(VkCommandBuffer cmd, const VkExtent2D& size)
@@ -189,14 +186,14 @@ void VkViewerUI::onResize(VkCommandBuffer cmd, const VkExtent2D& size)
 void VkViewerUI::onPreRender()
 {
 #ifdef WITH_COMFYUI
-  if (m_comfyClient)
+  if(m_comfyClient)
   {
     m_comfyClient->update();
   }
 #endif
 
   // Update animation state
-  if (isAnimationActive())
+  if(isAnimationActive())
   {
     updateAnimation(ImGui::GetIO().DeltaTime * 1000.0f);
   }
@@ -217,7 +214,7 @@ void VkViewerUI::onPreRender()
       m_autoScreenshotExitCountdown = 10;
     }
   }
-  
+
   // Handle delayed exit after screenshot
   if(m_autoScreenshotExitCountdown > 0)
   {
@@ -230,7 +227,8 @@ void VkViewerUI::onPreRender()
   }
 
   // Depth video specific controls (when in depth-only mode, camera manipulator is ineffective)
-  bool isDepthOnlyMode = m_enableDepthRendering && !m_splatLoader.getStatus() == SplatLoaderAsync::State::STATE_READY && m_meshSetVk.instances.empty();
+  bool isDepthOnlyMode = m_enableDepthRendering && !m_splatLoader.getStatus() == SplatLoaderAsync::State::STATE_READY
+                         && m_meshSetVk.instances.empty();
 #ifdef WITH_VIDEO_DECODER
   bool hasDepthContent = m_enableDepthRendering || m_videoDepthPlaybackMode || m_hlsPlaybackMode;
 #else
@@ -239,8 +237,8 @@ void VkViewerUI::onPreRender()
 
   if(hasDepthContent && prmFrame.vdzParallaxStrength > 0.0f)
   {
-    ImGuiIO& io = ImGui::GetIO();
-    float deltaTime = io.DeltaTime;
+    ImGuiIO& io        = ImGui::GetIO();
+    float    deltaTime = io.DeltaTime;
 
     // LMB drag: parallax offset (simulates head movement)
     if(io.MouseDown[0])  // Left mouse button
@@ -258,7 +256,7 @@ void VkViewerUI::onPreRender()
     {
       // Reset parallax offset when not dragging
       prmFrame.vdzParallaxOffset = glm::vec2(0.0f, 0.0f);
-      m_lastMousePos = glm::vec2(-1.0f, -1.0f);
+      m_lastMousePos             = glm::vec2(-1.0f, -1.0f);
     }
 
     // Mouse wheel: focus plane adjustment
@@ -303,7 +301,7 @@ void VkViewerUI::onPreRender()
     if(ImGui::IsKeyDown(ImGuiKey_Home))
     {
       m_playbackTimeOffset = 0.0;
-      m_playbackPaused = true;
+      m_playbackPaused     = true;
     }
     if(ImGui::IsKeyDown(ImGuiKey_End))
     {
@@ -333,7 +331,7 @@ void VkViewerUI::onPreRender()
   }
   else
   {
-    m_lastMousePos = glm::vec2(-1.0f, -1.0f);
+    m_lastMousePos             = glm::vec2(-1.0f, -1.0f);
     prmFrame.vdzParallaxOffset = glm::vec2(0.0f, 0.0f);
   }
 
@@ -353,10 +351,12 @@ void VkViewerUI::onRender(VkCommandBuffer cmd)
   // Render hand meshes after main scene
   // Only render if XR is fully initialized and we have valid rendering resources
   // Also wait a few frames after init to ensure all resources are ready
-  if (m_handMeshReadyFrameDelay > 0) {
+  if(m_handMeshReadyFrameDelay > 0)
+  {
     m_handMeshReadyFrameDelay--;
   }
-  if (m_xr && m_xr->handsSupported() && m_xrInitialized && m_descriptorSet != VK_NULL_HANDLE && m_handMeshReadyFrameDelay == 0) {
+  if(m_xr && m_xr->handsSupported() && m_xrInitialized && m_descriptorSet != VK_NULL_HANDLE && m_handMeshReadyFrameDelay == 0)
+  {
     auto poseToMatrix = [](const XrPosef& pose) -> glm::mat4 {
       glm::quat q(pose.orientation.w, pose.orientation.x, pose.orientation.y, pose.orientation.z);
       glm::vec3 t(pose.position.x, pose.position.y, pose.position.z);
@@ -364,22 +364,26 @@ void VkViewerUI::onRender(VkCommandBuffer cmd)
     };
 
     const auto& leftHand = m_xr->getHandInput(GsOpenXr::Hand::Left);
-    if (leftHand.tracked) {
+    if(leftHand.tracked)
+    {
       glm::mat4 wristTransform = poseToMatrix(leftHand.jointPoses[XR_HAND_JOINT_WRIST_EXT]);
       renderHandMesh(cmd, m_leftHandMesh, wristTransform);
     }
-    else if (m_leftHandMesh.initialized && m_debugForceRenderHands) {
+    else if(m_leftHandMesh.initialized && m_debugForceRenderHands)
+    {
       // Debug: render at fixed position in front of camera when not tracked
       glm::mat4 debugTransform = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -0.5f));
       renderHandMesh(cmd, m_leftHandMesh, debugTransform);
     }
 
     const auto& rightHand = m_xr->getHandInput(GsOpenXr::Hand::Right);
-    if (rightHand.tracked) {
+    if(rightHand.tracked)
+    {
       glm::mat4 wristTransform = poseToMatrix(rightHand.jointPoses[XR_HAND_JOINT_WRIST_EXT]);
       renderHandMesh(cmd, m_rightHandMesh, wristTransform);
     }
-    else if (m_rightHandMesh.initialized && m_debugForceRenderHands) {
+    else if(m_rightHandMesh.initialized && m_debugForceRenderHands)
+    {
       // Debug: render at fixed position in front of camera when not tracked
       glm::mat4 debugTransform = glm::translate(glm::mat4(1.0f), glm::vec3(0.2f, 0.0f, -0.5f));
       renderHandMesh(cmd, m_rightHandMesh, debugTransform);
@@ -403,14 +407,16 @@ void VkViewerUI::onUIMenu()
   {
     if(ImGui::MenuItem(ICON_MS_FILE_OPEN " Open file", ""))
     {
-      prmScene.sceneToLoadFilename = nvgui::windowOpenFileDialog(m_app->getWindowHandle(), "Load splat file",
-                                                                 "All Files|*.ply;*.spz;*.sog;*.4dv|PLY Files|*.ply|SPZ files|*.spz|SOG files|*.sog|4DV files|*.4dv");
+      prmScene.sceneToLoadFilename = nvgui::windowOpenFileDialog(
+          m_app->getWindowHandle(), "Load splat file",
+          "All Files|*.ply;*.spz;*.rad;*.sog;*.4dv|PLY Files|*.ply|SPZ files|*.spz|RAD files|*.rad|SOG files|*.sog|4DV files|*.4dv");
       prmScene.addSceneToExisting = false;
     }
     if(ImGui::MenuItem(ICON_MS_ADD " Add file", ""))
     {
-      prmScene.sceneToLoadFilename = nvgui::windowOpenFileDialog(m_app->getWindowHandle(), "Add splat file",
-                                                                 "All Files|*.ply;*.spz;*.sog;*.4dv|PLY Files|*.ply|SPZ files|*.spz|SOG files|*.sog|4DV files|*.4dv");
+      prmScene.sceneToLoadFilename = nvgui::windowOpenFileDialog(
+          m_app->getWindowHandle(), "Add splat file",
+          "All Files|*.ply;*.spz;*.rad;*.sog;*.4dv|PLY Files|*.ply|SPZ files|*.spz|RAD files|*.rad|SOG files|*.sog|4DV files|*.4dv");
       prmScene.addSceneToExisting = true;
     }
     if(ImGui::MenuItem(ICON_MS_FOLDER_OPEN " Load from Resources...", ""))
@@ -418,14 +424,14 @@ void VkViewerUI::onUIMenu()
       m_showFileDialog = true;
       m_fileList.clear();
       std::vector<std::filesystem::path> resourceDirs = getResourcesDirs();
-      if (!resourceDirs.empty())
+      if(!resourceDirs.empty())
       {
         std::filesystem::path resourcesDir = resourceDirs[0];
-        if (std::filesystem::exists(resourcesDir))
+        if(std::filesystem::exists(resourcesDir))
         {
-          for (const auto& entry : std::filesystem::directory_iterator(resourcesDir))
+          for(const auto& entry : std::filesystem::directory_iterator(resourcesDir))
           {
-            if (entry.is_regular_file())
+            if(entry.is_regular_file())
               m_fileList.push_back(entry.path().string());
           }
         }
@@ -434,31 +440,36 @@ void VkViewerUI::onUIMenu()
     if(ImGui::MenuItem(ICON_MS_CLOUD_DOWNLOAD " Supersplat...", ""))
     {
       m_showSupersplatDialog = true;
-      if (m_supersplatClient)
+      if(m_supersplatClient)
       {
         m_supersplatClient->fetchSceneList("", [this](const std::vector<SupersplatClient::Scene>& scenes) {
           std::lock_guard<std::mutex> lock(m_thumbnailMutex);
           m_supersplatScenes = scenes;
-          
-          for (const auto& scene : scenes) {
-              if (!scene.thumbnailUrl.empty()) {
-                  m_supersplatClient->fetchThumbnail(scene.thumbnailUrl, 
-                      [this, url=scene.thumbnailUrl](const std::vector<uint8_t>& data, int w, int h, int c) {
-                          if (data.empty()) return;
-                          std::lock_guard<std::mutex> lock(m_thumbnailMutex);
-                          std::vector<uint8_t> rgba = data;
-                          if (c == 3) {
-                              rgba.resize(w * h * 4);
-                              for (int i = w * h - 1; i >= 0; --i) {
-                                  rgba[i * 4 + 3] = 255;
-                                  rgba[i * 4 + 2] = data[i * 3 + 2];
-                                  rgba[i * 4 + 1] = data[i * 3 + 1];
-                                  rgba[i * 4 + 0] = data[i * 3 + 0];
-                              }
-                          }
-                          m_pendingThumbnails.push_back({url, rgba, w, h});
-                      });
-              }
+
+          for(const auto& scene : scenes)
+          {
+            if(!scene.thumbnailUrl.empty())
+            {
+              m_supersplatClient->fetchThumbnail(
+                  scene.thumbnailUrl, [this, url = scene.thumbnailUrl](const std::vector<uint8_t>& data, int w, int h, int c) {
+                    if(data.empty())
+                      return;
+                    std::lock_guard<std::mutex> lock(m_thumbnailMutex);
+                    std::vector<uint8_t>        rgba = data;
+                    if(c == 3)
+                    {
+                      rgba.resize(w * h * 4);
+                      for(int i = w * h - 1; i >= 0; --i)
+                      {
+                        rgba[i * 4 + 3] = 255;
+                        rgba[i * 4 + 2] = data[i * 3 + 2];
+                        rgba[i * 4 + 1] = data[i * 3 + 1];
+                        rgba[i * 4 + 0] = data[i * 3 + 0];
+                      }
+                    }
+                    m_pendingThumbnails.push_back({url, rgba, w, h});
+                  });
+            }
           }
         });
       }
@@ -492,7 +503,7 @@ void VkViewerUI::onUIMenu()
       ImGui::TextDisabled("Applied when loading PLY files");
       ImGui::EndMenu();
     }
-    
+
     ImGui::Separator();
     if(ImGui::MenuItem(ICON_MS_FILE_OPEN " Open project", ""))
     {
@@ -527,7 +538,7 @@ void VkViewerUI::onUIMenu()
       {
         enableDepthVideoPlayback(metadataPath.string());
         prmFrame.vdzUseVideoTexture = 1;
-        m_requestUpdateShaders = true;
+        m_requestUpdateShaders      = true;
       }
     }
     ImGui::Separator();
@@ -668,6 +679,8 @@ void VkViewerUI::onFileDrop(const std::filesystem::path& filename)
     prmScene.sceneToLoadFilename = filename;
   else if(extension == ".spz")
     prmScene.sceneToLoadFilename = filename;
+  else if(extension == ".rad")
+    prmScene.sceneToLoadFilename = filename;
   else if(extension == ".sog")
     prmScene.sceneToLoadFilename = filename;
   else if(extension == ".4dv")
@@ -733,7 +746,7 @@ void VkViewerUI::onUIRender()
     m_splatSet.clear();
     LOGI("Radiance field deleted. All radiance fields cleared.\n");
     m_requestDeleteRadianceField = false;
-    m_selectedItemIndex = -1;
+    m_selectedItemIndex          = -1;
   }
   m_requestDeleteRadianceField = false;
 
@@ -752,22 +765,23 @@ void VkViewerUI::onUIRender()
   if(ImGui::BeginPopupModal("Load from SuperSplat URL", NULL, ImGuiWindowFlags_AlwaysAutoResize))
   {
     static char urlBuf[2048] = "";
-    static bool firstFocus = true;
-    if (firstFocus) {
-        ImGui::SetKeyboardFocusHere();
-        firstFocus = false;
+    static bool firstFocus   = true;
+    if(firstFocus)
+    {
+      ImGui::SetKeyboardFocusHere();
+      firstFocus = false;
     }
-    
+
     ImGui::Text("Enter the URL of the .sog or .ply file:");
     bool enterPressed = ImGui::InputText("URL", urlBuf, IM_ARRAYSIZE(urlBuf), ImGuiInputTextFlags_EnterReturnsTrue);
-    
+
     if(ImGui::Button("Load", ImVec2(120, 0)) || enterPressed)
     {
       if(strlen(urlBuf) > 0)
       {
         prmScene.sceneToLoadFilename = std::string(urlBuf);
-        prmScene.addSceneToExisting = false;
-        firstFocus = true;
+        prmScene.addSceneToExisting  = false;
+        firstFocus                   = true;
         ImGui::CloseCurrentPopup();
       }
     }
@@ -860,7 +874,7 @@ void VkViewerUI::onUIRender()
       LOGI("Start loading file %s (add=%s)\n", prmScene.sceneToLoadFilename.string().c_str(),
            prmScene.addSceneToExisting ? "true" : "false");
 
-      if (std::filesystem::is_directory(prmScene.sceneToLoadFilename))
+      if(std::filesystem::is_directory(prmScene.sceneToLoadFilename))
       {
         // Check for LCC format first
         if(LccLoader::canLoad(prmScene.sceneToLoadFilename))
@@ -870,7 +884,8 @@ void VkViewerUI::onUIRender()
           m_splatSetPending.clear();
           if(!m_splatLoader.loadScene(prmScene.sceneToLoadFilename, m_splatSetPending))
           {
-            LOGE("Error: cannot start scene load while loader is not ready status=%d\n", static_cast<int>(m_splatLoader.getStatus()));
+            LOGE("Error: cannot start scene load while loader is not ready status=%d\n",
+                 static_cast<int>(m_splatLoader.getStatus()));
           }
           else
           {
@@ -884,24 +899,25 @@ void VkViewerUI::onUIRender()
           prmScene.sceneToLoadFilename.clear();
         }
       }
-      else if (prmScene.sceneToLoadFilename.extension() == ".json")
+      else if(prmScene.sceneToLoadFilename.extension() == ".json")
       {
         enableDepthVideoPlayback(prmScene.sceneToLoadFilename.string());
         prmFrame.vdzUseVideoTexture = 1;
-        m_requestUpdateShaders = true;
+        m_requestUpdateShaders      = true;
         prmScene.sceneToLoadFilename.clear();
       }
       else
       {
         // Store the pending filename for when load completes
         m_pendingLoadFilename = prmScene.sceneToLoadFilename;
-        
+
         // Load into pending set (will be merged on success)
         m_splatSetPending.clear();
         if(!m_splatLoader.loadScene(prmScene.sceneToLoadFilename, m_splatSetPending))
         {
           // this should never occur since status is READY.
-          LOGE("Error: cannot start scene load while loader is not ready status=%d\n", static_cast<int>(m_splatLoader.getStatus()));
+          LOGE("Error: cannot start scene load while loader is not ready status=%d\n",
+               static_cast<int>(m_splatLoader.getStatus()));
         }
         else
         {
@@ -941,36 +957,36 @@ void VkViewerUI::onUIRender()
 
         // Display detailed download info if available
         int currentFileIdx = 0;
-        int totalFiles = 0;
+        int totalFiles     = 0;
         m_splatLoader.getDownloadFileCounts(currentFileIdx, totalFiles);
 
-        if (totalFiles > 0)
+        if(totalFiles > 0)
         {
-             std::string currentFilename = m_splatLoader.getCurrentDownloadingFilename();
-             std::string displayName = std::filesystem::path(currentFilename).filename().string();
-             size_t currentBytes = m_splatLoader.getCurrentDownloadProgress();
-             size_t totalBytes = m_splatLoader.getCurrentDownloadSize();
-             
-             ImGui::Separator();
-             ImGui::Text("Downloading file %d/%d: %s", currentFileIdx, totalFiles, displayName.c_str());
-             
-             if (totalBytes > 0)
-             {
-                 float fileProgress = static_cast<float>(currentBytes) / static_cast<float>(totalBytes);
-                 char overlay[64];
-                 // Format bytes to MB
-                 float currentMB = static_cast<float>(currentBytes) / (1024.0f * 1024.0f);
-                 float totalMB = static_cast<float>(totalBytes) / (1024.0f * 1024.0f);
-                 snprintf(overlay, sizeof(overlay), "%.2f MB / %.2f MB", currentMB, totalMB);
-                 
-                 ImGui::ProgressBar(fileProgress, ImVec2(ImGui::GetContentRegionAvail().x, 0.0f), overlay);
-             }
-             else
-             {
-                 // Indeterminate progress
-                 float currentMB = static_cast<float>(currentBytes) / (1024.0f * 1024.0f);
-                 ImGui::Text("Downloaded: %.2f MB", currentMB);
-             }
+          std::string currentFilename = m_splatLoader.getCurrentDownloadingFilename();
+          std::string displayName     = std::filesystem::path(currentFilename).filename().string();
+          size_t      currentBytes    = m_splatLoader.getCurrentDownloadProgress();
+          size_t      totalBytes      = m_splatLoader.getCurrentDownloadSize();
+
+          ImGui::Separator();
+          ImGui::Text("Downloading file %d/%d: %s", currentFileIdx, totalFiles, displayName.c_str());
+
+          if(totalBytes > 0)
+          {
+            float fileProgress = static_cast<float>(currentBytes) / static_cast<float>(totalBytes);
+            char  overlay[64];
+            // Format bytes to MB
+            float currentMB = static_cast<float>(currentBytes) / (1024.0f * 1024.0f);
+            float totalMB   = static_cast<float>(totalBytes) / (1024.0f * 1024.0f);
+            snprintf(overlay, sizeof(overlay), "%.2f MB / %.2f MB", currentMB, totalMB);
+
+            ImGui::ProgressBar(fileProgress, ImVec2(ImGui::GetContentRegionAvail().x, 0.0f), overlay);
+          }
+          else
+          {
+            // Indeterminate progress
+            float currentMB = static_cast<float>(currentBytes) / (1024.0f * 1024.0f);
+            ImGui::Text("Downloaded: %.2f MB", currentMB);
+          }
         }
       }
       break;
@@ -991,7 +1007,7 @@ void VkViewerUI::onUIRender()
       }
       break;
       case SplatLoaderAsync::State::STATE_LOADED: {
-        const std::string ext = m_pendingLoadFilename.extension().string();
+        const std::string ext   = m_pendingLoadFilename.extension().string();
         const bool        isSog = (ext == ".sog" || m_pendingLoadFilename.filename() == "meta.json");
 
         // Apply color space conversion if requested (for ML-SHARP files)
@@ -1026,23 +1042,23 @@ void VkViewerUI::onUIRender()
 
         // Merge the pending splat set into main splat set
         const size_t newSplatOffset = m_splatSet.merge(m_splatSetPending);
-        const size_t newSplatCount = m_splatSetPending.size();
-        
+        const size_t newSplatCount  = m_splatSetPending.size();
+
         // Add radiance field entry
         RadianceFieldEntry entry;
-        entry.filename = m_pendingLoadFilename;
+        entry.filename    = m_pendingLoadFilename;
         entry.displayName = m_pendingLoadFilename.filename().string();
         entry.splatOffset = newSplatOffset;
-        entry.splatCount = newSplatCount;
-        entry.visible = true;
-        entry.isLcc = LccLoader::canLoad(m_pendingLoadFilename);
+        entry.splatCount  = newSplatCount;
+        entry.visible     = true;
+        entry.isLcc       = LccLoader::canLoad(m_pendingLoadFilename);
         // Set initial LOD based on what was loaded (LOD 1 if multi-LOD scene, else 0)
         entry.lodLevel = entry.isLcc ? ((LccLoader::getLodCount(m_pendingLoadFilename) > 1) ? 1 : 0) : 0;
         m_radianceFields.push_back(entry);
-        
-        LOGI("Added radiance field: %s (offset=%zu, count=%zu, total=%zu)\n",
-             entry.displayName.c_str(), newSplatOffset, newSplatCount, m_splatSet.size());
-        
+
+        LOGI("Added radiance field: %s (offset=%zu, count=%zu, total=%zu)\n", entry.displayName.c_str(), newSplatOffset,
+             newSplatCount, m_splatSet.size());
+
         // Clear pending data
         m_splatSetPending.clear();
 
@@ -1052,7 +1068,7 @@ void VkViewerUI::onUIRender()
           prmScene.sceneToLoadFilename = m_reloadQueue.front();
           m_reloadQueue.erase(m_reloadQueue.begin());
           prmScene.addSceneToExisting = true;
-          m_pendingLoadFilename = prmScene.sceneToLoadFilename;
+          m_pendingLoadFilename       = prmScene.sceneToLoadFilename;
         }
         else
         {
@@ -1062,13 +1078,13 @@ void VkViewerUI::onUIRender()
             // destroy scene
             deinitScene();
           }
-          else if(!m_isReloading) // Only add to recent if not a reload
+          else if(!m_isReloading)  // Only add to recent if not a reload
           {
             guiAddToRecentFiles(entry.filename);
           }
-          
-          m_isReloading = false;
-          m_pendingLoadFilename = "";
+
+          m_isReloading               = false;
+          m_pendingLoadFilename       = "";
           prmScene.addSceneToExisting = false;
           // set ready for next load
           m_splatLoader.reset();
@@ -1094,14 +1110,15 @@ void VkViewerUI::onUIRender()
   // Draw the UI parts
 
   guiDrawAssetsWindow();
-    guiDrawPropertiesWindow();
-    guiDrawRendererStatisticsWindow();
-    guiDrawMemoryStatisticsWindow();
+  guiDrawPropertiesWindow();
+  guiDrawRendererStatisticsWindow();
+  guiDrawMemoryStatisticsWindow();
 
-    // Animation UI
-    if (m_animationUI) {
-        m_animationUI->renderAnimationControls(true);
-    }
+  // Animation UI
+  if(m_animationUI)
+  {
+    m_animationUI->renderAnimationControls(true);
+  }
 
   guiDrawFooterBar();
 
@@ -1112,29 +1129,31 @@ void VkViewerUI::onUIRender()
 
   // Process pending thumbnails
   {
-      std::lock_guard<std::mutex> lock(m_thumbnailMutex);
-      for (const auto& pt : m_pendingThumbnails) {
-          if (m_thumbnailTextures.find(pt.url) == m_thumbnailTextures.end()) {
-              nvvk::Image texture;
-              VkImageView view;
-              createTextureFromRGBA(pt.data, pt.w, pt.h, texture, view);
-              m_thumbnailTextures[pt.url] = texture;
-              m_thumbnailViews[pt.url] = view;
-              
-              VkDescriptorSet ds = ImGui_ImplVulkan_AddTexture(m_sampler, view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-              m_thumbnailDescriptors[pt.url] = ds;
-          }
+    std::lock_guard<std::mutex> lock(m_thumbnailMutex);
+    for(const auto& pt : m_pendingThumbnails)
+    {
+      if(m_thumbnailTextures.find(pt.url) == m_thumbnailTextures.end())
+      {
+        nvvk::Image texture;
+        VkImageView view;
+        createTextureFromRGBA(pt.data, pt.w, pt.h, texture, view);
+        m_thumbnailTextures[pt.url] = texture;
+        m_thumbnailViews[pt.url]    = view;
+
+        VkDescriptorSet ds = ImGui_ImplVulkan_AddTexture(m_sampler, view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        m_thumbnailDescriptors[pt.url] = ds;
       }
-      m_pendingThumbnails.clear();
+    }
+    m_pendingThumbnails.clear();
   }
 
   guiDrawFileDialog();
   guiDrawSupersplatDialog();
-  if (m_showVrMenu)
+  if(m_showVrMenu)
     guiDrawVrMenu();
 
 #ifdef WITH_COMFYUI
-  if (m_showComfyUIWindow)
+  if(m_showComfyUIWindow)
   {
     guiDrawComfyUIWindow();
   }
@@ -1372,8 +1391,8 @@ void VkViewerUI::guiDrawRadianceFieldsTree()
     rtxError = " Error: RTX allocation failed";
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.0f, 0.0f, 1.0f));
   }
-  bool node_open = ImGui::TreeNodeEx(
-      fmt::format(ICON_MS_GRAIN " Radiance Fields ({}){}", m_radianceFields.size(), rtxError).c_str(), node_flags);
+  bool node_open =
+      ImGui::TreeNodeEx(fmt::format(ICON_MS_GRAIN " Radiance Fields ({}){}", m_radianceFields.size(), rtxError).c_str(), node_flags);
   if(m_splatSet.size() != 0 && !m_splatSetVk.rtxValid)
     ImGui::PopStyleColor();
   if(ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
@@ -1381,17 +1400,18 @@ void VkViewerUI::guiDrawRadianceFieldsTree()
     m_selectedAsset     = GUI_NONE;
     m_selectedItemIndex = -1;
   }
-  
+
   // Add button to load additional radiance field
   ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - 30);
   if(ImGui::SmallButton(ICON_MS_ADD "##AddSplat"))
   {
-    prmScene.sceneToLoadFilename = nvgui::windowOpenFileDialog(m_app->getWindowHandle(), "Add splat file",
-                                                               "All Files|*.ply;*.spz;*.sog|PLY Files|*.ply|SPZ files|*.spz|SOG files|*.sog");
+    prmScene.sceneToLoadFilename =
+        nvgui::windowOpenFileDialog(m_app->getWindowHandle(), "Add splat file",
+                                    "All Files|*.ply;*.spz;*.rad;*.sog|PLY Files|*.ply|SPZ files|*.spz|RAD files|*.rad|SOG files|*.sog");
     prmScene.addSceneToExisting = true;  // Add to existing instead of replacing
   }
   nvgui::tooltip("Add radiance field to scene");
-  
+
   if(node_open)
   {
     // display the radiance fields tree
@@ -1403,21 +1423,20 @@ void VkViewerUI::guiDrawRadianceFieldsTree()
         item_flags |= ImGuiTreeNodeFlags_Selected;
 
       const auto& field = m_radianceFields[i];
-      bool item_open = ImGui::TreeNodeEx((void*)(intptr_t)i, item_flags, 
-                                         ICON_MS_SUBDIRECTORY_ARROW_RIGHT "Splat set %zu - %s (%zu splats)",
+      bool item_open = ImGui::TreeNodeEx((void*)(intptr_t)i, item_flags, ICON_MS_SUBDIRECTORY_ARROW_RIGHT "Splat set %zu - %s (%zu splats)",
                                          i, field.displayName.c_str(), field.splatCount);
       if(ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
       {
         m_selectedAsset     = GUI_SPLATSET;
         m_selectedItemIndex = static_cast<int64_t>(i);
       }
-      
+
       // Delete button for individual radiance field
       ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - 30);
       if(ImGui::SmallButton(ICON_MS_DELETE))
       {
         m_requestDeleteRadianceField = true;
-        m_radianceFieldToDelete = i;
+        m_radianceFieldToDelete      = i;
       }
       nvgui::tooltip("Remove radiance field (clears all)");
       ImGui::PopID();
@@ -1454,7 +1473,8 @@ void VkViewerUI::guiDrawObjectTree()
   ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - 30);
   if(ImGui::SmallButton(ICON_MS_FILE_OPEN))
   {
-    prmScene.meshToImportFilename = nvgui::windowOpenFileDialog(m_app->getWindowHandle(), "Load mesh file", "Mesh files|*.obj;*.glb;*.gltf|OBJ|*.obj|GLTF|*.glb;*.gltf");
+    prmScene.meshToImportFilename = nvgui::windowOpenFileDialog(m_app->getWindowHandle(), "Load mesh file",
+                                                                "Mesh files|*.obj;*.glb;*.gltf|OBJ|*.obj|GLTF|*.glb;*.gltf");
   }
   // Handle the request form file open or from drag and drop
   if(!prmScene.meshToImportFilename.empty())
@@ -1483,7 +1503,7 @@ void VkViewerUI::guiDrawObjectTree()
       m_selectedItemIndex = m_meshSetVk.instances.size() - 1;
       //
       m_objListUpdated = true;  // so that next loop will force the Object open if selected
-      
+
       // Auto-fit camera to newly loaded mesh
       if(!m_meshSetVk.meshes.empty() && cameraManip)
       {
@@ -1549,7 +1569,7 @@ void VkViewerUI::guiDrawDepthStreamTree()
 
   // Show different icon and label based on mode
   const char* treeLabel = m_videoDepthPlaybackMode ? ICON_MS_MOVIE " Video+Depth" : ICON_MS_STREAM " Depth Streaming";
-  
+
   bool node_open = ImGui::TreeNodeEx(treeLabel, node_flags);
   if(ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
   {
@@ -1565,13 +1585,13 @@ void VkViewerUI::guiDrawDepthStreamTree()
       ImGuiTreeNodeFlags videoFlags = leaf_flags;
       if(m_selectedAsset == GUI_DEPTH_STREAM && m_selectedItemIndex == 1)
         videoFlags |= ImGuiTreeNodeFlags_Selected;
-      
+
       const auto& metadata = m_videoDepthManager->getMetadata();
       std::string videoLabel = fmt::format(ICON_MS_VIDEOCAM " Video ({}x{})", metadata.sourceWidth, metadata.sourceHeight);
       ImGui::TreeNodeEx(videoLabel.c_str(), videoFlags);
       if(ImGui::IsItemClicked())
       {
-        m_selectedAsset = GUI_DEPTH_STREAM;
+        m_selectedAsset     = GUI_DEPTH_STREAM;
         m_selectedItemIndex = 1;
       }
     }
@@ -1582,11 +1602,11 @@ void VkViewerUI::guiDrawDepthStreamTree()
       ImGuiTreeNodeFlags depthFlags = leaf_flags;
       if(m_selectedAsset == GUI_DEPTH_STREAM && m_selectedItemIndex == 2)
         depthFlags |= ImGuiTreeNodeFlags_Selected;
-      
+
       ImGui::TreeNodeEx(ICON_MS_CLOUD_DOWNLOAD " Depth Stream (Live)", depthFlags);
       if(ImGui::IsItemClicked())
       {
-        m_selectedAsset = GUI_DEPTH_STREAM;
+        m_selectedAsset     = GUI_DEPTH_STREAM;
         m_selectedItemIndex = 2;
       }
     }
@@ -1682,8 +1702,7 @@ void VkViewerUI::guiDrawSplatSetProperties()
   {
     if(PE::begin("##VRAM format"))
     {
-      if(PE::entry(
-             "Default settings", [&] { return ImGui::Button("Reset"); }, "resets to default settings"))
+      if(PE::entry("Default settings", [&] { return ImGui::Button("Reset"); }, "resets to default settings"))
       {
         resetDataParameters();
         m_requestUpdateSplatData = true;
@@ -1711,8 +1730,7 @@ void VkViewerUI::guiDrawSplatSetProperties()
   {
     if(PE::begin("##VRAM format RTX"))
     {
-      if(PE::entry(
-             "Default settings", [&] { return ImGui::Button("Reset"); }, "resets to default settings"))
+      if(PE::entry("Default settings", [&] { return ImGui::Button("Reset"); }, "resets to default settings"))
       {
         resetRtxDataParameters();
         m_requestUpdateSplatAs = true;
@@ -1761,56 +1779,57 @@ void VkViewerUI::guiDrawSplatSetProperties()
                changed |= ImGui::RadioButton("sRGB to Linear", &prmScene.colorSpaceConversion, 1);
                return changed;
              },
-              "Select color space conversion for the next loaded PLY file.\n"
-              "sRGB to Linear is required for ML-SHARP compatibility-exported files."))
-       {
-       }
+             "Select color space conversion for the next loaded PLY file.\n"
+             "sRGB to Linear is required for ML-SHARP compatibility-exported files."))
+      {
+      }
 
       PE::Checkbox("Remove black splats", &prmScene.removeBlackSplats,
-                    "If on, splats with (almost) zero color will be discarded during loading.\n"
-                    "This can help reduce point count and improve performance without visible quality loss.");
+                   "If on, splats with (almost) zero color will be discarded during loading.\n"
+                   "This can help reduce point count and improve performance without visible quality loss.");
 
       // LCC LOD Control
-      static int s_currentLodLevel = 1;  // Start at LOD 1 (will be adjusted for single-LOD scenes)
-      static int s_previousLodLevel = 1;
-      static uint32_t s_lodCount = 0;
-      static bool s_isLccScene = false;
+      static int      s_currentLodLevel  = 1;  // Start at LOD 1 (will be adjusted for single-LOD scenes)
+      static int      s_previousLodLevel = 1;
+      static uint32_t s_lodCount         = 0;
+      static bool     s_isLccScene       = false;
 
       // Check if current scene is LCC and get LOD count
       if(!m_radianceFields.empty() && m_radianceFields[0].isLcc)
       {
         if(!s_isLccScene || s_lodCount == 0)
         {
-          s_lodCount = LccLoader::getLodCount(m_radianceFields[0].filename);
+          s_lodCount   = LccLoader::getLodCount(m_radianceFields[0].filename);
           s_isLccScene = true;
 
           // For single-LOD scenes, start at LOD 0
           if(s_lodCount <= 1)
           {
-            s_currentLodLevel = 0;
+            s_currentLodLevel  = 0;
             s_previousLodLevel = 0;
           }
           else if(m_radianceFields[0].lodLevel == 0)
           {
             // If currently at LOD 0 (initial load), switch to LOD 1 for faster loading
-            s_currentLodLevel = 1;
+            s_currentLodLevel  = 1;
             s_previousLodLevel = 1;
           }
           else
           {
-            s_currentLodLevel = m_radianceFields[0].lodLevel;
+            s_currentLodLevel  = m_radianceFields[0].lodLevel;
             s_previousLodLevel = s_currentLodLevel;
           }
         }
 
-          if(s_lodCount > 1)
-          {
-            ImGui::Separator();
-            ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "LCC LOD Level");
-            ImGui::SameLine();
-            nvgui::tooltip("LOD (Level of Detail) control for LCC format scenes.\n"
-                           "Lower LOD = fewer splats, faster rendering.\n"
-                           "Higher LOD = more splats, higher quality.");
+        if(s_lodCount > 1)
+        {
+          ImGui::Separator();
+          ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "LCC LOD Level");
+          ImGui::SameLine();
+          nvgui::tooltip(
+              "LOD (Level of Detail) control for LCC format scenes.\n"
+              "Lower LOD = fewer splats, faster rendering.\n"
+              "Higher LOD = more splats, higher quality.");
 
           ImGui::PushItemWidth(200.0f);
           if(ImGui::SliderInt("##LOD Level", &s_currentLodLevel, 0, s_lodCount - 1, "LOD %d"))
@@ -1825,7 +1844,7 @@ void VkViewerUI::guiDrawSplatSetProperties()
           if(s_lodCount > 1)
           {
             ImGui::TextDisabled("LOD %d (Low): ~%s splats", s_lodCount - 1,
-                               formatSize(m_splatSet.size() / 4).c_str());  // Approximate
+                                formatSize(m_splatSet.size() / 4).c_str());  // Approximate
           }
 
           // Apply LOD change
@@ -1848,7 +1867,7 @@ void VkViewerUI::guiDrawSplatSetProperties()
             else
             {
               // Update radiance field info
-              m_radianceFields[0].lodLevel = s_currentLodLevel;
+              m_radianceFields[0].lodLevel   = s_currentLodLevel;
               m_radianceFields[0].splatCount = m_splatSetPending.size();
 
               // Clear and prepare for merge
@@ -1861,9 +1880,9 @@ void VkViewerUI::guiDrawSplatSetProperties()
       }
       else
       {
-        s_isLccScene = false;
-        s_lodCount = 0;
-        s_currentLodLevel = 0;
+        s_isLccScene       = false;
+        s_lodCount         = 0;
+        s_currentLodLevel  = 0;
         s_previousLodLevel = 0;
       }
 
@@ -1872,9 +1891,9 @@ void VkViewerUI::guiDrawSplatSetProperties()
       {
         static bool s_tiledStreamingEnabled = false;
         if(PE::Checkbox("Enable Tiled Streaming", &s_tiledStreamingEnabled,
-                       "Enable spatial streaming for large LCC scenes.\n"
-                       "Only loads tiles visible in camera frustum.\n"
-                       "Reduces memory usage for very large scenes."))
+                        "Enable spatial streaming for large LCC scenes.\n"
+                        "Only loads tiles visible in camera frustum.\n"
+                        "Reduces memory usage for very large scenes."))
         {
           // Would trigger reinitialize with tile manager
           LOGI("Tiled streaming %s\n", s_tiledStreamingEnabled ? "enabled" : "disabled");
@@ -1941,8 +1960,8 @@ void VkViewerUI::guiDrawMeshMaterialProperties()
     auto& material = materials[i];
     ImGui::PushID(i);
     PE::Text("Name", m_meshSetVk.meshes[objIndex].matNames[i]);
-    needMaterialUpdate |= PE::entry(
-        "Model", [&]() { return m_ui.enumCombobox(GUI_ILLUM_MODEL, "##ID", &material.illum); }, "TODO");
+    needMaterialUpdate |=
+        PE::entry("Model", [&]() { return m_ui.enumCombobox(GUI_ILLUM_MODEL, "##ID", &material.illum); }, "TODO");
     needMaterialUpdate |= PE::ColorEdit3("ambient", glm::value_ptr(material.ambient));
     needMaterialUpdate |= PE::ColorEdit3("diffuse", glm::value_ptr(material.diffuse));
     needMaterialUpdate |= PE::ColorEdit3("specular", glm::value_ptr(material.specular));
@@ -2120,12 +2139,7 @@ void VkViewerUI::guiDrawLightProperties()
   m_requestUpdateLightsBuffer |= needUpdate;
 }
 
-bool VkViewerUI::guiGetTransform(glm::vec3& scale,
-                                          glm::vec3& rotation,
-                                          glm::vec3& translation,
-                                          glm::mat4& transform,
-                                          glm::mat4& transformInv,
-                                          bool       disabled /*=false*/)
+bool VkViewerUI::guiGetTransform(glm::vec3& scale, glm::vec3& rotation, glm::vec3& translation, glm::mat4& transform, glm::mat4& transformInv, bool disabled /*=false*/)
 {
   namespace PE = nvgui::PropertyEditor;
 
@@ -2197,8 +2211,8 @@ void VkViewerUI::guiDrawRendererStatisticsWindow()
 
 void VkViewerUI::guiDrawMemoryStatisticsWindow()
 {
-  ImGuiTableFlags itemFlags   = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
-  ImGuiTableFlags totalFlags  = ImGuiTreeNodeFlags_DefaultOpen;
+  ImGuiTableFlags itemFlags  = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+  ImGuiTableFlags totalFlags = ImGuiTreeNodeFlags_DefaultOpen;
 
   if(ImGui::Begin("Memory Statistics"))
   {
@@ -2671,7 +2685,7 @@ void VkViewerUI::dumpSplat(uint32_t splatIdx)
 void VkViewerUI::guiDrawComfyUIWindow()
 {
   ImGui::SetNextWindowSize(ImVec2(500, 450), ImGuiCond_FirstUseEver);
-  if (!ImGui::Begin("ComfyUI 3D Generator", &m_showComfyUIWindow))
+  if(!ImGui::Begin("ComfyUI 3D Generator", &m_showComfyUIWindow))
   {
     ImGui::End();
     return;
@@ -2689,11 +2703,11 @@ void VkViewerUI::guiDrawComfyUIWindow()
 
   bool isConnected = (state == ComfyUIClient::State::Connected || state == ComfyUIClient::State::Running);
 
-  if (!isConnected)
+  if(!isConnected)
   {
-    if (ImGui::Button(ICON_MS_LINK " Connect"))
+    if(ImGui::Button(ICON_MS_LINK " Connect"))
     {
-      if (m_comfyClient)
+      if(m_comfyClient)
       {
         m_comfyClient->connect(m_comfyHost, static_cast<uint16_t>(m_comfyPort));
       }
@@ -2701,9 +2715,9 @@ void VkViewerUI::guiDrawComfyUIWindow()
   }
   else
   {
-    if (ImGui::Button(ICON_MS_LINK_OFF " Disconnect"))
+    if(ImGui::Button(ICON_MS_LINK_OFF " Disconnect"))
     {
-      if (m_comfyClient)
+      if(m_comfyClient)
       {
         m_comfyClient->disconnect();
       }
@@ -2711,7 +2725,7 @@ void VkViewerUI::guiDrawComfyUIWindow()
   }
 
   ImGui::SameLine();
-  switch (state)
+  switch(state)
   {
     case ComfyUIClient::State::Disconnected:
       ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Disconnected");
@@ -2736,20 +2750,20 @@ void VkViewerUI::guiDrawComfyUIWindow()
   ImGui::SeparatorText("Workflow");
 
   std::string workflowStr = m_comfyWorkflowPath.string();
-  char workflowBuf[512];
+  char        workflowBuf[512];
   strncpy(workflowBuf, workflowStr.c_str(), sizeof(workflowBuf) - 1);
   workflowBuf[sizeof(workflowBuf) - 1] = '\0';
-  
+
   ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 80);
-  if (ImGui::InputText("##workflow", workflowBuf, sizeof(workflowBuf)))
+  if(ImGui::InputText("##workflow", workflowBuf, sizeof(workflowBuf)))
   {
     m_comfyWorkflowPath = workflowBuf;
   }
   ImGui::SameLine();
-  if (ImGui::Button(ICON_MS_FOLDER_OPEN " Browse"))
+  if(ImGui::Button(ICON_MS_FOLDER_OPEN " Browse"))
   {
     auto path = nvgui::windowOpenFileDialog(m_app->getWindowHandle(), "Select Workflow", "JSON Files|*.json");
-    if (!path.empty())
+    if(!path.empty())
     {
       m_comfyWorkflowPath = path;
     }
@@ -2758,8 +2772,7 @@ void VkViewerUI::guiDrawComfyUIWindow()
   ImGui::SeparatorText("Prompt");
 
   ImGui::Text("Positive Prompt:");
-  ImGui::InputTextMultiline("##positive", m_comfyPrompt, sizeof(m_comfyPrompt), 
-                            ImVec2(ImGui::GetContentRegionAvail().x, 80));
+  ImGui::InputTextMultiline("##positive", m_comfyPrompt, sizeof(m_comfyPrompt), ImVec2(ImGui::GetContentRegionAvail().x, 80));
 
   ImGui::Text("Negative Prompt:");
   ImGui::InputTextMultiline("##negative", m_comfyNegativePrompt, sizeof(m_comfyNegativePrompt),
@@ -2768,18 +2781,18 @@ void VkViewerUI::guiDrawComfyUIWindow()
   ImGui::SeparatorText("Generate");
 
   bool canGenerate = isConnected && state != ComfyUIClient::State::Running;
-  
-  if (!canGenerate)
+
+  if(!canGenerate)
   {
     ImGui::BeginDisabled();
   }
 
-  if (ImGui::Button(ICON_MS_AUTO_AWESOME " Generate 3D Model", ImVec2(ImGui::GetContentRegionAvail().x, 40)))
+  if(ImGui::Button(ICON_MS_AUTO_AWESOME " Generate 3D Model", ImVec2(ImGui::GetContentRegionAvail().x, 40)))
   {
-    if (m_comfyClient && std::filesystem::exists(m_comfyWorkflowPath))
+    if(m_comfyClient && std::filesystem::exists(m_comfyWorkflowPath))
     {
       m_comfyStatusMessage = "Queueing workflow...";
-      if (m_comfyClient->queueWorkflow(m_comfyWorkflowPath, m_comfyPrompt, m_comfyNegativePrompt))
+      if(m_comfyClient->queueWorkflow(m_comfyWorkflowPath, m_comfyPrompt, m_comfyNegativePrompt))
       {
         m_comfyStatusMessage = "Workflow queued successfully";
       }
@@ -2788,40 +2801,39 @@ void VkViewerUI::guiDrawComfyUIWindow()
         m_comfyStatusMessage = "Failed: " + m_comfyClient->getLastError();
       }
     }
-    else if (!std::filesystem::exists(m_comfyWorkflowPath))
+    else if(!std::filesystem::exists(m_comfyWorkflowPath))
     {
       m_comfyStatusMessage = "Error: Workflow file not found";
     }
   }
 
-  if (!canGenerate)
+  if(!canGenerate)
   {
     ImGui::EndDisabled();
   }
 
-  if (state == ComfyUIClient::State::Running && m_comfyClient)
+  if(state == ComfyUIClient::State::Running && m_comfyClient)
   {
     int current = m_comfyClient->getProgressCurrent();
-    int total = m_comfyClient->getProgressTotal();
-    if (total > 0)
+    int total   = m_comfyClient->getProgressTotal();
+    if(total > 0)
     {
       float progress = static_cast<float>(current) / static_cast<float>(total);
-      ImGui::ProgressBar(progress, ImVec2(ImGui::GetContentRegionAvail().x, 0), 
+      ImGui::ProgressBar(progress, ImVec2(ImGui::GetContentRegionAvail().x, 0),
                          (std::to_string(current) + "/" + std::to_string(total)).c_str());
     }
     else
     {
-      ImGui::ProgressBar(-1.0f * static_cast<float>(ImGui::GetTime()), 
-                         ImVec2(ImGui::GetContentRegionAvail().x, 0), "Processing...");
+      ImGui::ProgressBar(-1.0f * static_cast<float>(ImGui::GetTime()), ImVec2(ImGui::GetContentRegionAvail().x, 0), "Processing...");
     }
   }
 
-  if (!m_comfyStatusMessage.empty())
+  if(!m_comfyStatusMessage.empty())
   {
     ImGui::TextWrapped("%s", m_comfyStatusMessage.c_str());
   }
 
-  if (state == ComfyUIClient::State::Error && m_comfyClient)
+  if(state == ComfyUIClient::State::Error && m_comfyClient)
   {
     ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "%s", m_comfyClient->getLastError().c_str());
   }
@@ -2831,12 +2843,12 @@ void VkViewerUI::guiDrawComfyUIWindow()
 
 void VkViewerUI::onComfyUIWorkflowComplete(const ComfyUIClient::WorkflowResult& result)
 {
-  if (result.success && !result.plyPath.empty())
+  if(result.success && !result.plyPath.empty())
   {
     m_comfyStatusMessage = "Success! Loading: " + result.plyPath;
     LOGI("ComfyUI workflow completed. PLY path: %s\n", result.plyPath.c_str());
 
-    if (std::filesystem::exists(result.plyPath))
+    if(std::filesystem::exists(result.plyPath))
     {
       prmScene.sceneToLoadFilename = result.plyPath;
     }
@@ -2853,91 +2865,92 @@ void VkViewerUI::onComfyUIWorkflowComplete(const ComfyUIClient::WorkflowResult& 
 #endif  // WITH_COMFYUI
 
 
-
-
-
-
-
-
-
 // guiDrawDepthStreamProperties moved to vk_viewer_ui_depth_stream.cpp
 
 void VkViewerUI::guiDrawPerformancePanel()
 {
-    if (ImGui::Begin("Performance Telemetry")) {
-        auto metrics = m_perfStats.getAllMetrics();
-        
-        if (ImGui::BeginTable("Metrics", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
-            ImGui::TableSetupColumn("Name");
-            ImGui::TableSetupColumn("Current");
-            ImGui::TableSetupColumn("Avg");
-            ImGui::TableSetupColumn("Min/Max");
-            ImGui::TableHeadersRow();
+  if(ImGui::Begin("Performance Telemetry"))
+  {
+    auto metrics = m_perfStats.getAllMetrics();
 
-            for (const auto& [name, metric] : metrics) {
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::Text("%s", name.c_str());
-                
-                ImGui::TableNextColumn();
-                ImGui::Text("%.2f", metric.current);
-                
-                ImGui::TableNextColumn();
-                ImGui::Text("%.2f", metric.avg);
-                
-                ImGui::TableNextColumn();
-                ImGui::Text("%.2f / %.2f", metric.min, metric.max);
-            }
-            ImGui::EndTable();
-        }
-        
-        for (const auto& [name, metric] : metrics) {
-            if (!metric.historyForPlotting.empty()) {
-                std::vector<float> values(metric.historyForPlotting.begin(), metric.historyForPlotting.end());
-                ImGui::PlotLines(name.c_str(), values.data(), (int)values.size(), 0, nullptr, FLT_MAX, FLT_MAX, ImVec2(0, 50));
-            }
-        }
+    if(ImGui::BeginTable("Metrics", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg))
+    {
+      ImGui::TableSetupColumn("Name");
+      ImGui::TableSetupColumn("Current");
+      ImGui::TableSetupColumn("Avg");
+      ImGui::TableSetupColumn("Min/Max");
+      ImGui::TableHeadersRow();
+
+      for(const auto& [name, metric] : metrics)
+      {
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::Text("%s", name.c_str());
+
+        ImGui::TableNextColumn();
+        ImGui::Text("%.2f", metric.current);
+
+        ImGui::TableNextColumn();
+        ImGui::Text("%.2f", metric.avg);
+
+        ImGui::TableNextColumn();
+        ImGui::Text("%.2f / %.2f", metric.min, metric.max);
+      }
+      ImGui::EndTable();
+    }
+
+    for(const auto& [name, metric] : metrics)
+    {
+      if(!metric.historyForPlotting.empty())
+      {
+        std::vector<float> values(metric.historyForPlotting.begin(), metric.historyForPlotting.end());
+        ImGui::PlotLines(name.c_str(), values.data(), (int)values.size(), 0, nullptr, FLT_MAX, FLT_MAX, ImVec2(0, 50));
+      }
+    }
 
 #ifdef WITH_OPENXR
-        if (m_xrInitialized && m_xr && m_xr->isPerformanceMetricsSupported()) {
-            m_xr->updatePerformanceMetrics();
-            const auto& xrMetrics = m_xr->getPerformanceMetrics();
-            
-            if (xrMetrics.valid) {
-                ImGui::Separator();
-                ImGui::Text("Quest Performance Metrics (XR_META)");
-                
-                if (ImGui::BeginTable("XRMetrics", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
-                    ImGui::TableSetupColumn("Metric");
-                    ImGui::TableSetupColumn("Value");
-                    ImGui::TableHeadersRow();
+    if(m_xrInitialized && m_xr && m_xr->isPerformanceMetricsSupported())
+    {
+      m_xr->updatePerformanceMetrics();
+      const auto& xrMetrics = m_xr->getPerformanceMetrics();
 
-                    auto addRow = [](const char* label, const char* fmt, auto value) {
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn();
-                        ImGui::Text("%s", label);
-                        ImGui::TableNextColumn();
-                        ImGui::Text(fmt, value);
-                    };
+      if(xrMetrics.valid)
+      {
+        ImGui::Separator();
+        ImGui::Text("Quest Performance Metrics (XR_META)");
 
-                    addRow("App CPU Frame", "%.2f ms", xrMetrics.appCpuFrameTimeMs);
-                    addRow("App GPU Frame", "%.2f ms", xrMetrics.appGpuFrameTimeMs);
-                    addRow("Motion-to-Photon", "%.2f ms", xrMetrics.motionToPhotonLatencyMs);
-                    addRow("Compositor CPU", "%.2f ms", xrMetrics.compositorCpuFrameTimeMs);
-                    addRow("Compositor GPU", "%.2f ms", xrMetrics.compositorGpuFrameTimeMs);
-                    addRow("Dropped Frames", "%u", xrMetrics.droppedFrameCount);
-                    addRow("SpaceWarp Mode", "%u", xrMetrics.spacewarpMode);
-                    addRow("CPU Util (Avg)", "%.1f %%", xrMetrics.cpuUtilizationAvg);
-                    addRow("CPU Util (Worst)", "%.1f %%", xrMetrics.cpuUtilizationWorst);
-                    addRow("GPU Util", "%.1f %%", xrMetrics.gpuUtilization);
+        if(ImGui::BeginTable("XRMetrics", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg))
+        {
+          ImGui::TableSetupColumn("Metric");
+          ImGui::TableSetupColumn("Value");
+          ImGui::TableHeadersRow();
 
-                    ImGui::EndTable();
-                }
-            }
+          auto addRow = [](const char* label, const char* fmt, auto value) {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::Text("%s", label);
+            ImGui::TableNextColumn();
+            ImGui::Text(fmt, value);
+          };
+
+          addRow("App CPU Frame", "%.2f ms", xrMetrics.appCpuFrameTimeMs);
+          addRow("App GPU Frame", "%.2f ms", xrMetrics.appGpuFrameTimeMs);
+          addRow("Motion-to-Photon", "%.2f ms", xrMetrics.motionToPhotonLatencyMs);
+          addRow("Compositor CPU", "%.2f ms", xrMetrics.compositorCpuFrameTimeMs);
+          addRow("Compositor GPU", "%.2f ms", xrMetrics.compositorGpuFrameTimeMs);
+          addRow("Dropped Frames", "%u", xrMetrics.droppedFrameCount);
+          addRow("SpaceWarp Mode", "%u", xrMetrics.spacewarpMode);
+          addRow("CPU Util (Avg)", "%.1f %%", xrMetrics.cpuUtilizationAvg);
+          addRow("CPU Util (Worst)", "%.1f %%", xrMetrics.cpuUtilizationWorst);
+          addRow("GPU Util", "%.1f %%", xrMetrics.gpuUtilization);
+
+          ImGui::EndTable();
         }
-#endif
+      }
     }
-    ImGui::End();
+#endif
+  }
+  ImGui::End();
 }
 
 #ifdef WITH_OPENXR
@@ -2958,13 +2971,13 @@ void VkViewerUI::guiDrawFileDialog()
       {
         for(size_t i = 0; i < m_fileList.size(); i++)
         {
-          const bool is_selected = false;
-          std::string filename = std::filesystem::path(m_fileList[i]).filename().string();
+          const bool  is_selected = false;
+          std::string filename    = std::filesystem::path(m_fileList[i]).filename().string();
           if(ImGui::Selectable(filename.c_str(), is_selected))
           {
             prmScene.sceneToLoadFilename = m_fileList[i];
-            prmScene.addSceneToExisting = false;
-            m_showFileDialog = false;
+            prmScene.addSceneToExisting  = false;
+            m_showFileDialog             = false;
           }
         }
         ImGui::EndListBox();
@@ -2982,17 +2995,18 @@ void VkViewerUI::guiDrawSupersplatDialog()
     if(ImGui::Begin("Supersplat Browser", &m_showSupersplatDialog))
     {
       static char searchBuf[256] = "";
-      if (m_supersplatSearch.size() < sizeof(searchBuf)) {
-          strncpy(searchBuf, m_supersplatSearch.c_str(), sizeof(searchBuf) - 1);
-          searchBuf[sizeof(searchBuf) - 1] = '\0';
+      if(m_supersplatSearch.size() < sizeof(searchBuf))
+      {
+        strncpy(searchBuf, m_supersplatSearch.c_str(), sizeof(searchBuf) - 1);
+        searchBuf[sizeof(searchBuf) - 1] = '\0';
       }
       bool triggerSearch = ImGui::InputText("Search", searchBuf, sizeof(searchBuf), ImGuiInputTextFlags_EnterReturnsTrue);
       ImGui::SameLine();
       if(ImGui::Button("Go"))
       {
-          triggerSearch = true;
+        triggerSearch = true;
       }
-      
+
       if(triggerSearch)
       {
         m_supersplatSearch = searchBuf;
@@ -3002,24 +3016,29 @@ void VkViewerUI::guiDrawSupersplatDialog()
             std::lock_guard<std::mutex> lock(m_thumbnailMutex);
             m_supersplatScenes = scenes;
             // Fetch thumbnails
-            for (const auto& scene : scenes) {
-              if (!scene.thumbnailUrl.empty()) {
-                  m_supersplatClient->fetchThumbnail(scene.thumbnailUrl, 
-                      [this, url=scene.thumbnailUrl](const std::vector<uint8_t>& data, int w, int h, int c) {
-                          if (data.empty()) return;
-                          std::lock_guard<std::mutex> lock(m_thumbnailMutex);
-                          std::vector<uint8_t> rgba = data;
-                          if (c == 3) {
-                              rgba.resize(w * h * 4);
-                              for (int i = w * h - 1; i >= 0; --i) {
-                                  rgba[i * 4 + 3] = 255;
-                                  rgba[i * 4 + 2] = data[i * 3 + 2];
-                                  rgba[i * 4 + 1] = data[i * 3 + 1];
-                                  rgba[i * 4 + 0] = data[i * 3 + 0];
-                              }
-                          }
-                          m_pendingThumbnails.push_back({url, rgba, w, h});
-                      });
+            for(const auto& scene : scenes)
+            {
+              if(!scene.thumbnailUrl.empty())
+              {
+                m_supersplatClient->fetchThumbnail(
+                    scene.thumbnailUrl, [this, url = scene.thumbnailUrl](const std::vector<uint8_t>& data, int w, int h, int c) {
+                      if(data.empty())
+                        return;
+                      std::lock_guard<std::mutex> lock(m_thumbnailMutex);
+                      std::vector<uint8_t>        rgba = data;
+                      if(c == 3)
+                      {
+                        rgba.resize(w * h * 4);
+                        for(int i = w * h - 1; i >= 0; --i)
+                        {
+                          rgba[i * 4 + 3] = 255;
+                          rgba[i * 4 + 2] = data[i * 3 + 2];
+                          rgba[i * 4 + 1] = data[i * 3 + 1];
+                          rgba[i * 4 + 0] = data[i * 3 + 0];
+                        }
+                      }
+                      m_pendingThumbnails.push_back({url, rgba, w, h});
+                    });
               }
             }
           });
@@ -3027,7 +3046,7 @@ void VkViewerUI::guiDrawSupersplatDialog()
       }
       else
       {
-          m_supersplatSearch = searchBuf;
+        m_supersplatSearch = searchBuf;
       }
 
       std::lock_guard<std::mutex> lock(m_thumbnailMutex);
@@ -3037,33 +3056,33 @@ void VkViewerUI::guiDrawSupersplatDialog()
         {
           ImGui::TableNextColumn();
           ImGui::PushID(scene.id);
-          
+
           ImTextureID texId = 0;
           if(m_thumbnailDescriptors.count(scene.thumbnailUrl))
             texId = (ImTextureID)m_thumbnailDescriptors[scene.thumbnailUrl];
-            
+
           if(texId && ImGui::ImageButton("##img", texId, ImVec2(150, 100)))
           {
-             if(!scene.viewUrl.empty())
-             {
-                prmScene.sceneToLoadFilename = scene.viewUrl;
-                prmScene.addSceneToExisting = false;
-                m_showSupersplatDialog = false;
-             }
+            if(!scene.viewUrl.empty())
+            {
+              prmScene.sceneToLoadFilename = scene.viewUrl;
+              prmScene.addSceneToExisting  = false;
+              m_showSupersplatDialog       = false;
+            }
           }
-          else if (!texId)
+          else if(!texId)
           {
-             if (ImGui::Button(scene.title.c_str(), ImVec2(150, 100))) // Placeholder
-             {
-                 if(!scene.viewUrl.empty())
-                 {
-                    prmScene.sceneToLoadFilename = scene.viewUrl;
-                    prmScene.addSceneToExisting = false;
-                    m_showSupersplatDialog = false;
-                 }
-             }
+            if(ImGui::Button(scene.title.c_str(), ImVec2(150, 100)))  // Placeholder
+            {
+              if(!scene.viewUrl.empty())
+              {
+                prmScene.sceneToLoadFilename = scene.viewUrl;
+                prmScene.addSceneToExisting  = false;
+                m_showSupersplatDialog       = false;
+              }
+            }
           }
-          
+
           ImGui::TextWrapped("%s", scene.title.c_str());
           if(scene.size > 0)
           {
@@ -3080,141 +3099,145 @@ void VkViewerUI::guiDrawSupersplatDialog()
 
 void VkViewerUI::createTextureFromRGBA(const std::vector<uint8_t>& data, int width, int height, nvvk::Image& texture, VkImageView& view)
 {
-    VkCommandBuffer cmd = m_app->createTempCmdBuffer();
-    
-    VkImageCreateInfo info = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
-    info.imageType = VK_IMAGE_TYPE_2D;
-    info.format = VK_FORMAT_R8G8B8A8_UNORM;
-    info.extent = {static_cast<uint32_t>(width), static_cast<uint32_t>(height), 1};
-    info.mipLevels = 1;
-    info.arrayLayers = 1;
-    info.samples = VK_SAMPLE_COUNT_1_BIT;
-    info.tiling = VK_IMAGE_TILING_OPTIMAL;
-    info.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-    info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    
-    m_alloc.createImage(texture, info);
-    
-    VkImageViewCreateInfo viewInfo = {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-    viewInfo.image = texture.image;
-    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
-    viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    viewInfo.subresourceRange.baseMipLevel = 0;
-    viewInfo.subresourceRange.levelCount = 1;
-    viewInfo.subresourceRange.baseArrayLayer = 0;
-    viewInfo.subresourceRange.layerCount = 1;
-    
-    vkCreateImageView(m_device, &viewInfo, nullptr, &view);
-    
-    // Transition to TRANSFER_DST
-    VkImageMemoryBarrier barrier = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-    barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    barrier.srcAccessMask = 0;
-    barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    barrier.image = texture.image;
-    barrier.subresourceRange = viewInfo.subresourceRange;
-    
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 
-        0, 0, nullptr, 0, nullptr, 1, &barrier);
-        
-    // Upload data using staging buffer
-    nvvk::Buffer staging;
-    m_alloc.createBuffer(staging, data.size(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-    void* mappedData = nullptr;
-    vmaMapMemory(m_alloc, staging.allocation, &mappedData);
-    memcpy(mappedData, data.data(), data.size());
-    vmaUnmapMemory(m_alloc, staging.allocation);
-    
-    VkBufferImageCopy copyRegion{};
-    copyRegion.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    copyRegion.imageSubresource.layerCount = 1;
-    copyRegion.imageExtent = info.extent;
-    
-    vkCmdCopyBufferToImage(cmd, staging.buffer, texture.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
-    
-    // Transition to SHADER_READ_ONLY
-    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 
-        0, 0, nullptr, 0, nullptr, 1, &barrier);
-    
-    m_app->submitAndWaitTempCmdBuffer(cmd);
-    
-    m_alloc.destroyBuffer(staging);
+  VkCommandBuffer cmd = m_app->createTempCmdBuffer();
+
+  VkImageCreateInfo info = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+  info.imageType         = VK_IMAGE_TYPE_2D;
+  info.format            = VK_FORMAT_R8G8B8A8_UNORM;
+  info.extent            = {static_cast<uint32_t>(width), static_cast<uint32_t>(height), 1};
+  info.mipLevels         = 1;
+  info.arrayLayers       = 1;
+  info.samples           = VK_SAMPLE_COUNT_1_BIT;
+  info.tiling            = VK_IMAGE_TILING_OPTIMAL;
+  info.usage             = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+  info.sharingMode       = VK_SHARING_MODE_EXCLUSIVE;
+  info.initialLayout     = VK_IMAGE_LAYOUT_UNDEFINED;
+
+  m_alloc.createImage(texture, info);
+
+  VkImageViewCreateInfo viewInfo           = {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+  viewInfo.image                           = texture.image;
+  viewInfo.viewType                        = VK_IMAGE_VIEW_TYPE_2D;
+  viewInfo.format                          = VK_FORMAT_R8G8B8A8_UNORM;
+  viewInfo.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+  viewInfo.subresourceRange.baseMipLevel   = 0;
+  viewInfo.subresourceRange.levelCount     = 1;
+  viewInfo.subresourceRange.baseArrayLayer = 0;
+  viewInfo.subresourceRange.layerCount     = 1;
+
+  vkCreateImageView(m_device, &viewInfo, nullptr, &view);
+
+  // Transition to TRANSFER_DST
+  VkImageMemoryBarrier barrier = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+  barrier.oldLayout            = VK_IMAGE_LAYOUT_UNDEFINED;
+  barrier.newLayout            = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  barrier.srcAccessMask        = 0;
+  barrier.dstAccessMask        = VK_ACCESS_TRANSFER_WRITE_BIT;
+  barrier.image                = texture.image;
+  barrier.subresourceRange     = viewInfo.subresourceRange;
+
+  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+  // Upload data using staging buffer
+  nvvk::Buffer staging;
+  m_alloc.createBuffer(staging, data.size(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+  void* mappedData = nullptr;
+  vmaMapMemory(m_alloc, staging.allocation, &mappedData);
+  memcpy(mappedData, data.data(), data.size());
+  vmaUnmapMemory(m_alloc, staging.allocation);
+
+  VkBufferImageCopy copyRegion{};
+  copyRegion.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  copyRegion.imageSubresource.layerCount = 1;
+  copyRegion.imageExtent                 = info.extent;
+
+  vkCmdCopyBufferToImage(cmd, staging.buffer, texture.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
+
+  // Transition to SHADER_READ_ONLY
+  barrier.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  barrier.newLayout     = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0,
+                       nullptr, 1, &barrier);
+
+  m_app->submitAndWaitTempCmdBuffer(cmd);
+
+  m_alloc.destroyBuffer(staging);
 }
 
 void VkViewerUI::guiDrawVrMenu()
 {
-    // A simple window floating in front of the camera (conceptually)
-    // For now just a standard ImGui window
-    ImGui::SetNextWindowSize(ImVec2(300, 200), ImGuiCond_FirstUseEver);
-    if(ImGui::Begin("VR Menu", &m_showVrMenu))
+  // A simple window floating in front of the camera (conceptually)
+  // For now just a standard ImGui window
+  ImGui::SetNextWindowSize(ImVec2(300, 200), ImGuiCond_FirstUseEver);
+  if(ImGui::Begin("VR Menu", &m_showVrMenu))
+  {
+    if(ImGui::Button("Load from Resources...", ImVec2(-1, 40)))
     {
-        if(ImGui::Button("Load from Resources...", ImVec2(-1, 40)))
+      m_showFileDialog = true;
+      // Populate file list
+      m_fileList.clear();
+      std::vector<std::filesystem::path> resourceDirs = getResourcesDirs();
+      if(!resourceDirs.empty())
+      {
+        std::filesystem::path resourcesDir = resourceDirs[0];
+        if(std::filesystem::exists(resourcesDir))
         {
-            m_showFileDialog = true;
-            // Populate file list
-            m_fileList.clear();
-            std::vector<std::filesystem::path> resourceDirs = getResourcesDirs();
-            if (!resourceDirs.empty())
-            {
-              std::filesystem::path resourcesDir = resourceDirs[0];
-              if (std::filesystem::exists(resourcesDir))
-              {
-                for (const auto& entry : std::filesystem::directory_iterator(resourcesDir))
-                {
-                  if (entry.is_regular_file())
-                    m_fileList.push_back(entry.path().string());
-                }
-              }
-            }
+          for(const auto& entry : std::filesystem::directory_iterator(resourcesDir))
+          {
+            if(entry.is_regular_file())
+              m_fileList.push_back(entry.path().string());
+          }
         }
-        
-        if(ImGui::Button("Supersplat Browser...", ImVec2(-1, 40)))
-        {
-            m_showSupersplatDialog = true;
-            if (m_supersplatClient)
+      }
+    }
+
+    if(ImGui::Button("Supersplat Browser...", ImVec2(-1, 40)))
+    {
+      m_showSupersplatDialog = true;
+      if(m_supersplatClient)
+      {
+        m_supersplatClient->fetchSceneList("", [this](const std::vector<SupersplatClient::Scene>& scenes) {
+          std::lock_guard<std::mutex> lock(m_thumbnailMutex);
+          m_supersplatScenes = scenes;
+          // Fetch thumbnails logic (duplicated)
+          for(const auto& scene : scenes)
+          {
+            if(!scene.thumbnailUrl.empty())
             {
-                m_supersplatClient->fetchSceneList("", [this](const std::vector<SupersplatClient::Scene>& scenes) {
+              m_supersplatClient->fetchThumbnail(
+                  scene.thumbnailUrl, [this, url = scene.thumbnailUrl](const std::vector<uint8_t>& data, int w, int h, int c) {
+                    if(data.empty())
+                      return;
                     std::lock_guard<std::mutex> lock(m_thumbnailMutex);
-                    m_supersplatScenes = scenes;
-                    // Fetch thumbnails logic (duplicated)
-                    for (const auto& scene : scenes) {
-                      if (!scene.thumbnailUrl.empty()) {
-                          m_supersplatClient->fetchThumbnail(scene.thumbnailUrl, 
-                              [this, url=scene.thumbnailUrl](const std::vector<uint8_t>& data, int w, int h, int c) {
-                                  if (data.empty()) return;
-                                  std::lock_guard<std::mutex> lock(m_thumbnailMutex);
-                                  std::vector<uint8_t> rgba = data;
-                                  if (c == 3) {
-                                      rgba.resize(w * h * 4);
-                                      for (int i = w * h - 1; i >= 0; --i) {
-                                          rgba[i * 4 + 3] = 255;
-                                          rgba[i * 4 + 2] = data[i * 3 + 2];
-                                          rgba[i * 4 + 1] = data[i * 3 + 1];
-                                          rgba[i * 4 + 0] = data[i * 3 + 0];
-                                      }
-                                  }
-                                  m_pendingThumbnails.push_back({url, rgba, w, h});
-                              });
+                    std::vector<uint8_t>        rgba = data;
+                    if(c == 3)
+                    {
+                      rgba.resize(w * h * 4);
+                      for(int i = w * h - 1; i >= 0; --i)
+                      {
+                        rgba[i * 4 + 3] = 255;
+                        rgba[i * 4 + 2] = data[i * 3 + 2];
+                        rgba[i * 4 + 1] = data[i * 3 + 1];
+                        rgba[i * 4 + 0] = data[i * 3 + 0];
                       }
                     }
-                });
+                    m_pendingThumbnails.push_back({url, rgba, w, h});
+                  });
             }
-        }
-        
-        if(ImGui::Button("Close Menu", ImVec2(-1, 40)))
-        {
-            m_showVrMenu = false;
-        }
+          }
+        });
+      }
     }
-    ImGui::End();
+
+    if(ImGui::Button("Close Menu", ImVec2(-1, 40)))
+    {
+      m_showVrMenu = false;
+    }
+  }
+  ImGui::End();
 }
 
 // Include UI partial files (unity build pattern)
@@ -3223,4 +3246,4 @@ void VkViewerUI::guiDrawVrMenu()
 #include "vk_viewer_ui_project.cpp"
 #include "vk_viewer_ui_vr.cpp"
 
-} // namespace vk_viewer
+}  // namespace vk_viewer

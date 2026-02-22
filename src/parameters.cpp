@@ -83,8 +83,8 @@ void resetRtxParameters()
 void registerCommandLineParameters(nvutils::ParameterRegistry* parameterRegistry)
 {
   // Scene - unified input that auto-detects based on extension
-  parameterRegistry->add({"inputFile", "load a scene file (ply, spz, sog, lod-meta.json, 4dv, obj, glb, gltf, or metadata.json for depth video)"}, 
-                         {".ply", ".spz", ".sog", ".4dv", ".obj", ".glb", ".gltf", ".json"}, &prmScene.sceneToLoadFilename);
+  parameterRegistry->add({"inputFile", "load a scene file (ply, spz, rad, sog, lod-meta.json, 4dv, obj, glb, gltf, or metadata.json for depth video)"},
+                         {".ply", ".spz", ".rad", ".sog", ".4dv", ".obj", ".glb", ".gltf", ".json"}, &prmScene.sceneToLoadFilename);
   parameterRegistry->add({"inputMesh", "load a mesh file (obj, glb, gltf)"}, {".obj", ".glb", ".gltf"}, &prmScene.meshToImportFilename);
 #ifdef WITH_DEFAULT_SCENE_FEATURE
   parameterRegistry->add({"loadDefaultScene", "0=disable the load of a default scene when no ply file is provided"},

@@ -31,7 +31,7 @@
 
 namespace vk_viewer {
 
-// Async loader for Gaussian splat formats (PLY, SPZ, SOG)
+// Async loader for Gaussian splat formats (PLY, SPZ, RAD, SOG)
 class SplatLoaderAsync
 {
 public:
@@ -115,7 +115,7 @@ public:
   {
     std::lock_guard<std::mutex> lock(m_mutex);
     current = m_downloadFileIndex;
-    total = m_downloadFileCount;
+    total   = m_downloadFileCount;
   }
 
   // Set/get LOD level for reload
@@ -155,16 +155,16 @@ private:
   SplatSet* m_output = nullptr;
   // the loading percentage
   float m_progress = 0.0f;
-  
+
   // Download details
-  std::string m_currentDownloadingFile = "";
-  size_t m_currentDownloadSize = 0;
-  size_t m_currentDownloadProgress = 0;
-  int m_downloadFileIndex = 0;
-  int m_downloadFileCount = 0;
+  std::string m_currentDownloadingFile  = "";
+  size_t      m_currentDownloadSize     = 0;
+  size_t      m_currentDownloadProgress = 0;
+  int         m_downloadFileIndex       = 0;
+  int         m_downloadFileCount       = 0;
 
   // LOD reload state
-  int  m_targetLod = 0;
+  int  m_targetLod        = 0;
   bool m_lodReloadPending = false;
 };
 

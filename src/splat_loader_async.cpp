@@ -37,6 +37,7 @@
 #include "fourdv_loader.h"
 #include "npz_loader.h"
 #include "lcc_loader.h"
+#include "rad_loader.h"
 #include "utilities.h"
 
 #include <ixwebsocket/IXHttpClient.h>
@@ -53,15 +54,16 @@ std::string extractSuperSplatId(const std::string& url)
   // Support formats:
   // https://superspl.at/view?id=bd964899
   // https://superspl.at/s?id=bd964899
-  
+
   std::string idKey = "?id=";
-  size_t pos = url.find(idKey);
-  if (pos == std::string::npos) return "";
-  
+  size_t      pos   = url.find(idKey);
+  if(pos == std::string::npos)
+    return "";
+
   std::string id = url.substr(pos + idKey.length());
   // Truncate at next parameter if any
   size_t endPos = id.find('&');
-  if (endPos != std::string::npos)
+  if(endPos != std::string::npos)
   {
     id = id.substr(0, endPos);
   }
@@ -72,11 +74,13 @@ std::string extractSuperSplatId(const std::string& url)
 std::vector<uint8_t> readFileLocal(const std::filesystem::path& path)
 {
   std::ifstream file(path, std::ios::binary | std::ios::ate);
-  if(!file) return {};
+  if(!file)
+    return {};
   std::streamsize size = file.tellg();
   file.seekg(0, std::ios::beg);
   std::vector<uint8_t> buffer(size);
-  if(!file.read(reinterpret_cast<char*>(buffer.data()), size)) return {};
+  if(!file.read(reinterpret_cast<char*>(buffer.data()), size))
+    return {};
   return buffer;
 }
 
@@ -85,44 +89,47 @@ using ProgressCallback = std::function<void(size_t downloaded, size_t total)>;
 
 bool downloadFile(const std::string& url, const std::filesystem::path& destPath, ProgressCallback callback = nullptr)
 {
-    ix::HttpClient httpClient;
-    auto args = httpClient.createRequest(url, ix::HttpClient::kGet);
-    
-    std::ofstream outFile(destPath, std::ios::binary);
-    if (!outFile)
-    {
-        LOGE("Failed to create file: %s\n", destPath.string().c_str());
-        return false;
-    }
+  ix::HttpClient httpClient;
+  auto           args = httpClient.createRequest(url, ix::HttpClient::kGet);
 
-    args->onChunkCallback = [&](const std::string& chunk) {
-        outFile.write(chunk.data(), chunk.size());
-        return true;
-    };
+  std::ofstream outFile(destPath, std::ios::binary);
+  if(!outFile)
+  {
+    LOGE("Failed to create file: %s\n", destPath.string().c_str());
+    return false;
+  }
 
-    if (callback) {
-        args->onProgressCallback = [&](size_t downloaded, size_t total) {
-            callback(downloaded, total);
-            return true;
-        };
-    }
-
-    auto res = httpClient.get(url, args);
-    outFile.close();
-
-    if (res->errorCode != ix::HttpErrorCode::Ok) {
-        LOGE("Download failed: %s\n", res->errorMsg.c_str());
-        return false;
-    }
-
-    if (res->statusCode != 200) {
-        LOGE("Download failed: HTTP %d\n", res->statusCode);
-        return false;
-    }
-
+  args->onChunkCallback = [&](const std::string& chunk) {
+    outFile.write(chunk.data(), chunk.size());
     return true;
+  };
+
+  if(callback)
+  {
+    args->onProgressCallback = [&](size_t downloaded, size_t total) {
+      callback(downloaded, total);
+      return true;
+    };
+  }
+
+  auto res = httpClient.get(url, args);
+  outFile.close();
+
+  if(res->errorCode != ix::HttpErrorCode::Ok)
+  {
+    LOGE("Download failed: %s\n", res->errorMsg.c_str());
+    return false;
+  }
+
+  if(res->statusCode != 200)
+  {
+    LOGE("Download failed: HTTP %d\n", res->statusCode);
+    return false;
+  }
+
+  return true;
 }
-}
+}  // namespace
 
 bool SplatLoaderAsync::loadScene(std::filesystem::path filename, SplatSet& output)
 {
@@ -154,9 +161,9 @@ bool SplatLoaderAsync::loadSceneAtLod(std::filesystem::path filename, SplatSet& 
   }
 
   // setup load info and wakeup the thread
-  m_filename    = filename;
-  m_output      = &output;
-  m_targetLod   = lodLevel;
+  m_filename         = filename;
+  m_output           = &output;
+  m_targetLod        = lodLevel;
   m_lodReloadPending = true;
   m_loadCV.notify_all();
 
@@ -256,167 +263,177 @@ bool SplatLoaderAsync::innerLoad(std::filesystem::path filename, SplatSet& outpu
   auto startTime = std::chrono::high_resolution_clock::now();
 
   std::string pathStr = filename.string();
-  if (pathStr.find("http://") == 0 || pathStr.find("https://") == 0)
+  if(pathStr.find("http://") == 0 || pathStr.find("https://") == 0)
   {
-    std::string superSplatId = extractSuperSplatId(pathStr);
-    std::filesystem::path cacheDir = std::filesystem::temp_directory_path() / "vk_viewer_cache";
-    
-    if (!std::filesystem::exists(cacheDir)) {
-        std::filesystem::create_directories(cacheDir);
+    std::string           superSplatId = extractSuperSplatId(pathStr);
+    std::filesystem::path cacheDir     = std::filesystem::temp_directory_path() / "vk_viewer_cache";
+
+    if(!std::filesystem::exists(cacheDir))
+    {
+      std::filesystem::create_directories(cacheDir);
     }
 
-    if (!superSplatId.empty())
+    if(!superSplatId.empty())
     {
-        LOGI("Detected SuperSplat ID: %s\n", superSplatId.c_str());
-        std::filesystem::path sceneDir = cacheDir / superSplatId;
-        if (!std::filesystem::exists(sceneDir)) {
-            std::filesystem::create_directories(sceneDir);
+      LOGI("Detected SuperSplat ID: %s\n", superSplatId.c_str());
+      std::filesystem::path sceneDir = cacheDir / superSplatId;
+      if(!std::filesystem::exists(sceneDir))
+      {
+        std::filesystem::create_directories(sceneDir);
+      }
+
+      std::filesystem::path metaPath = sceneDir / "meta.json";
+
+      // Try v3, v2, v1 in order - this is the versioned content path for SuperSplat
+      std::vector<std::string> versions = {"v3", "v2", "v1"};
+      std::string              successVersion;
+
+      for(const auto& version : versions)
+      {
+        std::string metaUrl = "https://d28zzqy0iyovbz.cloudfront.net/" + superSplatId + "/" + version + "/meta.json";
+        LOGI("Trying %s meta.json from %s...\n", version.c_str(), metaUrl.c_str());
+
+        if(downloadFile(metaUrl, metaPath))
+        {
+          successVersion = version;
+          LOGI("Successfully downloaded meta.json using %s format.\n", version.c_str());
+          break;
+        }
+      }
+
+      if(successVersion.empty())
+      {
+        LOGE("Failed to download meta.json from SuperSplat (tried v3, v2, v1).\n");
+        return false;
+      }
+
+      std::vector<uint8_t> metaData = readFileLocal(metaPath);
+      SogMeta              meta;
+      if(SogLoader::parseMeta(metaData, meta))
+      {
+        std::vector<std::string> filesToDownload;
+        auto                     addFiles = [&](const std::vector<std::string>& files) {
+          filesToDownload.insert(filesToDownload.end(), files.begin(), files.end());
+        };
+
+        addFiles(meta.means.files);
+        addFiles(meta.scales.files);
+        addFiles(meta.quats.files);
+        addFiles(meta.sh0.files);
+        addFiles(meta.shN.files);
+        addFiles(meta.motion.files);
+        addFiles(meta.t.files);
+        addFiles(meta.t_scale.files);
+
+        int total   = static_cast<int>(filesToDownload.size());
+        int current = 0;
+
+        {
+          std::lock_guard<std::mutex> lock(m_mutex);
+          m_downloadFileCount = total;
         }
 
-        std::filesystem::path metaPath = sceneDir / "meta.json";
-        
-        // Try v3, v2, v1 in order - this is the versioned content path for SuperSplat
-        std::vector<std::string> versions = {"v3", "v2", "v1"};
-        std::string successVersion;
-        
-        for (const auto& version : versions)
+        for(const auto& file : filesToDownload)
         {
-            std::string metaUrl = "https://d28zzqy0iyovbz.cloudfront.net/" + superSplatId + "/" + version + "/meta.json";
-            LOGI("Trying %s meta.json from %s...\n", version.c_str(), metaUrl.c_str());
-            
-            if (downloadFile(metaUrl, metaPath))
-            {
-                successVersion = version;
-                LOGI("Successfully downloaded meta.json using %s format.\n", version.c_str());
-                break;
-            }
-        }
-        
-        if (successVersion.empty())
-        {
-            LOGE("Failed to download meta.json from SuperSplat (tried v3, v2, v1).\n");
+          current++;
+          std::filesystem::path localFilePath = sceneDir / file;
+
+          if(std::filesystem::exists(localFilePath))
+          {
+            continue;
+          }
+
+          std::string fileUrl = "https://d28zzqy0iyovbz.cloudfront.net/" + superSplatId + "/" + successVersion + "/" + file;
+          LOGI("Downloading %s (%d/%d)...\n", file.c_str(), current, total);
+
+          setProgress(static_cast<float>(current) / static_cast<float>(total));
+
+          {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_downloadFileIndex       = current;
+            m_currentDownloadingFile  = file;
+            m_currentDownloadSize     = 0;
+            m_currentDownloadProgress = 0;
+          }
+
+          auto progressCallback = [&](size_t downloaded, size_t totalBytes) {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_currentDownloadSize     = totalBytes;
+            m_currentDownloadProgress = downloaded;
+          };
+
+          if(!downloadFile(fileUrl, localFilePath, progressCallback))
+          {
+            LOGE("Failed to download file: %s\n", file.c_str());
             return false;
+          }
         }
 
-        std::vector<uint8_t> metaData = readFileLocal(metaPath);
-        SogMeta meta;
-        if (SogLoader::parseMeta(metaData, meta))
-        {
-            std::vector<std::string> filesToDownload;
-            auto addFiles = [&](const std::vector<std::string>& files) {
-                filesToDownload.insert(filesToDownload.end(), files.begin(), files.end());
-            };
-            
-            addFiles(meta.means.files);
-            addFiles(meta.scales.files);
-            addFiles(meta.quats.files);
-            addFiles(meta.sh0.files);
-            addFiles(meta.shN.files);
-            addFiles(meta.motion.files);
-            addFiles(meta.t.files);
-            addFiles(meta.t_scale.files);
-
-            int total = static_cast<int>(filesToDownload.size());
-            int current = 0;
-            
-            {
-                std::lock_guard<std::mutex> lock(m_mutex);
-                m_downloadFileCount = total;
-            }
-
-            for (const auto& file : filesToDownload)
-            {
-                current++;
-                std::filesystem::path localFilePath = sceneDir / file;
-                
-                if (std::filesystem::exists(localFilePath)) {
-                    continue;
-                }
-
-                std::string fileUrl = "https://d28zzqy0iyovbz.cloudfront.net/" + superSplatId + "/" + successVersion + "/" + file;
-                LOGI("Downloading %s (%d/%d)...\n", file.c_str(), current, total);
-                
-                setProgress(static_cast<float>(current) / static_cast<float>(total));
-
-                {
-                    std::lock_guard<std::mutex> lock(m_mutex);
-                    m_downloadFileIndex = current;
-                    m_currentDownloadingFile = file;
-                    m_currentDownloadSize = 0;
-                    m_currentDownloadProgress = 0;
-                }
-
-                auto progressCallback = [&](size_t downloaded, size_t totalBytes) {
-                    std::lock_guard<std::mutex> lock(m_mutex);
-                    m_currentDownloadSize = totalBytes;
-                    m_currentDownloadProgress = downloaded;
-                };
-
-                if (!downloadFile(fileUrl, localFilePath, progressCallback))
-                {
-                    LOGE("Failed to download file: %s\n", file.c_str());
-                    return false;
-                }
-            }
-            
-            filename = metaPath;
-            LOGI("SuperSplat scene download complete.\n");
-        }
-        else
-        {
-            LOGE("Failed to parse downloaded meta.json.\n");
-            return false;
-        }
+        filename = metaPath;
+        LOGI("SuperSplat scene download complete.\n");
+      }
+      else
+      {
+        LOGE("Failed to parse downloaded meta.json.\n");
+        return false;
+      }
     }
     else
     {
-        std::string tempFileName = "downloaded_scene";
-        
-        size_t lastDot = pathStr.find_last_of('.');
-        if (lastDot != std::string::npos && lastDot < pathStr.length() - 1) {
-            std::string ext = pathStr.substr(lastDot);
-            if (ext.length() <= 5) {
-                tempFileName += ext;
-            } else {
-                 tempFileName += ".sog";
-            }
-        } else {
-            tempFileName += ".sog";
-        }
-        
-        std::filesystem::path destPath = cacheDir / tempFileName;
-        
-        LOGI("Downloading %s to %s...\n", pathStr.c_str(), destPath.string().c_str());
-        
-        {
-            std::lock_guard<std::mutex> lock(m_mutex);
-            m_downloadFileCount = 1;
-            m_downloadFileIndex = 1;
-            m_currentDownloadingFile = pathStr;
-            m_currentDownloadSize = 0;
-            m_currentDownloadProgress = 0;
-        }
+      std::string tempFileName = "downloaded_scene";
 
-        auto progressCallback = [&](size_t downloaded, size_t totalBytes) {
-            std::lock_guard<std::mutex> lock(m_mutex);
-            m_currentDownloadSize = totalBytes;
-            m_currentDownloadProgress = downloaded;
-            // For single file, use download progress as overall progress
-            if (totalBytes > 0) {
-                m_progress = static_cast<float>(downloaded) / static_cast<float>(totalBytes);
-            }
-        };
-
-        if (downloadFile(pathStr, destPath, progressCallback))
+      size_t lastDot = pathStr.find_last_of('.');
+      if(lastDot != std::string::npos && lastDot < pathStr.length() - 1)
+      {
+        std::string ext = pathStr.substr(lastDot);
+        if(ext.length() <= 5)
         {
-           filename = destPath;
-           LOGI("Download complete. Proceeding to load...\n");
+          tempFileName += ext;
         }
         else
         {
-           LOGE("Failed to download file from URL.\n");
-           return false;
+          tempFileName += ".sog";
         }
+      }
+      else
+      {
+        tempFileName += ".sog";
+      }
+
+      std::filesystem::path destPath = cacheDir / tempFileName;
+
+      LOGI("Downloading %s to %s...\n", pathStr.c_str(), destPath.string().c_str());
+
+      {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_downloadFileCount       = 1;
+        m_downloadFileIndex       = 1;
+        m_currentDownloadingFile  = pathStr;
+        m_currentDownloadSize     = 0;
+        m_currentDownloadProgress = 0;
+      }
+
+      auto progressCallback = [&](size_t downloaded, size_t totalBytes) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_currentDownloadSize     = totalBytes;
+        m_currentDownloadProgress = downloaded;
+        // For single file, use download progress as overall progress
+        if(totalBytes > 0)
+        {
+          m_progress = static_cast<float>(downloaded) / static_cast<float>(totalBytes);
+        }
+      };
+
+      if(downloadFile(pathStr, destPath, progressCallback))
+      {
+        filename = destPath;
+        LOGI("Download complete. Proceeding to load...\n");
+      }
+      else
+      {
+        LOGE("Failed to download file from URL.\n");
+        return false;
+      }
     }
   }
 
@@ -445,6 +462,20 @@ bool SplatLoaderAsync::innerLoad(std::filesystem::path filename, SplatSet& outpu
       LOGI("SOG file loaded in %lldms\n", loadTime);
     }
     return success;
+  }
+
+  if(hasExtension(filename, ".rad"))
+  {
+    bool success = RadLoader::load(filename, output, [this](float progress) { setProgress(progress); });
+    if(success)
+    {
+      auto      endTime  = std::chrono::high_resolution_clock::now();
+      long long loadTime = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
+      LOGI("RAD file loaded in %lldms\n", loadTime);
+      return true;
+    }
+    LOGE("Error: RAD loader failed for file: %s\n", filename.string().c_str());
+    return false;
   }
 
   // we use spz library for .spz extensions
@@ -519,9 +550,8 @@ bool SplatLoaderAsync::innerLoad(std::filesystem::path filename, SplatSet& outpu
     if(success)
     {
       size_t timestepCount = NpzLoader::getTimestepCount(filename);
-      bool hasTemporal = timestepCount > 1;
-      LOGI("NPZ file loaded: %zu splats, %zu timesteps%s\n", output.size(), timestepCount,
-           hasTemporal ? " [temporal]" : "");
+      bool   hasTemporal   = timestepCount > 1;
+      LOGI("NPZ file loaded: %zu splats, %zu timesteps%s\n", output.size(), timestepCount, hasTemporal ? " [temporal]" : "");
       output.convertCoordinates(spz::CoordinateSystem::RDF, spz::CoordinateSystem::RUB);
       auto      endTime  = std::chrono::high_resolution_clock::now();
       long long loadTime = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
@@ -539,8 +569,8 @@ bool SplatLoaderAsync::innerLoad(std::filesystem::path filename, SplatSet& outpu
     if(m_lodReloadPending)
     {
       // Load at specific LOD level (for LOD slider changes)
-      success = LccLoader::loadWithLod(filename, output, m_targetLod, nullptr, nullptr,
-                                        [this](float progress) { setProgress(progress); });
+      success            = LccLoader::loadWithLod(filename, output, m_targetLod, nullptr, nullptr,
+                                                  [this](float progress) { setProgress(progress); });
       m_lodReloadPending = false;
     }
     else
@@ -552,8 +582,8 @@ bool SplatLoaderAsync::innerLoad(std::filesystem::path filename, SplatSet& outpu
       {
         // Multi-LOD scene: load at LOD 1 for faster initial load
         int targetLod = 1;
-        success = LccLoader::loadWithLod(filename, output, targetLod, nullptr, nullptr,
-                                          [this](float progress) { setProgress(progress); });
+        success       = LccLoader::loadWithLod(filename, output, targetLod, nullptr, nullptr,
+                                               [this](float progress) { setProgress(progress); });
       }
       else
       {
@@ -584,9 +614,8 @@ bool SplatLoaderAsync::innerLoad(std::filesystem::path filename, SplatSet& outpu
         size_t sampleCount = output.size() < 5 ? output.size() : 5;
         for(size_t i = 0; i < sampleCount; ++i)
         {
-          LOGD("  Splat %zu: motion=(%.3f, %.3f, %.3f) t=%.3f t_scale=%.3f\n",
-               i, output.motion[i*3], output.motion[i*3+1], output.motion[i*3+2],
-               output.time[i], output.time_scale[i]);
+          LOGD("  Splat %zu: motion=(%.3f, %.3f, %.3f) t=%.3f t_scale=%.3f\n", i, output.motion[i * 3],
+               output.motion[i * 3 + 1], output.motion[i * 3 + 2], output.time[i], output.time_scale[i]);
         }
       }
       else
