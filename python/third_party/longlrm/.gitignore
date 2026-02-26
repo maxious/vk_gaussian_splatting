@@ -1,0 +1,13 @@
+tmp/
+temp/
+core*
+*whl
+*swp
+experiments/
+log/
+checkpoints/
+evaluation/
+.DS_Store
+__pycache__/
+.vscode
+api_keys.yaml

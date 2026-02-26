@@ -33,5 +33,15 @@ build_check/
 checkpoints/
 python/tmp/
 
+# Vendored third-party repos - large model weights excluded
+python/third_party/tttlrm/**/*.pt
+python/third_party/tttlrm/**/*.pth
+python/third_party/tttlrm/**/*.ckpt
+python/third_party/longlrm/**/*.pt
+python/third_party/longlrm/**/*.pth
+python/third_party/longlrm/**/*.ckpt
+python/third_party/longlrm/**/lfs/
+python/third_party/longlrm/data/example_data/
+
 # Temporary research code
 temp_research/

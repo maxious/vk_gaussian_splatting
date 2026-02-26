@@ -19,6 +19,7 @@ from .processors.da3 import DA3GaussianProcessor
 from .processors.fastgs import FastGSProcessor
 from .processors.matrix3d import Matrix3DGaussianProcessor
 from .processors.sharp import SharpGaussianProcessor
+from .processors.ttt_lrm import TttLRMGaussianProcessor
 from .types import GaussianFrame
 from .video_utils import extract_video_frames, prune_gaussian_frame
 
@@ -637,7 +638,46 @@ def export_images_to_gaussian_plys(
 
     timestamps_ms = [i * (1000.0 / fps) for i in range(len(image_paths))]
 
-    if "matrix3d" in model_id.lower():
+    if "tttlrm" in model_id.lower():
+        # tttLRM expects JSON manifest paths, not raw image paths.
+        # Parse model_id for checkpoint: tttlrm:/path/to/checkpoint.pt
+        # Use tttlrm-ar for autoregressive mode (processes 4 views at a time)
+        model_lower = model_id.lower()
+        autoregressive = "tttlrm-ar" in model_lower
+        checkpoint_path = None
+        if ":" in model_id:
+            checkpoint_path = model_id.split(":", 1)[1]
+
+        processor = TttLRMGaussianProcessor(
+            device=device,
+            checkpoint_path=checkpoint_path,
+            autoregressive=autoregressive,
+        )
+
+        # For tttLRM, image_paths should be JSON manifest files
+        # (created by datasets.siga2025vvc_to_lrm_json)
+        frames = processor.process_frames(image_paths, timestamps_ms, per_frame=True)
+
+        if not frames:
+            raise RuntimeError("tttLRM produced no frames")
+
+        if mode == "frames":
+            output_path.mkdir(parents=True, exist_ok=True)
+            for i, frame in enumerate(frames):
+                ply_path = output_path / f"frame_{frame.frame_idx:06d}.ply"
+                write_static_gaussian_ply(
+                    ply_path,
+                    frame.means,
+                    frame.scales,
+                    frame.rotations,
+                    frame.colors,
+                    frame.opacities,
+                    flip_y=flip_y,
+                )
+            logger.info("Exported %d PLY files to %s", len(frames), output_path)
+        return
+
+    elif "matrix3d" in model_id.lower():
         processor = Matrix3DGaussianProcessor(device=device)
     elif "moge" in model_id.lower():
         from .processors.moge import MoGeGaussianProcessor
