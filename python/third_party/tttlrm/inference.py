@@ -147,7 +147,7 @@ if config.inference or config.get("evaluation", False):
     model.eval()
     with model.no_sync(), torch.no_grad(), torch.autocast(
         enabled=config.training.use_amp,
-        device_type="cuda",
+        device_type=device.type if hasattr(device, 'type') else "cuda",
         dtype=torch.bfloat16,
     ):
         eval_iters = int(math.ceil(eval_data_len / sp_support.get_sp_replicas()))

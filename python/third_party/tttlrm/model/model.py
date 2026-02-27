@@ -28,7 +28,7 @@ from .lact_ttt import full_ttt_op, ar_ttt_op
 from utils import sp_support
 
 import matplotlib.pyplot as plt
-from gsplat import rasterization
+
 from .gaussian_renderer import GaussianRenderer
 
 def compute_rays(fxfycxcy, c2w, h, w):
@@ -75,7 +75,7 @@ class Renderer(nn.Module):
         super().__init__()
         self.config = config
 
-    @torch.amp.custom_fwd(cast_inputs=torch.float32, device_type='cuda')
+
     def forward(self, xyz, features, scaling, rotation, opacity, C2W, fxfycxcy, W, H, sh_degree, near_plane, far_plane):
         renderings = gs_renderer(xyz, features, scaling, rotation, opacity, C2W, fxfycxcy, W, H, sh_degree, near_plane, far_plane).permute(0, 1, 4, 2, 3)
         depth = renderings[:, :, 3:4]
@@ -173,12 +173,13 @@ class tttLRM(nn.Module):
         self.renderer = Renderer(config)
 
     def train(self, mode=True):
-        # override the train method to keep the fronzon modules in eval mode
+        # override the train method to keep the frozen modules in eval mode
         super().train(mode)
         if self.config.training.perceptual_loss_weight > 0.0:
             self.perceptual_loss_module.eval()
         if self.config.training.depth_loss_weight > 0.0:
             self.depth_anything.eval()
+        return self
 
     def get_overview(self):
         count_train_params = lambda model: sum(
@@ -246,11 +247,12 @@ class tttLRM(nn.Module):
         }
         return edict(loss_dict)
 
-    def forward(self, data_batch, create_visual=False, iter=0):
+    def forward(self, data_batch, create_visual=False, iter=0, gaussians_only=False):
         """
         image (torch.tensor): [b, v, c, h, w]
         fxfycxcy (torch.tensor): [b, v, 4]
         c2w (torch.tensor): [b, v, 4, 4]
+        gaussians_only: If True, skip rendering and loss computation (for inference)
         """
         input, target, virtual = prepare_input_target(data_batch, self.config)
         num_input_views = input.image.size(1)
@@ -355,6 +357,13 @@ class tttLRM(nn.Module):
         rotation = sp_support.sp_all_gather(rotation, gather_dim=1, length=num_local_gaussians * sp_support.get_sp_world_size())
         opacity = sp_support.sp_all_gather(opacity, gather_dim=1, length=num_local_gaussians * sp_support.get_sp_world_size())
      
+        # Early return for inference (skip rendering and loss computation)
+        if gaussians_only:
+            return edict(
+                gaussians={'xyz': xyz.float(), 'feature': features.float(), 'scale': scaling.float(), 'rotation': rotation.float(), 'opacity': opacity.float()},
+                loss_metrics=None, render=None, keep_idx=None,
+            )
+
         # Gaussian Pruning
         threshold = None
         keep_idx = None
@@ -494,7 +503,7 @@ class tttLRM(nn.Module):
         opacity = gaussian_dict["opacity"].detach().float().to(device) # (N, 1)
 
         renderings = []
-        with torch.autocast(enabled=False, device_type="cuda"):
+        with torch.autocast(enabled=False, device_type=device.type):
             for i in range(V):
                 rendering = GaussianRenderer.render(xyz, feature, scale, rotation, opacity,
                                                     c2ws_mat[i], intr_fxfycxcy[i], W, H,

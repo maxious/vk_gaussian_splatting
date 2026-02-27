@@ -650,6 +650,7 @@ def export_images_to_gaussian_plys(
 
         processor = TttLRMGaussianProcessor(
             device=device,
+            device_spec=device,
             checkpoint_path=checkpoint_path,
             autoregressive=autoregressive,
         )

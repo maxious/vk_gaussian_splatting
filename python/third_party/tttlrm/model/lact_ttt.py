@@ -1,5 +1,6 @@
 import collections
 import math
+import os
 from typing import Any
 
 import torch
@@ -10,6 +11,13 @@ from einops import rearrange
 from utils import sp_support
 
 TTTOperator = collections.namedtuple("TTTOperator", ["start", "end", "fast_weight", "update", "apply"])
+
+# Disable torch.compile on non-CUDA devices (XPU inductor not supported)
+def _maybe_compile(fn):
+    """Apply torch.compile only when CUDA is available; identity on XPU/CPU."""
+    if torch.cuda.is_available() and os.environ.get("TTTLRM_NO_COMPILE") != "1":
+        return torch.compile(fn)
+    return fn
 
 def full_ttt_op(update_minibatch=1024, apply_only_minibatch=1024, length=10240, update_length=None):
     if update_length is None:
@@ -47,12 +55,12 @@ def ar_ttt_op(update_minibatch=1024, length=10240, update_length=None):
     config.append(TTTOperator(start=0, end=length, fast_weight=False, update=False, apply=True))
     return config
 
-@torch.compile
+@_maybe_compile
 def inv_softplus(x):
     y = x + math.log(-math.expm1(-x))
     return y
 
-@torch.compile
+@_maybe_compile
 def silu_backprop(dy: torch.Tensor, x: torch.Tensor):
     """
     Args:
@@ -66,7 +74,7 @@ def silu_backprop(dy: torch.Tensor, x: torch.Tensor):
     dx = dy * sigma * (1 + x * (1 - sigma))
     return dx
 
-@torch.compile
+@_maybe_compile
 def zeropower_via_newtonschulz5(G, steps):
     """
     modified from https://github.com/MoonshotAI/Moonlight/blob/master/examples/toy_train.py#L49
@@ -103,7 +111,7 @@ def zeropower_via_newtonschulz5(G, steps):
         X = X.transpose(1, 2)
     return X
 
-@torch.compile
+@_maybe_compile
 def fast_weight_swish_glu_weight_norm_mini_batch_apply(
     w0: torch.Tensor,
     w1: torch.Tensor,
@@ -316,7 +324,7 @@ class FastWeightGluMLPMultihead(nn.Module):
         q = q / (q.norm(dim=2, keepdim=True) + 1e-5).to(x.dtype)
         k = k / (k.norm(dim=2, keepdim=True) + 1e-5).to(x.dtype)
 
-        with torch.autocast(device_type="cuda", enabled=False):
+        with torch.autocast(device_type=x.device.type, enabled=False):
             lr = self.lr_fc(x.float())  # [b, l, lr_dim]
         
         lr = torch.nn.functional.softplus(lr.float() + self.base_lr_inv)

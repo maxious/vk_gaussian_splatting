@@ -3,12 +3,15 @@
 Produces Gaussian splats from multi-view posed images using the tttLRM model.
 Each "frame" is a JSON manifest describing multiple camera views of a scene
 at one timestep, in the format expected by tttLRM's dataset_scene.py.
+
+Supports multi-device (multi-XPU/CUDA) processing via DeviceWorkerPool.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -18,6 +21,7 @@ import torch
 import torchvision.transforms as transforms
 from PIL import Image
 
+from common.device_worker_pool import DeviceWorker, DeviceWorkerPool
 from ..types import GaussianFrame
 from .base import GaussianProcessor
 
@@ -183,6 +187,234 @@ def _normalize_with_mean_pose(
     return c2ws, np.linalg.inv(apos), 1.0 / scene_scale
 
 
+class TttLRMDeviceWorker(DeviceWorker[dict, dict]):
+    """DeviceWorker that runs tttLRM inference on a single device.
+
+    Each worker loads its own copy of the model and processes manifests
+    independently, enabling multi-XPU/CUDA parallelism via DeviceWorkerPool.
+    """
+
+    def __init__(
+        self,
+        device: str,
+        worker_id: int,
+        checkpoint_path: str | None = None,
+        config_path: str | None = None,
+        image_size: int = 536,
+        image_size_x: int = 960,
+        num_input_views: int = 64,
+        opacity_threshold: float = 0.001,
+        autoregressive: bool = False,
+    ) -> None:
+        super().__init__(device, worker_id)
+        self.checkpoint_path = checkpoint_path
+        self.config_path = config_path
+        self.image_size = image_size
+        self.image_size_x = image_size_x
+        self.num_input_views = num_input_views
+        self.opacity_threshold = opacity_threshold
+        self.autoregressive = autoregressive
+
+    def load_model(self) -> None:
+        # Disable torch.compile on XPU (inductor backend not supported)
+        if "xpu" in self.device:
+            os.environ["TTTLRM_NO_COMPILE"] = "1"
+
+        _ensure_tttlrm_on_path()
+        _patch_sp_support_single_gpu()
+
+        import omegaconf
+        from easydict import EasyDict as edict  # type: ignore[import-untyped]
+        from model.model import tttLRM  # type: ignore[import-untyped]
+
+        # Build config
+        if self.config_path is not None:
+            cfg = omegaconf.OmegaConf.load(self.config_path)
+        else:
+            config_name = "dl3dv_ar.yaml" if self.autoregressive else "dl3dv_full.yaml"
+            default_yaml = Path(_TTTLRM_ROOT) / "configs" / config_name
+            cfg = omegaconf.OmegaConf.load(str(default_yaml))
+
+        cfg.sp_size = 1
+        cfg.inference = False
+        cfg.evaluation = True
+        cfg.model.act_ckpt = False
+        cfg.model.image_size = self.image_size
+        cfg.model.image_size_x = self.image_size_x
+        cfg.training.num_input_views = self.num_input_views
+        cfg.training.num_virtual_views = self.num_input_views
+        cfg.training.num_target_views = min(8, self.num_input_views)
+        cfg.training.target_has_input = True
+        cfg.training.num_views = self.num_input_views
+        cfg.training.sample_ar = False
+        cfg.training.sample_mixed_length = False
+        cfg.training.depth_loss_weight = 0.0
+        cfg.training.perceptual_loss_weight = 0.0
+        self._config = edict(cfg)
+
+        # Build model and move to device (autocast handles dtype)
+        model = tttLRM(self._config)
+        model = model.to(self.device)
+
+        # Load checkpoint
+        ckpt_path = self.checkpoint_path
+        if ckpt_path is None:
+            from huggingface_hub import hf_hub_download
+
+            ckpt_name = "dl3dv_ar.pt" if self.autoregressive else "dl3dv_full.pt"
+            ckpt_path = hf_hub_download(repo_id="chenwang/tttLRM", filename=ckpt_name)
+
+        logger.info("Worker %d: Loading tttLRM checkpoint from %s", self.worker_id, ckpt_path)
+        ckpt = torch.load(ckpt_path, map_location="cpu")
+        state_dict = ckpt["model"] if "model" in ckpt else ckpt
+        model.load_state_dict(state_dict, strict=False)
+        model.eval()
+        self.model = model
+        logger.info("Worker %d: tttLRM ready on %s", self.worker_id, self.device)
+
+    def process_item(self, item: dict) -> dict:
+        """Process a single manifest.
+
+        Args:
+            item: dict with keys 'manifest_path', 'frame_idx', 'timestamp_ms'
+
+        Returns:
+            dict with Gaussian attributes (numpy arrays)
+        """
+        assert self.model is not None
+        manifest_path = Path(item["manifest_path"])
+        frame_idx = item["frame_idx"]
+        timestamp_ms = item["timestamp_ms"]
+
+        with open(manifest_path) as f:
+            manifest = json.load(f)
+
+        batch = _prepare_batch_static(
+            manifest, manifest_path,
+            self.num_input_views, self.image_size, self.image_size_x,
+        )
+
+        device = torch.device(self.device)
+        batch = {
+            k: v.to(device) if isinstance(v, torch.Tensor) else v
+            for k, v in batch.items()
+        }
+
+        # Dynamically adjust config for actual view count
+        actual_views = batch["num_input_views"][0].item()
+        self._config.training.num_input_views = actual_views
+        self._config.training.num_virtual_views = actual_views
+        self._config.training.num_target_views = min(
+            self._config.training.num_target_views, actual_views,
+        )
+        self._config.training.num_views = actual_views
+
+        dtype = torch.bfloat16 if "xpu" in self.device else torch.bfloat16
+        with torch.no_grad(), torch.autocast(
+            enabled=True, device_type=device.type, dtype=dtype,
+        ):
+            result = self.model(batch, gaussians_only=True)
+
+        gaussians = result.gaussians
+        xyz = gaussians["xyz"][0].cpu().numpy()
+        feature = gaussians["feature"][0].cpu().numpy()
+        f_dc = feature[:, 0, :]
+        scale = gaussians["scale"][0].cpu().numpy()
+        rotation = gaussians["rotation"][0].cpu().numpy()
+        opacity = gaussians["opacity"][0].squeeze(-1).cpu().numpy()
+
+        if self.opacity_threshold > 0:
+            sigmoid_opacity = 1.0 / (1.0 + np.exp(-opacity))
+            mask = sigmoid_opacity > self.opacity_threshold
+            xyz, f_dc, scale, rotation, opacity = (
+                xyz[mask], f_dc[mask], scale[mask], rotation[mask], opacity[mask],
+            )
+
+        if "xpu" in self.device:
+            torch.xpu.empty_cache()
+
+        logger.info(
+            "Worker %d: Processed manifest %d: %d Gaussians",
+            self.worker_id, frame_idx, len(xyz),
+        )
+
+        return {
+            "frame_idx": frame_idx,
+            "timestamp_ms": timestamp_ms,
+            "means": xyz.astype(np.float32),
+            "scales": scale.astype(np.float32),
+            "rotations": rotation.astype(np.float32),
+            "colors": f_dc.astype(np.float32),
+            "opacities": opacity.astype(np.float32),
+        }
+
+
+def _prepare_batch_static(
+    manifest: dict,
+    manifest_path: Path,
+    num_input_views: int,
+    image_size: int,
+    image_size_x: int,
+) -> dict[str, Any]:
+    """Build the batch dict expected by tttLRM.forward() (standalone function for workers)."""
+    frames = manifest["frames"]
+    image_base_dir = manifest.get("dataset_root", str(manifest_path.parent))
+
+    n_views = min(len(frames), num_input_views)
+    target_size = (image_size, image_size_x)
+    to_tensor = transforms.ToTensor()
+
+    images: list[torch.Tensor] = []
+    fxfycxcy_list: list[list[float]] = []
+    c2ws_list: list[np.ndarray] = []
+
+    for frame in frames[:n_views]:
+        img_path = Path(image_base_dir) / frame["file_path"]
+        image = Image.open(img_path)
+        if image.mode == "RGBA":
+            bg = Image.new("RGB", image.size, (255, 255, 255))
+            bg.paste(image, mask=image.split()[-1])
+            image = bg
+        elif image.mode != "RGB":
+            image = image.convert("RGB")
+
+        intrinsics = [frame["fx"], frame["fy"], frame["cx"], frame["cy"]]
+        image, intrinsics = _resize_and_crop(image, target_size, intrinsics)
+
+        images.append(to_tensor(image))
+        fxfycxcy_list.append(intrinsics)
+        c2ws_list.append(np.linalg.inv(np.array(frame["w2c"])))
+
+    c2ws_np = np.array(c2ws_list)
+    c2ws_np, _apos_inv, scene_scale = _normalize_with_mean_pose(c2ws_np)
+
+    c2ws = torch.from_numpy(c2ws_np).float()
+    fxfycxcy = torch.from_numpy(np.array(fxfycxcy_list)).float()
+    image_stack = torch.stack(images)
+
+    virtual_c2ws = c2ws[:n_views].clone()
+    virtual_fxfycxcy = fxfycxcy[:n_views].clone()
+    virtual_input_indices = torch.arange(n_views).long()
+
+    image_choices = torch.arange(n_views).long().unsqueeze(-1)
+    scene_indices = torch.zeros_like(image_choices)
+    indices = torch.cat([image_choices, scene_indices], dim=-1)
+
+    return {
+        "image": image_stack.unsqueeze(0),
+        "c2w": c2ws.unsqueeze(0),
+        "fxfycxcy": fxfycxcy.unsqueeze(0),
+        "index": indices.unsqueeze(0),
+        "scene_name": manifest.get("scene_name", "unknown"),
+        "virtual_c2w": virtual_c2ws.unsqueeze(0),
+        "virtual_fxfycxcy": virtual_fxfycxcy.unsqueeze(0),
+        "virtual_input_indices": virtual_input_indices.unsqueeze(0),
+        "num_input_views": torch.tensor([n_views]),
+        "scene_scale": scene_scale,
+        "apos": _apos_inv,
+    }
+
+
 class TttLRMGaussianProcessor(GaussianProcessor):
     """Gaussian processor using tttLRM (Test-Time Training LRM).
 
@@ -208,6 +440,7 @@ class TttLRMGaussianProcessor(GaussianProcessor):
     def __init__(
         self,
         device: str = "cuda",
+        device_spec: str | None = None,
         checkpoint_path: str | None = None,
         config_path: str | None = None,
         image_size: int = 536,
@@ -216,18 +449,45 @@ class TttLRMGaussianProcessor(GaussianProcessor):
         opacity_threshold: float = 0.001,
         autoregressive: bool = False,
     ) -> None:
-        _ensure_tttlrm_on_path()
-        _patch_sp_support_single_gpu()
-
-        self.device = torch.device(device)
         self.opacity_threshold = opacity_threshold
         self.image_size = image_size
         self.image_size_x = image_size_x
         self.num_input_views = num_input_views
         self.autoregressive = autoregressive
+        self.checkpoint_path = checkpoint_path
+        self.config_path = config_path
 
-        self._config = self._build_config(config_path)
-        self._model = self._build_model(checkpoint_path)
+        # Determine multi-device config
+        self.device_spec = device_spec or device
+        devices = DeviceWorkerPool._discover_devices(self.device_spec)
+        self.use_multi_device = len(devices) > 1
+
+        if self.use_multi_device:
+            logger.info("Multi-device tttLRM: using %d devices: %s", len(devices), devices)
+            self._pool: DeviceWorkerPool | None = DeviceWorkerPool(
+                worker_class=TttLRMDeviceWorker,
+                devices=devices,
+                worker_kwargs={
+                    "checkpoint_path": checkpoint_path,
+                    "config_path": config_path,
+                    "image_size": image_size,
+                    "image_size_x": image_size_x,
+                    "num_input_views": num_input_views,
+                    "opacity_threshold": opacity_threshold,
+                    "autoregressive": autoregressive,
+                },
+            )
+            self.device = torch.device(devices[0])
+            self._model = None
+        else:
+            self._pool = None
+            self.device = torch.device(devices[0])
+            if self.device.type == "xpu":
+                os.environ["TTTLRM_NO_COMPILE"] = "1"
+            _ensure_tttlrm_on_path()
+            _patch_sp_support_single_gpu()
+            self._config = self._build_config(config_path)
+            self._model = self._build_model(checkpoint_path)
 
     # ------------------------------------------------------------------
     # Construction helpers
@@ -402,6 +662,60 @@ class TttLRMGaussianProcessor(GaussianProcessor):
         Returns:
             List of :class:`GaussianFrame` objects.
         """
+        if self.use_multi_device and self._pool is not None:
+            return self._process_frames_multi_device(frame_paths, timestamps_ms)
+        return self._process_frames_single_device(frame_paths, timestamps_ms)
+
+    def _process_frames_multi_device(
+        self,
+        frame_paths: list[Path],
+        timestamps_ms: list[float],
+    ) -> list[GaussianFrame]:
+        """Distribute manifests across multiple devices via DeviceWorkerPool."""
+        items = [
+            {
+                "manifest_path": str(p),
+                "frame_idx": i,
+                "timestamp_ms": ts,
+            }
+            for i, (p, ts) in enumerate(zip(frame_paths, timestamps_ms))
+        ]
+
+        logger.info(
+            "Processing %d manifests across %d devices",
+            len(items),
+            len(self._pool.devices),
+        )
+
+        results = self._pool.map(items)
+
+        frames = [
+            GaussianFrame(
+                frame_idx=r["frame_idx"],
+                timestamp_ms=r["timestamp_ms"],
+                means=r["means"],
+                scales=r["scales"],
+                rotations=r["rotations"],
+                colors=r["colors"],
+                opacities=r["opacities"],
+            )
+            for r in results
+        ]
+        frames.sort(key=lambda f: f.frame_idx)
+
+        logger.info(
+            "Multi-device processing complete: %d frames, %d total Gaussians",
+            len(frames),
+            sum(len(f.means) for f in frames),
+        )
+        return frames
+
+    def _process_frames_single_device(
+        self,
+        frame_paths: list[Path],
+        timestamps_ms: list[float],
+    ) -> list[GaussianFrame]:
+        """Process all manifests on a single device (original path)."""
         frames: list[GaussianFrame] = []
         self._model.eval()
 
@@ -417,24 +731,30 @@ class TttLRMGaussianProcessor(GaussianProcessor):
                 manifest = self._load_manifest(Path(manifest_path))
                 batch = self._prepare_batch(manifest, Path(manifest_path))
 
-                # Move tensors to device
                 batch = {
                     k: v.to(self.device) if isinstance(v, torch.Tensor) else v
                     for k, v in batch.items()
                 }
 
-                result = self._model(batch)
+                # Dynamically adjust config for actual view count
+                actual_views = batch["num_input_views"][0].item()
+                self._config.training.num_input_views = actual_views
+                self._config.training.num_virtual_views = actual_views
+                self._config.training.num_target_views = min(
+                    self._config.training.num_target_views, actual_views,
+                )
+                self._config.training.num_views = actual_views
+
+                result = self._model(batch, gaussians_only=True)
                 gaussians = result.gaussians
 
-                # Extract per-Gaussian attributes (drop batch dim)
-                xyz = gaussians["xyz"][0].cpu().numpy()                # (N, 3)
-                feature = gaussians["feature"][0].cpu().numpy()        # (N, L, 3)
-                f_dc = feature[:, 0, :]                                # (N, 3) DC SH band
-                scale = gaussians["scale"][0].cpu().numpy()            # (N, 3) log-scale
-                rotation = gaussians["rotation"][0].cpu().numpy()      # (N, 4) quaternion
-                opacity = gaussians["opacity"][0].squeeze(-1).cpu().numpy()  # (N,)
+                xyz = gaussians["xyz"][0].cpu().numpy()
+                feature = gaussians["feature"][0].cpu().numpy()
+                f_dc = feature[:, 0, :]
+                scale = gaussians["scale"][0].cpu().numpy()
+                rotation = gaussians["rotation"][0].cpu().numpy()
+                opacity = gaussians["opacity"][0].squeeze(-1).cpu().numpy()
 
-                # Opacity threshold pruning
                 if self.opacity_threshold > 0:
                     sigmoid_opacity = 1.0 / (1.0 + np.exp(-opacity))
                     mask = sigmoid_opacity > self.opacity_threshold
@@ -461,6 +781,9 @@ class TttLRMGaussianProcessor(GaussianProcessor):
                     len(frame),
                 )
 
-                torch.cuda.empty_cache()
+                if self.device.type == "xpu":
+                    torch.xpu.empty_cache()
+                elif self.device.type == "cuda":
+                    torch.cuda.empty_cache()
 
         return frames
