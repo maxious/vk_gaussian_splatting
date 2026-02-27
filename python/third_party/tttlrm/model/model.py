@@ -314,11 +314,20 @@ class tttLRM(nn.Module):
                 update_length=num_input_tokens,
             )
         elif self.ttt_scan == "full":
+            ttt_update_views = self.config.model.get("ttt_update_views", 0)
+            if ttt_update_views > 0:
+                update_mb = num_img_tokens * ttt_update_views
+                # Ensure divisibility (fall back to full if impossible)
+                if num_input_tokens % update_mb != 0:
+                    update_mb = num_input_tokens
+            else:
+                update_mb = num_input_tokens
             ttt_config = full_ttt_op(
-                update_minibatch=num_input_tokens,
+                update_minibatch=update_mb,
                 apply_only_minibatch=0,
                 length=num_input_tokens + num_target_tokens,
                 update_length=num_input_tokens,
+                target_apply_chunk=update_mb if update_mb < num_input_tokens else 0,
             )
         info = {
             "num_img_tokens": num_img_tokens,

@@ -648,11 +648,15 @@ def export_images_to_gaussian_plys(
         if ":" in model_id:
             checkpoint_path = model_id.split(":", 1)[1]
 
+        # Enable split-views for multi-XPU to fit 48 cameras in 12GB VRAM
+        use_split = "xpu" in device and "," in device
         processor = TttLRMGaussianProcessor(
             device=device,
             device_spec=device,
             checkpoint_path=checkpoint_path,
             autoregressive=autoregressive,
+            split_views=use_split,
+            num_input_views=48,
         )
 
         # For tttLRM, image_paths should be JSON manifest files

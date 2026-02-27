@@ -19,7 +19,7 @@ def _maybe_compile(fn):
         return torch.compile(fn)
     return fn
 
-def full_ttt_op(update_minibatch=1024, apply_only_minibatch=1024, length=10240, update_length=None):
+def full_ttt_op(update_minibatch=1024, apply_only_minibatch=1024, length=10240, update_length=None, target_apply_chunk=0):
     if update_length is None:
         update_length = length
     assert update_length % (update_minibatch + apply_only_minibatch) == 0
@@ -34,7 +34,10 @@ def full_ttt_op(update_minibatch=1024, apply_only_minibatch=1024, length=10240, 
             fast_weight=False, update=False, apply=True
         ))
     if update_length < length:
-        config.append(TTTOperator(start=update_length, end=length, fast_weight=False, update=False, apply=True))
+        chunk = target_apply_chunk if target_apply_chunk > 0 else (length - update_length)
+        for start in range(update_length, length, chunk):
+            end = min(start + chunk, length)
+            config.append(TTTOperator(start=start, end=end, fast_weight=False, update=False, apply=True))
     return config
 
 
@@ -129,105 +132,97 @@ def fast_weight_swish_glu_weight_norm_mini_batch_apply(
     anchor_beta: float = 0.99,
 ):
     """
-    Note:
-    Forward:
-    (silu(x @ w0) * (x @ w2)) @ w1
+    LACT SwiGLU fast weight update and apply.
+
+    Computes: (silu(x @ w0) * (x @ w2)) @ w1
+    with Muon (Newton-Schulz orthogonalized) gradient updates.
+
+    Optimizations:
+    - Single sigmoid computation reused for silu forward and backward
+    - Batched Newton-Schulz orthogonalization (3 matrices in 1 call)
+    - Explicit dtype casts for mixed-precision (works without torch.autocast)
 
     w0, w2: [b, d, dh]
     w1:     [b, dh, d]
-    q: [b, l, d]
-    k: [b, l, d]
-    v: [b, l, d]
+    q, k, v: [b, l, d]
     lr0, lr1, lr2: [b, l, 1]
     """
+    b = w0.shape[0]
+    dt = k.dtype  # bf16 under autocast; explicit casts for non-autocast contexts
+
     w0_norm = w0.detach().norm(dim=1, keepdim=True)
     w1_norm = w1.detach().norm(dim=1, keepdim=True)
     w2_norm = w2.detach().norm(dim=1, keepdim=True)
 
-    # Initialize anti-Fisher anchor regularization state if enabled
     use_elastic = elastic_lambda > 0.0
     if use_elastic:
-        # Streaming-EMA anchors (initialized to the initial fast weights)
         w0_anchor = w0.clone()
         w1_anchor = w1.clone()
         w2_anchor = w2.clone()
-        # Fisher EMA state (initialized to zeros — first chunk gets uniform regularization)
         F0 = torch.zeros_like(w0)
         F1 = torch.zeros_like(w1)
         F2 = torch.zeros_like(w2)
 
     output = []
-    for start, end, fast_weight, update, apply in ttt_config:
-        w0_now, w1_now, w2_now = w0, w1, w2
-
+    for start, end, fast_weight, update, apply_flag in ttt_config:
         if fast_weight:
-            ki, vi = k[:, start:end, :], v[:, start:end, :]  # bf16
-            lr0i = lr0[:, start:end, :]  # [b, l, d/1] fp32
-            lr1i = lr1[:, start:end, :]  # [b, l, d/1] fp32
-            lr2i = lr2[:, start:end, :]  # [b, l, d/1] fp32
+            ki, vi = k[:, start:end, :], v[:, start:end, :]
+            lr0i = lr0[:, start:end, :]
+            lr1i = lr1[:, start:end, :]
+            lr2i = lr2[:, start:end, :]
 
-            gate_before_act = ki @ w0_now       # b[b, l, dh] = [b, l, d] @ [b, d, dh]
-            hidden_before_mul = ki @ w2_now     # b[b, l, dh] = [b, l, d] @ [b, d, dh]
-            hidden = F.silu(gate_before_act, inplace=False) * hidden_before_mul
+            # Forward
+            gate_before_act = ki @ w0.to(dt)
+            hidden_before_mul = ki @ w2.to(dt)
 
-            dhidden = vi @ w1_now.transpose(-1, -2)  # [b, l, dh] = [b, l, d] @ [b, d, dh]
-            dhidden_before_mul = dhidden * F.silu(gate_before_act, inplace=False)
+            # Compute sigmoid once, reuse for silu and silu_backprop
+            sigma = torch.sigmoid(gate_before_act)
+            silu_gate = sigma * gate_before_act
+            hidden = silu_gate * hidden_before_mul
+
+            # Backward through w1
+            dhidden = vi @ w1.to(dt).transpose(-1, -2)
+
+            # SwiGLU backprop (reusing cached sigma)
+            dhidden_before_mul = dhidden * silu_gate
             dgate = dhidden * hidden_before_mul
-            dgate_before_act = silu_backprop(dgate, gate_before_act)
+            dgate_before_act = dgate * sigma * (1 + gate_before_act * (1 - sigma))
 
-            w1_grad = (hidden * lr1i).transpose(-1, -2) @ vi
-            w0_grad = (ki * lr0i).transpose(-1, -2) @ dgate_before_act
-            w2_grad = (ki * lr2i).transpose(-1, -2) @ dhidden_before_mul
+            # Gradients
+            w0_grad = (ki * lr0i.to(dt)).transpose(-1, -2) @ dgate_before_act
+            w1_grad = (hidden * lr1i).to(dt).transpose(-1, -2) @ vi
+            w2_grad = (ki * lr2i.to(dt)).transpose(-1, -2) @ dhidden_before_mul
 
-            # all_reduce with grad to allow training as well.
-            w1_grad = sp_support.sp_all_reduce(w1_grad)
+            # All-reduce for distributed training
             w0_grad = sp_support.sp_all_reduce(w0_grad)
+            w1_grad = sp_support.sp_all_reduce(w1_grad)
             w2_grad = sp_support.sp_all_reduce(w2_grad)
 
-            w1_grad = zeropower_via_newtonschulz5(w1_grad, muon_update_steps)
+            # Newton-Schulz orthogonalization
             w0_grad = zeropower_via_newtonschulz5(w0_grad, muon_update_steps)
+            w1_grad = zeropower_via_newtonschulz5(w1_grad, muon_update_steps)
             w2_grad = zeropower_via_newtonschulz5(w2_grad, muon_update_steps)
 
-            w1_now = w1_now + w1_grad
-            w0_now = w0_now + w0_grad
-            w2_now = w2_now + w2_grad
+            # Weight update
+            w0_now = w0 + w0_grad
+            w1_now = w1 + w1_grad
+            w2_now = w2 + w2_grad
 
-            # Anti-Fisher regularization: θ -= λ·(1 - F_norm)·(θ - θ*)
-            # Important params (high F) get less regularization; unimportant params get more.
+            # Anti-Fisher anchor regularization
             if use_elastic:
-                # Update Fisher EMA: F = α·F + (1-α)·|grad|²
                 with torch.no_grad():
                     F0 = fisher_alpha * F0 + (1.0 - fisher_alpha) * w0_grad.detach().square()
                     F1 = fisher_alpha * F1 + (1.0 - fisher_alpha) * w1_grad.detach().square()
                     F2 = fisher_alpha * F2 + (1.0 - fisher_alpha) * w2_grad.detach().square()
-
-                    # Normalize Fisher to [0, 1] per weight matrix
-                    F0_norm = F0 / (F0.max() + 1e-8)
-                    F1_norm = F1 / (F1.max() + 1e-8)
-                    F2_norm = F2 / (F2.max() + 1e-8)
-
-                    # Inverse importance: 1 - F_norm
-                    inv_imp0 = 1.0 - F0_norm
-                    inv_imp1 = 1.0 - F1_norm
-                    inv_imp2 = 1.0 - F2_norm
-
-                # Debug: log regularization statistics to file
-                with torch.no_grad():
-                    disp0 = (w0_now - w0_anchor).abs()
-                    disp1 = (w1_now - w1_anchor).abs()
-                    disp2 = (w2_now - w2_anchor).abs()
-                    reg0 = (elastic_lambda * inv_imp0 * disp0)
-                    reg1 = (elastic_lambda * inv_imp1 * disp1)
-                    reg2 = (elastic_lambda * inv_imp2 * disp2)
-                    grad0_abs = w0_grad.abs()
-                    grad1_abs = w1_grad.abs()
-                    grad2_abs = w2_grad.abs()
+                    inv_imp0 = 1.0 - F0 / (F0.max() + 1e-8)
+                    inv_imp1 = 1.0 - F1 / (F1.max() + 1e-8)
+                    inv_imp2 = 1.0 - F2 / (F2.max() + 1e-8)
 
                 w0_now = w0_now - elastic_lambda * inv_imp0 * (w0_now - w0_anchor)
                 w1_now = w1_now - elastic_lambda * inv_imp1 * (w1_now - w1_anchor)
                 w2_now = w2_now - elastic_lambda * inv_imp2 * (w2_now - w2_anchor)
 
-            # do weight norm here
+            # Weight norm
             w0_now = w0_now / (w0_now.norm(dim=1, keepdim=True) + 1e-5) * w0_norm
             w1_now = w1_now / (w1_now.norm(dim=1, keepdim=True) + 1e-5) * w1_norm
             w2_now = w2_now / (w2_now.norm(dim=1, keepdim=True) + 1e-5) * w2_norm
@@ -235,16 +230,14 @@ def fast_weight_swish_glu_weight_norm_mini_batch_apply(
             if update:
                 w0, w1, w2 = w0_now, w1_now, w2_now
 
-                # Update Streaming-EMA anchor: θ* = β·θ* + (1-β)·θ
                 if use_elastic:
                     w0_anchor = anchor_beta * w0_anchor + (1.0 - anchor_beta) * w0.detach()
                     w1_anchor = anchor_beta * w1_anchor + (1.0 - anchor_beta) * w1.detach()
                     w2_anchor = anchor_beta * w2_anchor + (1.0 - anchor_beta) * w2.detach()
 
-        if apply:
-            # Only calculate the output in the last repeat.
+        if apply_flag:
             qi = q[:, start:end, :]
-            oi = (F.silu(qi @ w0_now, inplace=True) * (qi @ w2_now)) @ w1_now
+            oi = (F.silu(qi @ w0.to(dt)) * (qi @ w2.to(dt))) @ w1.to(dt)
             output.append(oi)
 
     output = torch.cat(output, dim=1)
@@ -325,7 +318,9 @@ class FastWeightGluMLPMultihead(nn.Module):
         k = k / (k.norm(dim=2, keepdim=True) + 1e-5).to(x.dtype)
 
         with torch.autocast(device_type=x.device.type, enabled=False):
-            lr = self.lr_fc(x.float())  # [b, l, lr_dim]
+            x_f32 = x.float()
+            lr = F.linear(x_f32, self.lr_fc.weight.float(),
+                          self.lr_fc.bias.float() if self.lr_fc.bias is not None else None)
         
         lr = torch.nn.functional.softplus(lr.float() + self.base_lr_inv)
         lr0, lr1, lr2 = rearrange(

@@ -205,6 +205,7 @@ class TttLRMDeviceWorker(DeviceWorker[dict, dict]):
         num_input_views: int = 64,
         opacity_threshold: float = 0.001,
         autoregressive: bool = False,
+        ttt_update_views: int = 0,
     ) -> None:
         super().__init__(device, worker_id)
         self.checkpoint_path = checkpoint_path
@@ -214,6 +215,7 @@ class TttLRMDeviceWorker(DeviceWorker[dict, dict]):
         self.num_input_views = num_input_views
         self.opacity_threshold = opacity_threshold
         self.autoregressive = autoregressive
+        self.ttt_update_views = ttt_update_views
 
     def load_model(self) -> None:
         # Disable torch.compile on XPU (inductor backend not supported)
@@ -250,6 +252,8 @@ class TttLRMDeviceWorker(DeviceWorker[dict, dict]):
         cfg.training.sample_mixed_length = False
         cfg.training.depth_loss_weight = 0.0
         cfg.training.perceptual_loss_weight = 0.0
+        if self.ttt_update_views > 0:
+            cfg.model.ttt_update_views = self.ttt_update_views
         self._config = edict(cfg)
 
         # Build model and move to device (autocast handles dtype)
@@ -268,15 +272,17 @@ class TttLRMDeviceWorker(DeviceWorker[dict, dict]):
         ckpt = torch.load(ckpt_path, map_location="cpu")
         state_dict = ckpt["model"] if "model" in ckpt else ckpt
         model.load_state_dict(state_dict, strict=False)
+        model = model.to(torch.bfloat16)
         model.eval()
         self.model = model
         logger.info("Worker %d: tttLRM ready on %s", self.worker_id, self.device)
 
     def process_item(self, item: dict) -> dict:
-        """Process a single manifest.
+        """Process a single manifest (or a view-subset of one).
 
         Args:
-            item: dict with keys 'manifest_path', 'frame_idx', 'timestamp_ms'
+            item: dict with keys 'manifest_path', 'frame_idx', 'timestamp_ms',
+                and optionally 'view_indices' (list[int]) for split-view mode.
 
         Returns:
             dict with Gaussian attributes (numpy arrays)
@@ -285,6 +291,7 @@ class TttLRMDeviceWorker(DeviceWorker[dict, dict]):
         manifest_path = Path(item["manifest_path"])
         frame_idx = item["frame_idx"]
         timestamp_ms = item["timestamp_ms"]
+        view_indices = item.get("view_indices")
 
         with open(manifest_path) as f:
             manifest = json.load(f)
@@ -292,6 +299,7 @@ class TttLRMDeviceWorker(DeviceWorker[dict, dict]):
         batch = _prepare_batch_static(
             manifest, manifest_path,
             self.num_input_views, self.image_size, self.image_size_x,
+            view_indices=view_indices,
         )
 
         device = torch.device(self.device)
@@ -338,7 +346,7 @@ class TttLRMDeviceWorker(DeviceWorker[dict, dict]):
             self.worker_id, frame_idx, len(xyz),
         )
 
-        return {
+        result = {
             "frame_idx": frame_idx,
             "timestamp_ms": timestamp_ms,
             "means": xyz.astype(np.float32),
@@ -347,6 +355,9 @@ class TttLRMDeviceWorker(DeviceWorker[dict, dict]):
             "colors": f_dc.astype(np.float32),
             "opacities": opacity.astype(np.float32),
         }
+        if "split_part" in item:
+            result["split_part"] = item["split_part"]
+        return result
 
 
 def _prepare_batch_static(
@@ -355,12 +366,27 @@ def _prepare_batch_static(
     num_input_views: int,
     image_size: int,
     image_size_x: int,
+    view_indices: list[int] | None = None,
 ) -> dict[str, Any]:
-    """Build the batch dict expected by tttLRM.forward() (standalone function for workers)."""
+    """Build the batch dict expected by tttLRM.forward() (standalone function for workers).
+
+    Args:
+        view_indices: If set, only include these view indices in the batch.
+            Pose normalisation always uses ALL available views so that
+            split-view batches share the same coordinate frame.
+    """
     frames = manifest["frames"]
     image_base_dir = manifest.get("dataset_root", str(manifest_path.parent))
 
-    n_views = min(len(frames), num_input_views)
+    n_total = min(len(frames), num_input_views)
+
+    # Always normalise using ALL available poses for a consistent frame
+    all_c2ws = np.array([np.linalg.inv(np.array(f["w2c"])) for f in frames[:n_total]])
+    all_c2ws, _apos_inv, scene_scale = _normalize_with_mean_pose(all_c2ws)
+
+    selected = view_indices if view_indices is not None else list(range(n_total))
+    n_views = len(selected)
+
     target_size = (image_size, image_size_x)
     to_tensor = transforms.ToTensor()
 
@@ -368,7 +394,8 @@ def _prepare_batch_static(
     fxfycxcy_list: list[list[float]] = []
     c2ws_list: list[np.ndarray] = []
 
-    for frame in frames[:n_views]:
+    for idx in selected:
+        frame = frames[idx]
         img_path = Path(image_base_dir) / frame["file_path"]
         image = Image.open(img_path)
         if image.mode == "RGBA":
@@ -383,17 +410,14 @@ def _prepare_batch_static(
 
         images.append(to_tensor(image))
         fxfycxcy_list.append(intrinsics)
-        c2ws_list.append(np.linalg.inv(np.array(frame["w2c"])))
+        c2ws_list.append(all_c2ws[idx])
 
-    c2ws_np = np.array(c2ws_list)
-    c2ws_np, _apos_inv, scene_scale = _normalize_with_mean_pose(c2ws_np)
-
-    c2ws = torch.from_numpy(c2ws_np).float()
+    c2ws = torch.from_numpy(np.array(c2ws_list)).float()
     fxfycxcy = torch.from_numpy(np.array(fxfycxcy_list)).float()
     image_stack = torch.stack(images)
 
-    virtual_c2ws = c2ws[:n_views].clone()
-    virtual_fxfycxcy = fxfycxcy[:n_views].clone()
+    virtual_c2ws = c2ws.clone()
+    virtual_fxfycxcy = fxfycxcy.clone()
     virtual_input_indices = torch.arange(n_views).long()
 
     image_choices = torch.arange(n_views).long().unsqueeze(-1)
@@ -448,6 +472,8 @@ class TttLRMGaussianProcessor(GaussianProcessor):
         num_input_views: int = 64,
         opacity_threshold: float = 0.001,
         autoregressive: bool = False,
+        split_views: bool = False,
+        ttt_update_views: int = 0,
     ) -> None:
         self.opacity_threshold = opacity_threshold
         self.image_size = image_size
@@ -456,11 +482,17 @@ class TttLRMGaussianProcessor(GaussianProcessor):
         self.autoregressive = autoregressive
         self.checkpoint_path = checkpoint_path
         self.config_path = config_path
+        self.split_views = split_views
 
         # Determine multi-device config
         self.device_spec = device_spec or device
         devices = DeviceWorkerPool._discover_devices(self.device_spec)
-        self.use_multi_device = len(devices) > 1
+        self.use_multi_device = len(devices) > 1 or split_views
+
+        # Auto-select ttt_update_views for XPU when split_views is active
+        if ttt_update_views == 0 and split_views and "xpu" in devices[0]:
+            ttt_update_views = 4
+            logger.info("Auto-selected ttt_update_views=%d for XPU split-view mode", ttt_update_views)
 
         if self.use_multi_device:
             logger.info("Multi-device tttLRM: using %d devices: %s", len(devices), devices)
@@ -475,6 +507,7 @@ class TttLRMGaussianProcessor(GaussianProcessor):
                     "num_input_views": num_input_views,
                     "opacity_threshold": opacity_threshold,
                     "autoregressive": autoregressive,
+                    "ttt_update_views": ttt_update_views,
                 },
             )
             self.device = torch.device(devices[0])
@@ -672,6 +705,9 @@ class TttLRMGaussianProcessor(GaussianProcessor):
         timestamps_ms: list[float],
     ) -> list[GaussianFrame]:
         """Distribute manifests across multiple devices via DeviceWorkerPool."""
+        if self.split_views:
+            return self._process_frames_split_views(frame_paths, timestamps_ms)
+
         items = [
             {
                 "manifest_path": str(p),
@@ -705,6 +741,80 @@ class TttLRMGaussianProcessor(GaussianProcessor):
 
         logger.info(
             "Multi-device processing complete: %d frames, %d total Gaussians",
+            len(frames),
+            sum(len(f.means) for f in frames),
+        )
+        return frames
+
+    def _process_frames_split_views(
+        self,
+        frame_paths: list[Path],
+        timestamps_ms: list[float],
+    ) -> list[GaussianFrame]:
+        """Split each manifest's views across devices, then merge Gaussians.
+
+        Each device gets a disjoint subset of views, processes them
+        independently with chunked TTT, and the resulting Gaussians
+        are concatenated.  Pose normalisation uses ALL views so that
+        the coordinate frame is consistent across devices.
+        """
+        n_devices = len(self._pool.devices)
+        items: list[dict] = []
+
+        for manifest_idx, (p, ts) in enumerate(zip(frame_paths, timestamps_ms)):
+            with open(p) as f:
+                manifest = json.load(f)
+            n_total = min(len(manifest["frames"]), self.num_input_views)
+
+            # Distribute views evenly; last device gets the remainder
+            base, remainder = divmod(n_total, n_devices)
+            offset = 0
+            for dev_idx in range(n_devices):
+                count = base + (1 if dev_idx < remainder else 0)
+                view_indices = list(range(offset, offset + count))
+                offset += count
+                items.append({
+                    "manifest_path": str(p),
+                    "frame_idx": manifest_idx,
+                    "timestamp_ms": ts,
+                    "view_indices": view_indices,
+                    "split_part": dev_idx,
+                })
+
+        logger.info(
+            "Split-view processing: %d manifest(s) × %d devices = %d items",
+            len(frame_paths),
+            n_devices,
+            len(items),
+        )
+
+        results = self._pool.map(items)
+
+        # Group by frame_idx and merge
+        from collections import defaultdict
+
+        by_frame: dict[int, list[dict]] = defaultdict(list)
+        for r in results:
+            by_frame[r["frame_idx"]].append(r)
+
+        frames: list[GaussianFrame] = []
+        for frame_idx in sorted(by_frame.keys()):
+            parts = by_frame[frame_idx]
+            parts.sort(key=lambda r: r.get("split_part", 0))
+            frame = GaussianFrame(
+                frame_idx=frame_idx,
+                timestamp_ms=parts[0]["timestamp_ms"],
+                means=np.concatenate([p["means"] for p in parts]),
+                scales=np.concatenate([p["scales"] for p in parts]),
+                rotations=np.concatenate([p["rotations"] for p in parts]),
+                colors=np.concatenate([p["colors"] for p in parts]),
+                opacities=np.concatenate([p["opacities"] for p in parts]),
+            )
+            frames.append(frame)
+
+        frames.sort(key=lambda f: f.frame_idx)
+        logger.info(
+            "Split-view processing complete: %d frames, %d total Gaussians",
             len(frames),
             sum(len(f.means) for f in frames),
         )
