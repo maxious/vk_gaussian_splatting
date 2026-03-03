@@ -20,6 +20,7 @@ def export_amb3r_to_colmap(
     export_dir: str | Path,
     conf_thresh_percentile: float = 40.0,
     max_points_per_frame: int = 5000,
+    mask_paths: list[str | Path] | None = None,
 ) -> None:
     """Export AMB3R predictions to COLMAP binary format.
 
@@ -32,6 +33,7 @@ def export_amb3r_to_colmap(
         export_dir: Output directory for COLMAP reconstruction
         conf_thresh_percentile: Percentile threshold for confidence filtering
         max_points_per_frame: Max points to keep per frame after filtering
+        mask_paths: Optional list of T mask image paths (grayscale, >0 = foreground)
     """
     import pycolmap
     from PIL import Image
@@ -61,6 +63,15 @@ def export_amb3r_to_colmap(
 
         # Valid mask: confident + finite
         valid = (frame_conf >= conf_thresh) & np.all(np.isfinite(frame_pts), axis=-1)
+
+        # Apply foreground mask if provided
+        if mask_paths is not None:
+            mask_img = np.array(Image.open(mask_paths[fidx]).convert("L"))
+            # Resize mask to processing resolution
+            mask_resized = np.array(
+                Image.fromarray(mask_img).resize((w, h), Image.NEAREST)
+            )
+            valid &= mask_resized > 0
 
         if valid.sum() == 0:
             continue

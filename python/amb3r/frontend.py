@@ -1,7 +1,10 @@
+import logging
 import os
 import sys
 import torch
 import torch.nn as nn
+
+logger = logging.getLogger(__name__)
 
 # Add vendored thirdparty to path
 _thirdparty_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'thirdparty')
@@ -20,20 +23,25 @@ class FrontEnd(nn.Module):
     def __init__(self, ckpt_path='./checkpoints/VGGT.pt', metric_scale=True):
         super().__init__()
         self.metric_scale=metric_scale
+        logger.info("Constructing VGGT-1B vision transformer...")
         self.model = VGGT(return_depth_feat=metric_scale)
 
         if os.path.isfile(ckpt_path):
+            logger.info(f"Loading VGGT checkpoint from {ckpt_path}...")
             checkpoint = torch.load(ckpt_path)
             self.model.load_state_dict(checkpoint)
         else:
             # Try downloading from HuggingFace
             try:
                 from huggingface_hub import hf_hub_download
+                logger.info("Resolving VGGT-1B checkpoint from facebook/VGGT-1B...")
                 hf_path = hf_hub_download(repo_id='facebook/VGGT-1B', filename='model.pt')
+                logger.info(f"VGGT checkpoint path: {hf_path} ({os.path.getsize(hf_path) / 1e9:.1f} GB)")
                 checkpoint = torch.load(hf_path)
                 self.model.load_state_dict(checkpoint)
-            except Exception:
-                pass  # Will use random weights if no checkpoint found
+                logger.info("VGGT-1B checkpoint loaded successfully")
+            except Exception as e:
+                logger.warning(f"Could not load VGGT checkpoint: {e} — using random weights")
         
         self.metric_scale_projector = ScaleProjector(depth_feat_channels=128)
     

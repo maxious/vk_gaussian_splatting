@@ -82,21 +82,27 @@ class AMB3RFastGSProcessor(GaussianProcessor):
         if str(amb3r_dir) not in sys.path:
             sys.path.insert(0, str(amb3r_dir))
 
+        logger.info("Constructing AMB3R model (VGGT frontend + PointTransformerV3 backend)...")
         from amb3r.model import AMB3R
 
         model = AMB3R(device=self.device, metric_scale=True)
+        num_params = sum(p.numel() for p in model.parameters()) / 1e6
+        logger.info(f"AMB3R model constructed: {num_params:.0f}M parameters")
 
         if self.ckpt_path is not None:
+            logger.info(f"Loading AMB3R checkpoint from {self.ckpt_path}...")
             model.load_weights(self.ckpt_path)
         else:
             # Try to download from HuggingFace
             try:
                 from huggingface_hub import hf_hub_download
 
+                logger.info("Resolving AMB3R checkpoint from outsung/amb3r-checkpoint...")
                 ckpt_path = hf_hub_download(
                     repo_id="outsung/amb3r-checkpoint",
                     filename="amb3r.pt",
                 )
+                logger.info(f"AMB3R checkpoint path: {ckpt_path} ({Path(ckpt_path).stat().st_size / 1e9:.1f} GB)")
                 model.load_weights(ckpt_path)
             except Exception as e:
                 raise RuntimeError(
@@ -105,8 +111,15 @@ class AMB3RFastGSProcessor(GaussianProcessor):
                     f"or install huggingface_hub."
                 ) from e
 
+        logger.info(f"Moving model to {self.device}...")
         model = model.to(self.device)
         model.eval()
+
+        if self.device == "cuda" and torch.cuda.is_available():
+            vram_gb = torch.cuda.memory_allocated() / 1e9
+            vram_reserved_gb = torch.cuda.memory_reserved() / 1e9
+            logger.info(f"VRAM after model load: {vram_gb:.1f} GB allocated, {vram_reserved_gb:.1f} GB reserved")
+
         self._model = model
         logger.info("AMB3R model loaded successfully")
         return model
@@ -151,44 +164,70 @@ class AMB3RFastGSProcessor(GaussianProcessor):
             extrinsics_w2c: (T, 3, 4)
             intrinsics: (T, 3, 3)
         """
+        import time
+
         import torch
 
         model = self._load_model()
+
+        logger.info(f"Preprocessing {len(frame_paths)} frames to {self.process_res[0]}x{self.process_res[1]}...")
         images_np, image_paths = self._load_and_preprocess_frames(frame_paths)
+        logger.info(f"Input tensor shape: {images_np.shape} (T, C, H, W), dtype={images_np.dtype}")
 
         # Process in windows
         num_frames = len(frame_paths)
+        num_windows = (num_frames + self.window_size - 1) // self.window_size
         all_world_points = []
         all_confidence = []
         all_extrinsics = []
         all_intrinsics = []
 
-        for start in range(0, num_frames, self.window_size):
+        for widx, start in enumerate(range(0, num_frames, self.window_size)):
             end = min(start + self.window_size, num_frames)
             window_images = images_np[start:end]
+
+            logger.info(
+                f"Window {widx + 1}/{num_windows}: frames {start}-{end} "
+                f"({end - start} frames, {self.process_res[0]}x{self.process_res[1]})"
+            )
 
             # AMB3R expects (B, T, 3, H, W)
             images_tensor = torch.from_numpy(window_images).unsqueeze(0).to(self.device)
             frames = {"images": images_tensor}
 
-            with torch.inference_mode():
+            if self.device == "cuda" and torch.cuda.is_available():
+                vram_gb = torch.cuda.memory_allocated() / 1e9
+                logger.info(f"  VRAM before inference: {vram_gb:.1f} GB")
+
+            t0 = time.time()
+            with torch.inference_mode(), torch.amp.autocast("cuda", dtype=torch.bfloat16):
+                logger.info("  Running VGGT frontend (encode + decode)...")
                 res_all = model.forward(frames, iters=1)
                 res = res_all[-1]
+            t1 = time.time()
+
+            if self.device == "cuda" and torch.cuda.is_available():
+                vram_gb = torch.cuda.memory_allocated() / 1e9
+                peak_gb = torch.cuda.max_memory_allocated() / 1e9
+                logger.info(f"  VRAM after inference: {vram_gb:.1f} GB (peak: {peak_gb:.1f} GB)")
 
             # Extract outputs (squeeze batch dim)
             wp = res["world_points"][0].cpu().numpy()  # (T, H, W, 3)
-            conf = res["world_points_conf"][0].cpu().numpy()  # (T, H, W, 1)
+            conf_raw = res["world_points_conf"][0].cpu().numpy()
+            logger.info(f"  Raw shapes: world_points={wp.shape}, conf={conf_raw.shape}")
+            # Squeeze trailing dim if present
+            conf = conf_raw.squeeze(-1) if conf_raw.ndim == 4 else conf_raw
             # extrinsic is w2c (3, 4)
             ext = res["extrinsic"][0].cpu().numpy()  # (T, 3, 4)
             intr = res["intrinsic"][0].cpu().numpy()  # (T, 3, 3)
 
             all_world_points.append(wp)
-            all_confidence.append(conf[..., 0])  # squeeze last dim
+            all_confidence.append(conf)
             all_extrinsics.append(ext)
             all_intrinsics.append(intr)
 
             logger.info(
-                f"AMB3R window {start}-{end}: "
+                f"  Window {widx + 1} done in {t1 - t0:.1f}s: "
                 f"conf={conf.mean():.2f}, "
                 f"points range=[{wp.min():.2f}, {wp.max():.2f}]"
             )

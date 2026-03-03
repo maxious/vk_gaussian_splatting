@@ -1,5 +1,8 @@
+import logging
 import os
 import sys
+import time
+
 import torch
 import numpy as np
 import torch.nn as nn
@@ -9,6 +12,8 @@ from .backend import BackEnd
 from .frontend import FrontEnd
 from .tools.pose_align import umeyama_alignment
 from .tools.pose_interp import interpolate_poses
+
+logger = logging.getLogger(__name__)
 
 def scale_invariant_alignment(pred, target, mask, trunc=1.0):
     """Align pred to target with optimal scale (least-squares, truncated).
@@ -168,17 +173,30 @@ class AMB3R(nn.Module):
         
         # Front-end processing
         res_all = []
+        t0 = time.time()
+        logger.info("    Frontend: encoding patch tokens...")
         images, patch_tokens = self.front_end.encode_patch_tokens(frames)
+        t1 = time.time()
+        logger.info(f"    Frontend: encode done in {t1 - t0:.1f}s, decoding heads...")
 
         res = self.front_end.decode_patch_tokens_and_heads(images, patch_tokens)
         res_all.append(res)
+        t2 = time.time()
+        logger.info(f"    Frontend: decode done in {t2 - t1:.1f}s")
 
         # Back-end processing
         for i in range(iters):
+            t3 = time.time()
+            logger.info(f"    Backend iter {i + 1}/{iters}: voxelizing + PointTransformerV3...")
             voxel_feat_aligned, voxel_feat_aligned_vis, voxel_layer_list = self.get_voxel_feat(res_all[i])
+            t4 = time.time()
+            logger.info(f"    Backend iter {i + 1}: voxel features done in {t4 - t3:.1f}s, re-decoding...")
             patch_tokens = self.front_end.add_voxel_feat_to_patch_tokens(patch_tokens, voxel_feat_aligned_vis)
             res_all.append(self.front_end.decode_patch_tokens_and_heads(images, patch_tokens, voxel_feat=voxel_feat_aligned, voxel_layer_list=voxel_layer_list))
+            t5 = time.time()
+            logger.info(f"    Backend iter {i + 1}: re-decode done in {t5 - t4:.1f}s (total iter: {t5 - t3:.1f}s)")
 
+        logger.info(f"    Forward pass total: {time.time() - t0:.1f}s")
         return res_all
     
 
