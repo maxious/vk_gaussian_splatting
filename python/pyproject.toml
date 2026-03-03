@@ -127,6 +127,18 @@ diffusion-repair = [
     "gguf>=0.6",  # For loading GGUF quantized models
 ]
 
+# AMB3R (metric 3D reconstruction + FastGS Gaussian fitting)
+# torch-scatter is vendored as pure-PyTorch in amb3r/backend.py and amb3r/thirdparty/ptv3/
+amb3r = [
+    "pytorch3d>=0.7.8",
+    "spconv-cu126>=2.3",
+    # xformers is optional — vendored VGGT has XFORMERS_AVAILABLE=False
+    "timm>=0.6",
+    "addict>=2.4",
+    "scipy>=1.11",
+    "utils3d",
+]
+
 # TRELLIS.2 GPU extensions (require CUDA compilation - install separately)
 trellis2 = [
     # TRELLIS.2 core dependencies are vendored in offline/vkgs_trellis2/

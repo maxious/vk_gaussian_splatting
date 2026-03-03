@@ -253,7 +253,26 @@ def export_video_to_gaussian_plys(
     fps = cap.get(cv2.CAP_PROP_FPS)
     cap.release()
 
-    if "matrix3d" in model_id.lower():
+    if "amb3r" in model_id.lower():
+        from .processors.amb3r import AMB3RFastGSProcessor
+
+        ckpt_path = None
+        fastgs_iterations = 30_000
+        fastgs_path = None
+
+        if ":" in model_id:
+            parts = model_id.split(":", 1)
+            config = parts[1]
+            if Path(config).exists() or "/" in config or "\\" in config:
+                ckpt_path = config
+
+        processor = AMB3RFastGSProcessor(
+            device=device,
+            ckpt_path=ckpt_path,
+            fastgs_iterations=fastgs_iterations,
+            fastgs_path=fastgs_path,
+        )
+    elif "matrix3d" in model_id.lower():
         processor = Matrix3DGaussianProcessor(device=device)
     elif "sharp" in model_id.lower():
         # Parse SHARP model configuration
@@ -682,6 +701,25 @@ def export_images_to_gaussian_plys(
             logger.info("Exported %d PLY files to %s", len(frames), output_path)
         return
 
+    elif "amb3r" in model_id.lower():
+        from .processors.amb3r import AMB3RFastGSProcessor
+
+        ckpt_path = None
+        fastgs_iterations = 30_000
+        fastgs_path = None
+
+        if ":" in model_id:
+            parts = model_id.split(":", 1)
+            config = parts[1]
+            if Path(config).exists() or "/" in config or "\\" in config:
+                ckpt_path = config
+
+        processor = AMB3RFastGSProcessor(
+            device=device,
+            ckpt_path=ckpt_path,
+            fastgs_iterations=fastgs_iterations,
+            fastgs_path=fastgs_path,
+        )
     elif "matrix3d" in model_id.lower():
         processor = Matrix3DGaussianProcessor(device=device)
     elif "moge" in model_id.lower():
