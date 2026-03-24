@@ -518,6 +518,14 @@ class InfiniDepthGaussianProcessor(GaussianProcessor):
             rotations=rotations_np,
             colors=colors_np,
             opacities=opacities_np,
+            intrinsic=intrinsics[0].cpu().numpy() if hasattr(intrinsics, "__getitem__") else None,
+            extrinsic=extrinsics[0].cpu().numpy()
+            if hasattr(extrinsics, "__getitem__")
+            else extrinsics.cpu().numpy()
+            if hasattr(extrinsics, "cpu")
+            else extrinsics,
+            image_size=(int(org_h), int(org_w)),
+            color_space_index=1,
         )
 
     @staticmethod

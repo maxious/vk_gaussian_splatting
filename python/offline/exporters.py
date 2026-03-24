@@ -412,14 +412,20 @@ def export_video_to_gaussian_plys(
                 output_path.mkdir(parents=True, exist_ok=True)
                 for frame in chunk_frames:
                     ply_path = output_path / f"frame_{frame.frame_idx:06d}.ply"
+                    # Center Gaussians around origin for proper viewer display
+                    centered_means = frame.means - frame.means.mean(axis=0)
                     write_static_gaussian_ply(
                         ply_path,
-                        frame.means,
+                        centered_means,
                         frame.scales,
                         frame.rotations,
                         frame.colors,
                         frame.opacities,
                         flip_y=flip_y,
+                        intrinsic=frame.intrinsic,
+                        extrinsic=frame.extrinsic,
+                        image_size=frame.image_size,
+                        color_space_index=frame.color_space_index,
                     )
         except Exception as e:
             logger.error(f"Failed to process chunk: {e}")

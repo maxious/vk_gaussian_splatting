@@ -22,6 +22,11 @@ def write_static_gaussian_ply(
     opacities: np.ndarray,
     sh_rest: np.ndarray | None = None,
     flip_y: bool = False,
+    # Camera metadata (optional - needed for proper viewer positioning)
+    intrinsic: np.ndarray | None = None,
+    extrinsic: np.ndarray | None = None,
+    image_size: tuple[int, int] | None = None,
+    color_space_index: int | None = None,
 ) -> None:
     """Write a static 3DGS PLY file using plyfile.
 
@@ -34,6 +39,10 @@ def write_static_gaussian_ply(
         opacities: (N,) float32 logit opacities
         sh_rest: Optional (N, 45) float32 higher-order SH coefficients
         flip_y: If True, negate Y coordinates to flip the coordinate system
+        intrinsic: Optional (3, 3) camera intrinsic matrix
+        extrinsic: Optional (4, 4) camera extrinsic matrix
+        image_size: Optional (height, width) of source image
+        color_space_index: Optional color space index (0=linear, 1=sRGB)
     """
     n_points = len(means)
 
@@ -83,17 +92,52 @@ def write_static_gaussian_ply(
         for i in range(sh_rest.shape[1]):
             elements[f"f_rest_{i}"] = sh_rest[:, i]
 
-    elements["opacity"] = opacities.squeeze(-1) if opacities.ndim > 1 else opacities
-    elements["scale_0"] = scales[:, 0]
-    elements["scale_1"] = scales[:, 1]
-    elements["scale_2"] = scales[:, 2]
+    # Apply inverse sigmoid to opacity for storage (viewer applies sigmoid when loading)
+    opacities_flat = np.clip(
+        opacities.squeeze(-1) if opacities.ndim > 1 else opacities, 1e-6, 1 - 1e-6
+    )
+    opacities_logit = np.log(opacities_flat / (1 - opacities_flat))
+    elements["opacity"] = opacities_logit
+
+    # Store log of scales (viewer applies exp when loading)
+    elements["scale_0"] = np.log(scales[:, 0])
+    elements["scale_1"] = np.log(scales[:, 1])
+    elements["scale_2"] = np.log(scales[:, 2])
     elements["rot_0"] = rotations[:, 0]
     elements["rot_1"] = rotations[:, 1]
     elements["rot_2"] = rotations[:, 2]
     elements["rot_3"] = rotations[:, 3]
 
-    el = PlyElement.describe(elements, "vertex")
-    PlyData([el], text=False).write(str(path))
+    ply_elements = [PlyElement.describe(elements, "vertex")]
+
+    # Add camera metadata if provided
+    if image_size is not None:
+        dtype_image_size = [("image_size", "u4")]
+        image_size_array = np.empty(2, dtype=dtype_image_size)
+        image_size_array[:] = np.array(
+            [image_size[1], image_size[0]], dtype=np.uint32
+        )  # (width, height)
+        ply_elements.append(PlyElement.describe(image_size_array, "image_size"))
+
+    if intrinsic is not None:
+        dtype_intrinsic = [("intrinsic", "f4")]
+        intrinsic_array = np.empty(9, dtype=dtype_intrinsic)
+        intrinsic_array[:] = intrinsic.flatten().astype(np.float32)
+        ply_elements.append(PlyElement.describe(intrinsic_array, "intrinsic"))
+
+    if extrinsic is not None:
+        dtype_extrinsic = [("extrinsic", "f4")]
+        extrinsic_array = np.empty(16, dtype=dtype_extrinsic)
+        extrinsic_array[:] = extrinsic.flatten().astype(np.float32)
+        ply_elements.append(PlyElement.describe(extrinsic_array, "extrinsic"))
+
+    if color_space_index is not None:
+        dtype_color_space = [("color_space", "u1")]
+        color_space_array = np.empty(1, dtype=dtype_color_space)
+        color_space_array[:] = np.array([color_space_index], dtype=np.uint8)
+        ply_elements.append(PlyElement.describe(color_space_array, "color_space"))
+
+    PlyData(ply_elements, text=False).write(str(path))
 
     logger.info(f"Wrote {n_points} Gaussians to {path}")
 

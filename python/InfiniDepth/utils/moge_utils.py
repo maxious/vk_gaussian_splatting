@@ -82,7 +82,7 @@ def estimate_metric_depth_and_intrinsics_with_moge2(
             mask_hw = mask_hw > 0.5
 
     valid_mask = mask_hw & torch.isfinite(depth_hw) & (depth_hw > 0)
-    pred_depth = depth_hw * valid_mask.to(depth_hw.dtype)
+    pred_depth = torch.where(valid_mask, depth_hw, torch.zeros_like(depth_hw))
 
     moge2_intrinsics = None
     output_intrinsics = output.get("intrinsics")

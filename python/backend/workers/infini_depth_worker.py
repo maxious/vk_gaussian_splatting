@@ -9,6 +9,15 @@ import numpy as np
 import torch
 
 from common.device_worker_pool import DeviceWorker
+from InfiniDepth.utils.moge_utils import estimate_metric_depth_and_intrinsics_with_moge2
+
+
+def _depth_to_disparity(depth: torch.Tensor) -> torch.Tensor:
+    disp = depth.clone()
+    valid = disp > 0
+    disp[valid] = 1.0 / disp[valid]
+    return disp
+
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +34,32 @@ class InfiniDepthDeviceWorker(DeviceWorker[np.ndarray, tuple[np.ndarray, float, 
         self.model_id = model_id
         self.process_res = int(process_res)
 
+    def _resolve_model_path(self) -> tuple[Optional[str], Optional[str]]:
+        if self.model_id and self.model_id.strip().lower() not in {
+            "infinidepth",
+            "infini_depth",
+            "default",
+            "",
+            None,
+        }:
+            candidate = Path(self.model_id).expanduser()
+            if not candidate.exists():
+                raise FileNotFoundError(
+                    f"InfiniDepth checkpoint not found at '{candidate}'. "
+                    "Set VIDEO_DEPTH_MODEL_ID to a local checkpoint .pth path."
+                )
+            return str(candidate), None
+
+        from huggingface_hub import snapshot_download
+
+        try:
+            cache_dir = snapshot_download("ritianyu/InfiniDepth", allow_patterns=["*.ckpt"])
+            model_path = Path(cache_dir) / "infinidepth.ckpt"
+            moge_path = Path(cache_dir) / "moge2.pt"
+            return str(model_path), str(moge_path) if moge_path.exists() else None
+        except Exception:
+            return None, None
+
     def load_model(self) -> None:
         if not self.device.startswith("cuda"):
             raise RuntimeError(
@@ -39,27 +74,16 @@ class InfiniDepthDeviceWorker(DeviceWorker[np.ndarray, tuple[np.ndarray, float, 
                 "InfiniDepth package is not available. Install python extras with `--extra infini_depth`."
             ) from exc
 
-        model_path: str | None = None
-        if self.model_id and self.model_id.strip().lower() not in {
-            "infinidepth",
-            "infini_depth",
-            "default",
-        }:
-            candidate = Path(self.model_id).expanduser()
-            if not candidate.exists():
-                raise FileNotFoundError(
-                    f"InfiniDepth checkpoint not found at '{candidate}'. "
-                    "Set VIDEO_DEPTH_MODEL_ID to a local checkpoint .pth path."
-                )
-            model_path = str(candidate)
+        model_path, self.moge_path = self._resolve_model_path()
 
         with torch.cuda.device(torch.device(self.device)):
             self.model = InfiniDepth(model_path=model_path)
         logger.info(
-            "InfiniDepth worker %s loaded model on %s (checkpoint=%s)",
+            "InfiniDepth worker %s loaded model on %s (checkpoint=%s, moge=%s)",
             self.worker_id,
             self.device,
             model_path or "<none>",
+            self.moge_path or "<default>",
         )
 
     @staticmethod
@@ -147,6 +171,15 @@ class InfiniDepthDeviceWorker(DeviceWorker[np.ndarray, tuple[np.ndarray, float, 
 
         target_device = torch.device(self.device)
         image = image.permute(2, 0, 1).unsqueeze(0).to(target_device, non_blocking=True)
+
+        moge_path = self.moge_path if self.moge_path else "Ruicheng/moge-2-vitl-normal"
+        pred_depth_moge, gt_depth_mask, _ = estimate_metric_depth_and_intrinsics_with_moge2(
+            image=image,
+            pretrained_model_name_or_path=moge_path,
+        )
+        gt_disp = _depth_to_disparity(pred_depth_moge)
+        prompt_disp = _depth_to_disparity(pred_depth_moge)
+
         query_coord = self._dense_query_coord(batch=1, h=h, w=w, device=image.device)
 
         with torch.no_grad():
@@ -154,9 +187,14 @@ class InfiniDepthDeviceWorker(DeviceWorker[np.ndarray, tuple[np.ndarray, float, 
                 output: Any = self.model.inference(
                     image=image,
                     query_coord=query_coord,
+                    gt_depth=gt_disp,
+                    gt_depth_mask=gt_depth_mask,
+                    prompt_depth=prompt_disp,
+                    prompt_mask=gt_depth_mask > 0,
                     use_batch_infer=True,
                 )
-        pred_depth = output[0]
+        pred_disp, _ = output
+        pred_depth = 1.0 / torch.clamp(pred_disp, min=1e-3)
 
         depth = self._depth_tensor_to_numpy(pred_depth, h=h, w=w)
         depth = np.nan_to_num(depth, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
