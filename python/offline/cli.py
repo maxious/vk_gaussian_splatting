@@ -18,21 +18,21 @@ logger = logging.getLogger(__name__)
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Export video to Gaussian Splatting PLY files using DA3/MoGe/SHARP/SAM 3D Body/Hybrid"
+        description="Export video to Gaussian Splatting PLY files using InfiniDepth/MoGe/SHARP/SAM 3D Body/Hybrid"
     )
     subparsers = parser.add_subparsers(dest="command", help="Commands")
 
     # Depth extraction subcommand
     depth_parser = subparsers.add_parser(
-        "depth", help="Extract depth maps from video using DA3 (multi-XPU optimized)"
+        "depth", help="Extract depth maps from video using InfiniDepth (multi-XPU optimized)"
     )
     depth_parser.add_argument("--input", "-i", type=Path, required=True, help="Input video file")
     depth_parser.add_argument("--output", "-o", type=Path, required=True, help="Output directory")
     depth_parser.add_argument(
         "--model",
         type=str,
-        default="depth-anything/DA3METRIC-LARGE",
-        help="DA3 model ID (default: depth-anything/DA3METRIC-LARGE)",
+        default="InfiniDepth",
+        help="Model ID (default: InfiniDepth)",
     )
     depth_parser.add_argument(
         "--device-spec",
@@ -43,8 +43,8 @@ def main():
     depth_parser.add_argument(
         "--process-res",
         type=int,
-        default=518,
-        help="Processing resolution for DA3 (default: 518)",
+        default=768,
+        help="Processing resolution (default: 768)",
     )
     depth_parser.add_argument(
         "--batch-size",
@@ -81,29 +81,6 @@ def main():
     )
     masks_parser.add_argument("-v", "--verbose", action="store_true")
 
-    prune_parser = subparsers.add_parser(
-        "prune", help="Prune Gaussians using sensitivity/visibility analysis"
-    )
-    prune_parser.add_argument("--input", "-i", type=Path, required=True, help="Input PLY file")
-    prune_parser.add_argument("--output", "-o", type=Path, required=True, help="Output PLY file")
-    prune_parser.add_argument(
-        "--source-path",
-        "-s",
-        type=Path,
-        required=True,
-        help="Path to COLMAP dataset (containing sparse/0/)",
-    )
-    prune_parser.add_argument(
-        "--prune-percent",
-        type=float,
-        default=0.5,
-        help="Fraction of Gaussians to prune (0.0 - 1.0)",
-    )
-    prune_parser.add_argument(
-        "--device", type=str, default="cuda", help="Computation device (default: cuda)"
-    )
-    prune_parser.add_argument("-v", "--verbose", action="store_true")
-
     export_parser = subparsers.add_parser("export", help="Export video to Gaussian PLYs")
     export_parser.add_argument("--input", "-i", type=Path, required=True, help="Input video file")
     export_parser.add_argument(
@@ -129,11 +106,11 @@ def main():
     export_parser.add_argument(
         "--model",
         type=str,
-        default="depth-anything/DA3-GIANT",
-        help="Model: DA3/MoGe/SHARP/MotionCrafter for depth, 'sam3dbody' for humans, 'hybrid' for SAM 3D Body + depth "
-        "(default: depth-anything/DA3-GIANT). "
+        default="InfiniDepth",
+        help="Model: InfiniDepth/MoGe/SHARP/MotionCrafter for depth, 'sam3dbody' for humans, 'hybrid' for SAM 3D Body + depth "
+        "(default: InfiniDepth). "
         "SAM 3D Body: sam3dbody:facebook/sam-3d-body-vith. "
-        "Hybrid: hybrid:human+depth (e.g., hybrid:facebook/sam-3d-body-vith+depth-anything/DA3-GIANT). "
+        "Hybrid: hybrid:human+depth (e.g., hybrid:facebook/sam-3d-body-vith+InfiniDepth). "
         "MotionCrafter: motioncrafter:path/to/config.yaml or motioncrafter:path/to/checkpoint.ckpt",
     )
     export_parser.add_argument("--frame-skip", type=int, default=5, help="Process every Nth frame")
@@ -143,9 +120,7 @@ def main():
     export_parser.add_argument(
         "--max-frames", type=int, default=None, help="Maximum frames to process"
     )
-    export_parser.add_argument(
-        "--process-res", type=int, default=518, help="Processing resolution for DA3"
-    )
+    export_parser.add_argument("--process-res", type=int, default=768, help="Processing resolution")
     export_parser.add_argument(
         "--opacity-threshold",
         type=float,
@@ -233,15 +208,6 @@ def main():
     )
     postprocess_parser.add_argument("-v", "--verbose", action="store_true")
 
-    any4d_parser = subparsers.add_parser("any4d", help="Generate 4DV from Any4D output")
-    any4d_parser.add_argument("--input", "-i", type=Path, required=True, help="Input images folder")
-    any4d_parser.add_argument("--output", "-o", type=Path, required=True, help="Output .4dv file")
-    any4d_parser.add_argument("--model-path", type=str, default=None, help="Any4D checkpoint path")
-    any4d_parser.add_argument("--fps", type=float, default=30.0, help="Frame rate")
-    any4d_parser.add_argument("--num-splats", type=int, default=100_000, help="Number of splats")
-    any4d_parser.add_argument("--device", type=str, default="cuda", help="Device to use")
-    any4d_parser.add_argument("-v", "--verbose", action="store_true")
-
     omnimatte_parser = subparsers.add_parser(
         "omnimatte", help="OmnimatteZero: Background Generation & Object Extraction"
     )
@@ -272,7 +238,7 @@ def main():
     )
 
     images_parser = subparsers.add_parser(
-        "images", help="Process images with DA3 and export to Gaussian PLY files"
+        "images", help="Process images with InfiniDepth and export to Gaussian PLY files"
     )
     images_parser.add_argument(
         "--input", "-i", type=Path, required=True, help="Input directory containing images"
@@ -293,9 +259,9 @@ def main():
     )
     images_parser.add_argument(
         "--format",
-        choices=["ply", "sog", "4dv", "glb", "vxz"],
+        choices=["ply", "sog", "4dv"],
         default="ply",
-        help="Output format: 'ply' (standard), 'sog' (compressed static/dynamic), '4dv' (compressed dynamic), 'glb' (TRELLIS.2 mesh), 'vxz' (TRELLIS.2 o-voxel)",
+        help="Output format: 'ply' (standard), 'sog' (compressed static/dynamic), '4dv' (compressed dynamic)",
     )
     images_parser.add_argument(
         "--fps", type=float, default=30.0, help="Frame rate for temporal normalization"
@@ -303,10 +269,8 @@ def main():
     images_parser.add_argument(
         "--model",
         type=str,
-        default="depth-anything/DA3-GIANT",
-        help="Model ID. Options: 'depth-anything/DA3-GIANT', 'sharp', 'microsoft/TRELLIS-image-large', "
-        "'microsoft/TRELLIS.2-4B', 'fastgs' (high-quality training, requires COLMAP dataset), "
-        "'amb3r' (AMB3R + FastGS: metric 3D reconstruction then Gaussian fitting), 'motioncrafter', "
+        default="InfiniDepth",
+        help="Model ID. Options: 'InfiniDepth', 'sharp', 'motioncrafter', "
         "'tttlrm' (full model) or 'tttlrm-ar' (autoregressive, lower memory), "
         "optionally 'tttlrm:/path/to/checkpoint.pt' (multi-view LRM, input must be JSON manifests)",
     )
@@ -316,9 +280,7 @@ def main():
     images_parser.add_argument(
         "--max-frames", type=int, default=None, help="Maximum frames to process"
     )
-    images_parser.add_argument(
-        "--process-res", type=int, default=518, help="Processing resolution for DA3"
-    )
+    images_parser.add_argument("--process-res", type=int, default=768, help="Processing resolution")
     images_parser.add_argument(
         "--masks-dir",
         type=Path,
@@ -374,11 +336,11 @@ def main():
     legacy_parser.add_argument("--input", "-i", type=Path, required=True)
     legacy_parser.add_argument("--output", "-o", type=Path, required=True)
     legacy_parser.add_argument("--mode", choices=["frames", "freetimegs"], default="frames")
-    legacy_parser.add_argument("--model", type=str, default="depth-anything/DA3-GIANT")
+    legacy_parser.add_argument("--model", type=str, default="InfiniDepth")
     legacy_parser.add_argument("--frame-skip", type=int, default=5)
     legacy_parser.add_argument("--chunk-size", type=int, default=10)
     legacy_parser.add_argument("--max-frames", type=int, default=None)
-    legacy_parser.add_argument("--process-res", type=int, default=518)
+    legacy_parser.add_argument("--process-res", type=int, default=768)
     legacy_parser.add_argument(
         "--device",
         type=str,
@@ -422,17 +384,6 @@ def main():
             model=args.model,
         )
 
-    elif args.command == "prune":
-        from .prune_sensitivity import run_pruning
-
-        run_pruning(
-            args.input,
-            args.output,
-            args.source_path,
-            args.prune_percent,
-            args.device,
-        )
-
     elif args.command == "export" or args.command == "legacy":
         export_video_to_gaussian_plys(
             args.input,
@@ -464,18 +415,6 @@ def main():
             ply_pattern=args.pattern,
             flip_y=getattr(args, "flip_y", False),
             format=args.format,
-        )
-
-    elif args.command == "any4d":
-        from .any4d_to_4dv import run_any4d_export
-
-        run_any4d_export(
-            args.input,
-            args.output,
-            model_path=args.model_path,
-            fps=args.fps,
-            num_splats=args.num_splats,
-            device=args.device,
         )
 
     elif args.command == "omnimatte":

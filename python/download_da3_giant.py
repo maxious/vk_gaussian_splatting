@@ -1,24 +1,36 @@
 #!/usr/bin/env python
-"""Download DA3-GIANT model for Gaussian Splatting export.
+"""Download InfiniDepth model checkpoints for Gaussian Splatting export.
 
-Run this script to pre-download the model before using the export pipeline.
-The model is ~5.4GB and will be cached in ~/.cache/huggingface/hub/
+Run this script to pre-download the model checkpoints before using the export pipeline.
+The checkpoints are cached in ~/.cache/huggingface/hub/
+
+Required checkpoints:
+- infinidepth.ckpt (~1.5GB) - Main depth model
+- infinidepth_gs.ckpt (~600MB) - Gaussian splatting predictor
+- moge2.pt (~400MB) - MoGe-2 for metric depth
+- skyseg.onnx (~40MB) - Optional sky segmentation
 
 Usage:
     cd python
-    .venv\Scripts\python download_da3_giant.py
+    source .venv/bin/activate  # or .venv\\Scripts\\activate on Windows
+    python download_infinidepth.py
 """
+
 import os
 import sys
 
+# Disable xet transfer for compatibility
+os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "0"
+
 print("=" * 60)
-print("DA3-GIANT Model Downloader")
+print("InfiniDepth Model Downloader")
 print("=" * 60)
 print()
 
 # Check for CUDA
 try:
     import torch
+
     if torch.cuda.is_available():
         print(f"CUDA available: {torch.cuda.get_device_name(0)}")
     else:
@@ -27,38 +39,55 @@ except ImportError:
     print("WARNING: PyTorch not installed.")
 
 print()
-print("Downloading depth-anything/DA3-GIANT...")
-print("Model size: ~5.4 GB")
+print("Downloading InfiniDepth checkpoints from HuggingFace...")
 print("Cache location: ~/.cache/huggingface/hub/")
 print()
+
+INFINIDEPTH_REPO = "ritianyu/InfiniDepth"
+CHECKPOINTS = [
+    ("infinidepth.ckpt", "Main depth model (~1.5GB)"),
+    ("infinidepth_gs.ckpt", "Gaussian splatting predictor (~600MB)"),
+    ("moge2.pt", "MoGe-2 for metric depth (~400MB)"),
+    ("skyseg.onnx", "Sky segmentation (~40MB, optional)"),
+]
 
 try:
     from huggingface_hub import hf_hub_download
     import huggingface_hub
-    
+
     print(f"huggingface_hub version: {huggingface_hub.__version__}")
-    
-    # Download the model file
-    path = hf_hub_download(
-        repo_id="depth-anything/DA3-GIANT",
-        filename="model.safetensors",
-        resume_download=True,
-    )
-    
+    print()
+
+    for filename, description in CHECKPOINTS:
+        print(f"Downloading {filename} ({description})...")
+        try:
+            path = hf_hub_download(
+                repo_id=INFINIDEPTH_REPO,
+                filename=filename,
+                resume_download=True,
+            )
+            print(f"  SUCCESS: {path}")
+        except Exception as e:
+            print(f"  WARNING: Failed to download {filename}: {e}")
+            if "skyseg" not in filename:
+                print("  This checkpoint is required for InfiniDepth to work.")
+                raise
+
     print()
     print("=" * 60)
     print("SUCCESS!")
-    print(f"Model cached at: {path}")
+    print("InfiniDepth checkpoints downloaded and cached.")
     print("=" * 60)
     print()
     print("You can now run the Gaussian export pipeline:")
-    print("  python -m offline.export_gaussian_ply -i video.mp4 -o output/ --mode frames")
-    
+    print("  python -m offline.cli images --input ./images/ --output ./ply_output/ --mode frames")
+
 except KeyboardInterrupt:
     print("\nDownload cancelled by user.")
     sys.exit(1)
 except Exception as e:
     print(f"\nERROR: {e}")
     import traceback
+
     traceback.print_exc()
     sys.exit(1)

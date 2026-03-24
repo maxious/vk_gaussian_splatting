@@ -16,7 +16,6 @@ from .ply_io import (
     write_static_gaussian_ply,
 )
 from .processors.infini_depth import InfiniDepthGaussianProcessor
-from .processors.fastgs import FastGSProcessor
 from .processors.matrix3d import Matrix3DGaussianProcessor
 from .processors.sharp import SharpGaussianProcessor
 from .processors.ttt_lrm import TttLRMGaussianProcessor
@@ -173,7 +172,7 @@ def export_video_to_gaussian_plys(
     output_path: Path,
     mode: str = "frames",
     format: str = "ply",
-    model_id: str = "depth-anything/DA3-GIANT",
+    model_id: str = "InfiniDepth",
     frame_skip: int = 5,
     chunk_size: int = 10,
     max_frames: int | None = None,
@@ -254,26 +253,7 @@ def export_video_to_gaussian_plys(
     fps = cap.get(cv2.CAP_PROP_FPS)
     cap.release()
 
-    if "amb3r" in model_id.lower():
-        from .processors.amb3r import AMB3RFastGSProcessor
-
-        ckpt_path = None
-        fastgs_iterations = 30_000
-        fastgs_path = None
-
-        if ":" in model_id:
-            parts = model_id.split(":", 1)
-            config = parts[1]
-            if Path(config).exists() or "/" in config or "\\" in config:
-                ckpt_path = config
-
-        processor = AMB3RFastGSProcessor(
-            device=device,
-            ckpt_path=ckpt_path,
-            fastgs_iterations=fastgs_iterations,
-            fastgs_path=fastgs_path,
-        )
-    elif "matrix3d" in model_id.lower():
+    if "matrix3d" in model_id.lower():
         processor = Matrix3DGaussianProcessor(device=device)
     elif "sharp" in model_id.lower():
         # Parse SHARP model configuration
@@ -372,9 +352,11 @@ def export_video_to_gaussian_plys(
             process_res=process_res,
         )
     else:
+        # Use 4/3 aspect ratio (like InfiniDepth native resolution 768x1024)
+        # Both dimensions must be divisible by 16 for DINOv3 patch embedding
         processor = InfiniDepthGaussianProcessor(
             device=device,
-            input_size=(process_res, int(process_res * 1.33)),
+            input_size=(process_res, round(process_res * 4 / 3)),
             enable_skyseg_model=enable_skyseg,
         )
 
@@ -614,7 +596,7 @@ def export_images_to_gaussian_plys(
     mode: str = "frames",
     format: str = "ply",
     fps: float = 30.0,
-    model_id: str = "depth-anything/DA3-GIANT",
+    model_id: str = "InfiniDepth",
     image_pattern: str = "*.jpg",
     max_frames: int | None = None,
     device: str = "cuda",
@@ -701,25 +683,6 @@ def export_images_to_gaussian_plys(
             logger.info("Exported %d PLY files to %s", len(frames), output_path)
         return
 
-    elif "amb3r" in model_id.lower():
-        from .processors.amb3r import AMB3RFastGSProcessor
-
-        ckpt_path = None
-        fastgs_iterations = 30_000
-        fastgs_path = None
-
-        if ":" in model_id:
-            parts = model_id.split(":", 1)
-            config = parts[1]
-            if Path(config).exists() or "/" in config or "\\" in config:
-                ckpt_path = config
-
-        processor = AMB3RFastGSProcessor(
-            device=device,
-            ckpt_path=ckpt_path,
-            fastgs_iterations=fastgs_iterations,
-            fastgs_path=fastgs_path,
-        )
     elif "matrix3d" in model_id.lower():
         processor = Matrix3DGaussianProcessor(device=device)
     elif "motioncrafter" in model_id.lower():
@@ -750,78 +713,10 @@ def export_images_to_gaussian_plys(
             model_path = None
 
         processor = SharpGaussianProcessor(model_path=model_path, device=device)
-    elif "fastgs" in model_id.lower():
-        from .processors.fastgs import FastGSProcessor
-
-        fastgs_path = None
-        iterations = 30_000
-
-        if ":" in model_id:
-            parts = model_id.split(":", 1)
-            config = parts[1]
-
-            if Path(config).exists() or "\\" in config or "/" in config:
-                fastgs_path = config
-            else:
-                try:
-                    iterations = int(config)
-                except ValueError:
-                    pass
-
-        processor = FastGSProcessor(
-            device=device,
-            iterations=iterations,
-            fastgs_path=fastgs_path,
-            white_background=False,
-            eval=False,
-            sh_degree=3,
-        )
-    elif "trellis.2" in model_id.lower():
-        from .processors.trellis2 import Trellis2Processor
-
-        processor = Trellis2Processor(model_id=model_id, device=device)
-
-        # TRELLIS.2 produces GLB meshes or VXZ o-voxel files, not Gaussians
-        # Determine output format based on --format arg or file extension
-        output_format = format.lower() if format else "glb"
-
-        # Handle frames mode (export each image separately)
-        if mode == "frames":
-            output_path.mkdir(parents=True, exist_ok=True)
-            for i, p in enumerate(image_paths):
-                if output_format == "vxz":
-                    out_file = output_path / f"{p.stem}.vxz"
-                    processor.export_vxz(p, out_file)
-                else:
-                    # Default to GLB
-                    out_file = output_path / f"{p.stem}.glb"
-                    processor.export_glb(p, out_file)
-            return
-
-        # Handle single output mode
-        if output_path.suffix == "":
-            output_path.mkdir(parents=True, exist_ok=True)
-            if output_format == "vxz":
-                out_file = output_path / f"{image_paths[0].stem}.vxz"
-            else:
-                out_file = output_path / f"{image_paths[0].stem}.glb"
-        else:
-            out_file = output_path
-
-        if output_format == "vxz":
-            processor.export_vxz(image_paths[0], out_file)
-        else:
-            processor.export_glb(image_paths[0], out_file)
-        return
-
-    elif "trellis" in model_id.lower():
-        from .processors.trellis import TrellisProcessor
-
-        processor = TrellisProcessor(model_id=model_id, device=device)
     else:
         processor = InfiniDepthGaussianProcessor(
             device=device,
-            input_size=(process_res, int(process_res * 1.33)),
+            input_size=(process_res, round(process_res * 4 / 3)),
             enable_skyseg_model=enable_skyseg,
         )
 
@@ -843,7 +738,6 @@ def export_images_to_gaussian_plys(
             mask_first_frame=mask_first_frame,
         )
     else:
-        # Generic processor (Trellis)
         frames = processor.process_frames(image_paths, timestamps_ms, per_frame=True)
 
     if not frames:

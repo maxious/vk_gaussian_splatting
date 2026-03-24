@@ -82,12 +82,21 @@ class InfiniDepthDeviceWorker(DeviceWorker[np.ndarray, tuple[np.ndarray, float, 
         h, w = frame.shape[:2]
         max_dim = max(h, w)
         if max_dim <= process_res:
+            # Scale down to process_res while maintaining aspect ratio
+            # Round to nearest multiple of 16 for DINOv3 compatibility
+            scale = float(process_res) / float(max_dim)
+            new_w = max(16, int(round(w * scale / 16) * 16))
+            new_h = max(16, int(round(h * scale / 16) * 16))
+            if (new_w, new_h) != (w, h):
+                return cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
             return frame
 
-        scale = float(process_res) / float(max_dim)
-        new_w = max(1, int(round(w * scale)))
-        new_h = max(1, int(round(h * scale)))
-        return cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        # Scale up if needed, also round to nearest multiple of 16
+        new_w = max(16, int(round(w / 16) * 16))
+        new_h = max(16, int(round(h / 16) * 16))
+        if (new_w, new_h) != (w, h):
+            return cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        return frame
 
     @staticmethod
     def _depth_tensor_to_numpy(depth_tensor: torch.Tensor, h: int, w: int) -> np.ndarray:

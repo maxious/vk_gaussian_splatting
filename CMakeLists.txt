@@ -199,10 +199,6 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/spz)
 set_property(TARGET spz PROPERTY FOLDER "ThirdParty")
 
 #####
-# Include O-Voxel (TRELLIS.2)
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/o-voxel)
-
-#####
 # Include fastgltf for efficient GLTF/GLB loading
 set(FASTGLTF_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
 set(FASTGLTF_ENABLE_EXAMPLES OFF CACHE BOOL "" FORCE)

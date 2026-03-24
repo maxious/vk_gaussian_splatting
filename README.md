@@ -32,7 +32,7 @@ This fork adds the following features to the original NVIDIA sample.
 
 ### Additional Format Support
 - **SOG Format** - Import support for the [PlayCanvas SOG format](https://developer.playcanvas.com/user-manual/gaussian-splatting/formats/sog/), a highly compressed format (~15–20× smaller than PLY). Convert PLY files to SOG using the [SplatTransform](https://github.com/playcanvas/splat-transform) tool.
-- **GLB/GLTF Format** - Import support for standard GLB/GLTF mesh files, enabling visualization of outputs from mesh-generating models like TRELLIS.2 alongside Gaussian Splats.
+- **GLB/GLTF Format** - Import support for standard GLB/GLTF mesh files, enabling visualization of 3D mesh outputs alongside Gaussian Splats.
 - **4DV Format** - Import support for `.4dv` files from **FreeTimeGS** [Wang2025], enabling 4D Gaussian Splatting with smooth temporal fading.
 - **FreeTimeGS PLY** - Import support for uncompressed FreeTimeGS PLY files containing temporal data (`t`, `t_scale`, `motion_0/1/2` properties), enabling the same 4D animation as `.4dv` files.
 

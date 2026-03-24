@@ -70,12 +70,11 @@ def _normalize_normals(normals: np.ndarray) -> np.ndarray:
 def _is_image_file(path: str) -> bool:
     """Check if path is an image file based on extension."""
     ext = str(path).lower()
-    return ext.endswith(('.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.webp'))
+    return ext.endswith((".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"))
 
 
 def run_depth(args) -> None:
     """Run depth extraction on video or image and output H.265 video."""
-    os.environ["DA3_LOG_LEVEL"] = "WARN"
 
     is_image = _is_image_file(args.input)
 
@@ -112,43 +111,19 @@ def run_depth(args) -> None:
     logger.info(f"Read {len(frames)} frames from {args.input}")
     logger.info(f"  Resolution: {width}x{height}, FPS: {fps:.2f}")
 
-    use_moge = _is_moge_model(args.model)
+    from backend.models.depth_model import MultiDeviceDepthModel
 
-    if use_moge:
-        from offline.processors.moge import MoGeGaussianProcessor
-
-        device = args.device_spec if args.device_spec != "auto" else "auto"
-        if device.startswith("xpu"):
-            device = device.split(":")[0] if ":" in device else "xpu"
-        elif device.startswith("cuda"):
-            device = device.split(":")[0] if ":" in device else "cuda"
-
-        logger.info(f"Using MoGe model: {args.model} on device: {device}")
-        moge_processor = MoGeGaussianProcessor(
-            model_id=args.model,
-            device=device,
-            process_res=args.process_res,
-        )
-        moge_processor._load_model()
-        moge_model = moge_processor.model
-        moge_device = moge_processor.device
-        moge_dtype = moge_processor.dtype
-    else:
-        from backend.models.depth_model import MultiDeviceDepthModel
-
-        logger.info(f"Using DA3 model: {args.model} with device_spec={args.device_spec}")
-        model = MultiDeviceDepthModel(
-            model_id=args.model,
-            device_spec=args.device_spec,
-        )
-        model.process_res = args.process_res
+    logger.info(f"Using InfiniDepth model: {args.model} with device_spec={args.device_spec}")
+    model = MultiDeviceDepthModel(
+        model_id=args.model,
+        device_spec=args.device_spec,
+    )
+    model.process_res = args.process_res
 
     args.output.mkdir(parents=True, exist_ok=True)
     start_time = time.perf_counter()
 
-    from torchcodec.encoders import VideoEncoder
-
-    depth_tensors = []
+    depth_frames = []
     z_mins = []
     z_maxs = []
     has_normals = False
@@ -157,17 +132,11 @@ def run_depth(args) -> None:
         batch_end = min(batch_start + args.batch_size, len(frames))
         batch_frames = frames[batch_start:batch_end]
 
-        if use_moge:
-            results = []
-            for frame in batch_frames:
-                result = _infer_moge_frame(moge_model, frame, moge_device, moge_dtype)
-                results.append(result)
-        else:
-            results = model.infer_depth_batch(
-                batch_frames,
-                target_sizes=[(fr.shape[1], fr.shape[0]) for fr in batch_frames],
-                batch_size=len(batch_frames),
-            )
+        results = model.infer_depth_batch(
+            batch_frames,
+            target_sizes=[(fr.shape[1], fr.shape[0]) for fr in batch_frames],
+            batch_size=len(batch_frames),
+        )
 
         for depth_pred in results:
             depth = depth_pred.depth
@@ -188,37 +157,44 @@ def run_depth(args) -> None:
                 normal_viz = _normalize_normals(normals)
                 depth_expanded = np.stack([normalized] * 3, axis=2)
                 combined = np.concatenate([depth_expanded, normal_viz], axis=1)
-                tensor = torch.from_numpy(combined).permute(2, 0, 1).unsqueeze(0)
+                # depth_frames stores (H, W, 3) uint8
+                depth_frames.append(combined)
             else:
-                tensor = torch.from_numpy(normalized).unsqueeze(0).unsqueeze(0)
-                tensor = tensor.repeat(1, 3, 1, 1)
-            depth_tensors.append(tensor)
+                # Convert grayscale to 3-channel RGB
+                rgb_frame = np.stack([normalized] * 3, axis=2)
+                depth_frames.append(rgb_frame)
 
         elapsed = time.perf_counter() - start_time
         fps_rate = batch_end / elapsed if elapsed > 0 else 0
         logger.info(f"  Processed {batch_end}/{len(frames)} frames ({fps_rate:.1f} fps)")
 
-    all_depth_frames = torch.cat(depth_tensors, dim=0)
+    # Encode depth video using imageio (uses ffmpeg internally)
+    import imageio
 
-    # Also encode RGB source frames as video (so viewer can load image inputs)
-    rgb_tensors = []
-    for frame in frames:
-        # Convert RGB (H, W, 3) to tensor (1, 3, H, W)
-        tensor = torch.from_numpy(frame).permute(2, 0, 1).unsqueeze(0)
-        rgb_tensors.append(tensor)
-    all_rgb_frames = torch.cat(rgb_tensors, dim=0)
-
-    # Encode depth video
     depth_video_path = args.output / "depth_sequence.mp4"
-    logger.info(f"Encoding {all_depth_frames.shape[0]} depth frames to H.265 lossless...")
-    depth_encoder = VideoEncoder(frames=all_depth_frames, frame_rate=fps)
-    depth_encoder.to_file(depth_video_path, codec="hevc", pixel_format="yuv444p", crf=0)
+    logger.info(f"Encoding {len(depth_frames)} depth frames to H.265 lossless...")
+    imageio.mimwrite(
+        depth_video_path,
+        depth_frames,
+        fps=fps,
+        codec="hevc",
+        quality=None,
+        pixelformat="yuv444p" if has_normals else "yuv420p",
+        output_params=["-crf", "0"],
+    )
 
     # Encode RGB video
     rgb_video_path = args.output / "rgb_sequence.mp4"
-    logger.info(f"Encoding {all_rgb_frames.shape[0]} RGB frames to H.265...")
-    rgb_encoder = VideoEncoder(frames=all_rgb_frames, frame_rate=fps)
-    rgb_encoder.to_file(rgb_video_path, codec="hevc", pixel_format="yuv420p", crf=18)
+    logger.info(f"Encoding {len(frames)} RGB frames to H.265...")
+    imageio.mimwrite(
+        rgb_video_path,
+        frames,
+        fps=fps,
+        codec="hevc",
+        quality=None,
+        pixelformat="yuv420p",
+        output_params=["-crf", "18"],
+    )
 
     logger.info(f"Wrote depth video to {depth_video_path}")
     logger.info(f"Wrote RGB video to {rgb_video_path}")
@@ -248,5 +224,4 @@ def run_depth(args) -> None:
     with open(args.output / "metadata.json", "w") as f:
         json.dump(metadata, f, indent=2)
 
-    if not use_moge:
-        model.shutdown()
+    model.shutdown()
