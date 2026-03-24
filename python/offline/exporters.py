@@ -251,7 +251,20 @@ def export_video_to_gaussian_plys(
 
     cap = cv2.VideoCapture(str(video_path))
     fps = cap.get(cv2.CAP_PROP_FPS)
+    frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     cap.release()
+
+    # Calculate 16-aligned dimensions preserving original aspect ratio
+    # Height comes from process_res (16-aligned by definition)
+    # Width is calculated to preserve aspect ratio, then 16-aligned
+    aspect_ratio = frame_width / frame_height
+    aligned_height = (process_res // 16) * 16
+    aligned_width = round(aligned_height * aspect_ratio)
+    aligned_width = (aligned_width // 16) * 16  # Ensure 16-aligned
+    # Minimum size check
+    aligned_width = max(aligned_width, 16)
+    aligned_height = max(aligned_height, 16)
 
     if "matrix3d" in model_id.lower():
         processor = Matrix3DGaussianProcessor(device=device)
@@ -352,11 +365,9 @@ def export_video_to_gaussian_plys(
             process_res=process_res,
         )
     else:
-        # Use 4/3 aspect ratio (like InfiniDepth native resolution 768x1024)
-        # Both dimensions must be divisible by 16 for DINOv3 patch embedding
         processor = InfiniDepthGaussianProcessor(
             device=device,
-            input_size=(process_res, round(process_res * 4 / 3)),
+            input_size=(aligned_height, aligned_width),
             enable_skyseg_model=enable_skyseg,
         )
 
@@ -645,6 +656,20 @@ def export_images_to_gaussian_plys(
 
     timestamps_ms = [i * (1000.0 / fps) for i in range(len(image_paths))]
 
+    import cv2
+
+    first_img = cv2.imread(str(image_paths[0]))
+    if first_img is None:
+        raise ValueError(f"Could not read first image: {image_paths[0]}")
+    img_height, img_width = first_img.shape[:2]
+
+    aspect_ratio = img_width / img_height
+    aligned_height = (process_res // 16) * 16
+    aligned_width = round(aligned_height * aspect_ratio)
+    aligned_width = (aligned_width // 16) * 16
+    aligned_width = max(aligned_width, 16)
+    aligned_height = max(aligned_height, 16)
+
     if "tttlrm" in model_id.lower():
         # tttLRM expects JSON manifest paths, not raw image paths.
         # Parse model_id for checkpoint: tttlrm:/path/to/checkpoint.pt
@@ -722,7 +747,7 @@ def export_images_to_gaussian_plys(
     else:
         processor = InfiniDepthGaussianProcessor(
             device=device,
-            input_size=(process_res, round(process_res * 4 / 3)),
+            input_size=(aligned_height, aligned_width),
             enable_skyseg_model=enable_skyseg,
         )
 
