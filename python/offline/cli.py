@@ -174,6 +174,11 @@ def main():
         help="Keep black splats instead of removing them (default: remove)",
     )
     export_parser.add_argument(
+        "--enable-skyseg",
+        action="store_true",
+        help="Enable sky segmentation to remove sky regions (InfiniDepth only)",
+    )
+    export_parser.add_argument(
         "--device",
         type=str,
         default="auto",
@@ -331,6 +336,11 @@ def main():
         help="Keep black splats instead of removing them (default: remove)",
     )
     images_parser.add_argument(
+        "--enable-skyseg",
+        action="store_true",
+        help="Enable sky segmentation to remove sky regions (InfiniDepth only)",
+    )
+    images_parser.add_argument(
         "--flip-y",
         action="store_true",
         help="Negate Y coordinates to flip the coordinate system (useful for SHARP models). If using postprocess afterward, don't flip there too.",
@@ -442,6 +452,7 @@ def main():
             remove_black_splats=not getattr(args, "no_remove_black_splats", False),
             extract_audio=getattr(args, "extract_audio", False),
             resume_processing=getattr(args, "resume_processing", True),
+            enable_skyseg=getattr(args, "enable_skyseg", False),
         )
 
     elif args.command == "postprocess":
@@ -515,6 +526,7 @@ def main():
             debug_output_dir=getattr(args, "debug_output_dir", None),
             refine_boundaries=getattr(args, "refine_boundaries", False),
             boundary_min_angle=getattr(args, "boundary_min_angle", 3.0),
+            enable_skyseg=getattr(args, "enable_skyseg", False),
         )
 
 

@@ -1,1 +1,4 @@
-"""Device workers for multi-GPU/XPU processing."""
+from backend.workers.infini_depth_worker import InfiniDepthDeviceWorker
+
+DA3DeviceWorker = InfiniDepthDeviceWorker
+MoGEDeviceWorker = InfiniDepthDeviceWorker

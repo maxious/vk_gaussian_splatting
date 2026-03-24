@@ -15,7 +15,7 @@ from .ply_io import (
     write_freetimegs_ply,
     write_static_gaussian_ply,
 )
-from .processors.da3 import DA3GaussianProcessor
+from .processors.infini_depth import InfiniDepthGaussianProcessor
 from .processors.fastgs import FastGSProcessor
 from .processors.matrix3d import Matrix3DGaussianProcessor
 from .processors.sharp import SharpGaussianProcessor
@@ -186,6 +186,7 @@ def export_video_to_gaussian_plys(
     remove_black_splats: bool = True,
     extract_audio: bool = False,
     resume_processing: bool = True,
+    enable_skyseg: bool = False,
 ) -> None:
     """Convert video to Gaussian PLY files.
 
@@ -371,10 +372,10 @@ def export_video_to_gaussian_plys(
             process_res=process_res,
         )
     else:
-        processor = DA3GaussianProcessor(
-            model_id=model_id,
+        processor = InfiniDepthGaussianProcessor(
             device=device,
-            process_res=process_res,
+            input_size=(process_res, int(process_res * 1.33)),
+            enable_skyseg_model=enable_skyseg,
         )
 
     all_frames: list[GaussianFrame] = []
@@ -389,11 +390,9 @@ def export_video_to_gaussian_plys(
         )
 
         try:
-            # For frames mode, process individually to get per-frame PLYs
-            # For freetimegs mode, process merged for unified scene
             per_frame = mode == "frames"
 
-            if isinstance(processor, DA3GaussianProcessor):
+            if isinstance(processor, InfiniDepthGaussianProcessor):
                 chunk_frames = processor.process_frames(
                     chunk_paths,
                     chunk_timestamps,
@@ -629,6 +628,7 @@ def export_images_to_gaussian_plys(
     debug_output_dir: Path | None = None,
     refine_boundaries: bool = False,
     boundary_min_angle: float = 3.0,
+    enable_skyseg: bool = False,
 ) -> None:
     """Process images with DA3 and export to Gaussian PLY files.
 
@@ -722,16 +722,6 @@ def export_images_to_gaussian_plys(
         )
     elif "matrix3d" in model_id.lower():
         processor = Matrix3DGaussianProcessor(device=device)
-    elif "moge" in model_id.lower():
-        from .processors.moge import MoGeGaussianProcessor
-
-        processor = MoGeGaussianProcessor(
-            model_id=model_id,
-            device=device,
-            debug_output_dir=debug_output_dir,
-            refine_boundaries=refine_boundaries,
-            boundary_min_angle=boundary_min_angle,
-        )
     elif "motioncrafter" in model_id.lower():
         from .processors.motioncrafter import MotionCrafterProcessor
 
@@ -829,14 +819,13 @@ def export_images_to_gaussian_plys(
 
         processor = TrellisProcessor(model_id=model_id, device=device)
     else:
-        processor = DA3GaussianProcessor(
-            model_id=model_id,
+        processor = InfiniDepthGaussianProcessor(
             device=device,
-            process_res=process_res,
+            input_size=(process_res, int(process_res * 1.33)),
+            enable_skyseg_model=enable_skyseg,
         )
 
-    # Process frames individually first
-    if isinstance(processor, DA3GaussianProcessor):
+    if isinstance(processor, InfiniDepthGaussianProcessor):
         frames = processor.process_frames(
             image_paths,
             timestamps_ms,
@@ -891,11 +880,9 @@ def export_images_to_gaussian_plys(
 
     # Extract flow priors if available (from MotionCrafter)
     all_flows = None
-    if all_frames and hasattr(all_frames[0], "flow") and all_frames[0].flow is not None:
+    if frames and hasattr(frames[0], "flow") and frames[0].flow is not None:
         logger.info("Extracting flow priors for motion tracking...")
-        all_flows = [f.flow for f in all_frames]
-        # Ensure flows are not None (some frames might be skipped or fail)
-        # If any flow is None, we should probably disable flow priors to avoid crashes
+        all_flows = [f.flow for f in frames]
         if any(f is None for f in all_flows):
             logger.warning("Some frames missing flow data, disabling flow priors")
             all_flows = None
@@ -920,7 +907,7 @@ def export_images_to_gaussian_plys(
             time_scale,
             compression_scale,
         ) = compute_motion_vectors_delta_compression_cuda(
-            all_frames,
+            frames,
             fps,
             compression_ratio_target=compression_ratio,
             use_int8=use_int8,

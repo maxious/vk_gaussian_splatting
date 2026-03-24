@@ -364,20 +364,17 @@ class tttLRM(nn.Module):
         features = sp_support.sp_all_gather(features, gather_dim=1, length=num_local_gaussians * sp_support.get_sp_world_size())
         scaling = sp_support.sp_all_gather(scaling, gather_dim=1, length=num_local_gaussians * sp_support.get_sp_world_size())
         rotation = sp_support.sp_all_gather(rotation, gather_dim=1, length=num_local_gaussians * sp_support.get_sp_world_size())
-        opacity = sp_support.sp_all_gather(opacity, gather_dim=1, length=num_local_gaussians * sp_support.get_sp_world_size())
-     
-        # Early return for inference (skip rendering and loss computation)
-        if gaussians_only:
-            return edict(
-                gaussians={'xyz': xyz.float(), 'feature': features.float(), 'scale': scaling.float(), 'rotation': rotation.float(), 'opacity': opacity.float()},
-                loss_metrics=None, render=None, keep_idx=None,
-            )
-
         # Gaussian Pruning
         threshold = None
         keep_idx = None
         gaussian_usage = (opacity.sigmoid() > self.config.get('usage_threshold', 0.001)).float().mean(dim=1).squeeze(-1) # (B,)
         prune_ratio = self.config.model.gaussians.get("prune_ratio", 0.0)
+        
+        # DEBUG: Log pruning config
+        import os
+        if os.environ.get("TTTLRM_DEBUG"):
+            print(f"[DEBUG] Before pruning: xyz.shape={xyz.shape}, prune_ratio={prune_ratio}")
+        
         if prune_ratio > 0.0:
             random_ratio = self.config.model.gaussians.get("random_ratio", 0.0)
             if data_batch['num_input_views'][0].item() >= 64: # assuming batch size is 1
@@ -386,6 +383,11 @@ class tttLRM(nn.Module):
 
             random_ratio = (1 - prune_ratio) * random_ratio
             keepnum = int(prune_ratio * xyz.size(1))
+            
+            # DEBUG
+            if os.environ.get("TTTLRM_DEBUG"):
+                print(f"[DEBUG] Pruning: keepnum={keepnum}, random_ratio={random_ratio}, total={xyz.size(1)}")
+            
             sort_idx = opacity.argsort(dim=1, descending=True)
             keep_idx = sort_idx[:, :keepnum]
             rest_idx = sort_idx[:, keepnum:]
@@ -398,6 +400,18 @@ class tttLRM(nn.Module):
             scaling = scaling.gather(1, keep_idx.expand(-1, -1, scaling.size(2)))
             rotation = rotation.gather(1, keep_idx.expand(-1, -1, rotation.size(2)))
             opacity = opacity.gather(1, keep_idx.expand(-1, -1, opacity.size(2)))
+            
+            # DEBUG
+            if os.environ.get("TTTLRM_DEBUG"):
+
+
+        # Early return for inference (skip rendering and loss computation) - AFTER pruning
+        if gaussians_only:
+            return edict(
+                gaussians={'xyz': xyz.float(), 'feature': features.float(), 'scale': scaling.float(), 'rotation': rotation.float(), 'opacity': opacity.float()},
+                loss_metrics=None, render=None, keep_idx=keep_idx,
+            )
+
 
         # Render at target camera pose
         render = None

@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import os
 
-os.environ["DA3_LOG_LEVEL"] = "WARN"
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 

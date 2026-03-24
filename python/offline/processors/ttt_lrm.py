@@ -24,8 +24,13 @@ from PIL import Image
 from common.device_worker_pool import DeviceWorker, DeviceWorkerPool
 from ..types import GaussianFrame
 from .base import GaussianProcessor
-
 logger = logging.getLogger(__name__)
+# Add file handler for debugging
+_tttlrm_log_file = os.environ.get("TTTLRM_LOG_FILE", "/tmp/tttlrm_debug.log")
+_handler = logging.FileHandler(_tttlrm_log_file, mode="a")
+_handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
+logger.addHandler(_handler)
+logger.setLevel(logging.DEBUG)
 
 _TTTLRM_ROOT = str(Path(__file__).parent.parent.parent / "third_party" / "tttlrm")
 
@@ -322,7 +327,6 @@ class TttLRMDeviceWorker(DeviceWorker[dict, dict]):
             enabled=True, device_type=device.type, dtype=dtype,
         ):
             result = self.model(batch, gaussians_only=True)
-
         gaussians = result.gaussians
         xyz = gaussians["xyz"][0].cpu().numpy()
         feature = gaussians["feature"][0].cpu().numpy()
@@ -330,6 +334,27 @@ class TttLRMDeviceWorker(DeviceWorker[dict, dict]):
         scale = gaussians["scale"][0].cpu().numpy()
         rotation = gaussians["rotation"][0].cpu().numpy()
         opacity = gaussians["opacity"][0].squeeze(-1).cpu().numpy()
+
+        logger.debug(
+            "Worker %d: Raw gaussians from model: xyz=%s, feature=%s, scale=%s, rotation=%s, opacity=%s",
+            self.worker_id,
+            xyz.shape,
+            feature.shape,
+            scale.shape,
+            rotation.shape,
+            opacity.shape,
+        )
+
+        # Log opacity stats
+        sigmoid_opacity_vals = 1.0 / (1.0 + np.exp(-opacity))
+        logger.debug(
+            "Worker %d: Opacity stats - min=%.6f, max=%.6f, mean=%.6f, median=%.6f",
+            self.worker_id,
+            sigmoid_opacity_vals.min(),
+            sigmoid_opacity_vals.max(),
+            sigmoid_opacity_vals.mean(),
+            np.median(sigmoid_opacity_vals),
+        )
 
         if self.opacity_threshold > 0:
             sigmoid_opacity = 1.0 / (1.0 + np.exp(-opacity))

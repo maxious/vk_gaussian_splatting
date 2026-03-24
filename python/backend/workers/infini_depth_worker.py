@@ -1,0 +1,158 @@
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+from typing import Any, Optional
+
+import cv2
+import numpy as np
+import torch
+
+from common.device_worker_pool import DeviceWorker
+
+logger = logging.getLogger(__name__)
+
+
+class InfiniDepthDeviceWorker(DeviceWorker[np.ndarray, tuple[np.ndarray, float, float, None]]):
+    def __init__(
+        self,
+        device: str,
+        worker_id: int,
+        model_id: Optional[str] = None,
+        process_res: int = 640,
+    ) -> None:
+        super().__init__(device, worker_id, model_id=model_id, process_res=process_res)
+        self.model_id = model_id
+        self.process_res = int(process_res)
+
+    def load_model(self) -> None:
+        if not self.device.startswith("cuda"):
+            raise RuntimeError(
+                f"InfiniDepth worker requires CUDA device, got '{self.device}'. "
+                "Set VIDEO_DEPTH_DEVICE_SPEC=cuda or ensure CUDA is available."
+            )
+
+        try:
+            from InfiniDepth.model import InfiniDepth
+        except ImportError as exc:
+            raise RuntimeError(
+                "InfiniDepth package is not available. Install python extras with `--extra infini_depth`."
+            ) from exc
+
+        model_path: str | None = None
+        if self.model_id and self.model_id.strip().lower() not in {
+            "infinidepth",
+            "infini_depth",
+            "default",
+        }:
+            candidate = Path(self.model_id).expanduser()
+            if not candidate.exists():
+                raise FileNotFoundError(
+                    f"InfiniDepth checkpoint not found at '{candidate}'. "
+                    "Set VIDEO_DEPTH_MODEL_ID to a local checkpoint .pth path."
+                )
+            model_path = str(candidate)
+
+        with torch.cuda.device(torch.device(self.device)):
+            self.model = InfiniDepth(model_path=model_path)
+        logger.info(
+            "InfiniDepth worker %s loaded model on %s (checkpoint=%s)",
+            self.worker_id,
+            self.device,
+            model_path or "<none>",
+        )
+
+    @staticmethod
+    def _dense_query_coord(batch: int, h: int, w: int, device: torch.device) -> torch.Tensor:
+        ys = (
+            (torch.arange(h, device=device, dtype=torch.float32) + 0.5) / max(float(h), 1.0)
+        ) * 2.0 - 1.0
+        xs = (
+            (torch.arange(w, device=device, dtype=torch.float32) + 0.5) / max(float(w), 1.0)
+        ) * 2.0 - 1.0
+        grid_y, grid_x = torch.meshgrid(ys, xs, indexing="ij")
+        query = torch.stack([grid_y, grid_x], dim=-1).reshape(1, -1, 2)
+        return query.expand(batch, -1, -1).contiguous()
+
+    @staticmethod
+    def _resize_for_inference(frame: np.ndarray, process_res: int) -> np.ndarray:
+        if process_res <= 0:
+            return frame
+
+        h, w = frame.shape[:2]
+        max_dim = max(h, w)
+        if max_dim <= process_res:
+            return frame
+
+        scale = float(process_res) / float(max_dim)
+        new_w = max(1, int(round(w * scale)))
+        new_h = max(1, int(round(h * scale)))
+        return cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+    @staticmethod
+    def _depth_tensor_to_numpy(depth_tensor: torch.Tensor, h: int, w: int) -> np.ndarray:
+        depth_tensor = depth_tensor.detach().float().cpu()
+
+        if depth_tensor.ndim == 4 and depth_tensor.shape[1] == 1:
+            depth = depth_tensor[0, 0].numpy()
+        elif depth_tensor.ndim == 3 and depth_tensor.shape[0] == 1:
+            if depth_tensor.shape[1] == h and depth_tensor.shape[2] == w:
+                depth = depth_tensor[0].numpy()
+            else:
+                depth = depth_tensor[0].reshape(h, w).numpy()
+        elif depth_tensor.ndim == 2:
+            depth = depth_tensor.reshape(h, w).numpy()
+        else:
+            depth = depth_tensor.reshape(h, w).numpy()
+
+        return np.asarray(depth, dtype=np.float32)
+
+    @staticmethod
+    def _compute_depth_range(depth: np.ndarray) -> tuple[float, float]:
+        valid = np.isfinite(depth) & (depth > 0.0)
+        if np.any(valid):
+            z_min = float(np.percentile(depth[valid], 1.0))
+            z_max = float(np.percentile(depth[valid], 99.0))
+        else:
+            z_min = 0.5
+            z_max = 10.0
+
+        if z_max <= z_min + 1e-6:
+            z_min = 0.5
+            z_max = 10.0
+        return z_min, z_max
+
+    def process_item(self, item: np.ndarray) -> tuple[np.ndarray, float, float, None]:
+        if self.model is None:
+            raise RuntimeError("InfiniDepth worker model is not loaded")
+
+        frame = np.asarray(item)
+        frame = self._resize_for_inference(frame, self.process_res)
+        h, w = frame.shape[:2]
+
+        if frame.dtype == np.uint8:
+            image = torch.from_numpy(frame).to(torch.float32) / 255.0
+        else:
+            image = torch.from_numpy(frame).to(torch.float32)
+            image = image.clamp(0.0, 1.0)
+
+        target_device = torch.device(self.device)
+        image = image.permute(2, 0, 1).unsqueeze(0).to(target_device, non_blocking=True)
+        query_coord = self._dense_query_coord(batch=1, h=h, w=w, device=image.device)
+
+        with torch.no_grad():
+            with torch.cuda.device(target_device):
+                output: Any = self.model.inference(
+                    image=image,
+                    query_coord=query_coord,
+                    use_batch_infer=True,
+                )
+        pred_depth = output[0]
+
+        depth = self._depth_tensor_to_numpy(pred_depth, h=h, w=w)
+        depth = np.nan_to_num(depth, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
+        z_min, z_max = self._compute_depth_range(depth)
+        return depth, z_min, z_max, None
+
+    def process_batch(self, items: list[np.ndarray]) -> list[tuple[np.ndarray, float, float, None]]:
+        return [self.process_item(item) for item in items]

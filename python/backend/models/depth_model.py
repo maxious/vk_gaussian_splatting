@@ -1,5 +1,3 @@
-"""Depth inference helper wrapping Depth Anything 3 metric models."""
-
 from __future__ import annotations
 
 import asyncio
@@ -8,32 +6,23 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
-import numpy as np
 import cv2
+import numpy as np
 import torch
 
 from backend.config import get_settings
 from common.device_worker_pool import DeviceWorkerPool
 
-try:
-    from depth_anything_3.api import DepthAnything3
-except ImportError:
-    DepthAnything3 = None  # type: ignore[assignment]
-
 
 @dataclass(slots=True)
 class DepthPrediction:
-    """Container for a depth map in meters."""
-
     depth: np.ndarray
     z_min: float
     z_max: float
-    normals: np.ndarray | None = None  # Optional surface normals (-1 to 1 range)
+    normals: np.ndarray | None = None
 
 
 class DepthModel:
-    """Lazy-loading wrapper around Video Depth Anything / Depth Anything 3."""
-
     def __init__(self, model_id: Optional[str] = None, device: Optional[str] = None) -> None:
         settings = get_settings()
         self.model_id = model_id or settings.depth_model_id
@@ -43,38 +32,99 @@ class DepthModel:
         self._semaphore: asyncio.Semaphore | None = None
         self._max_workers = settings.inference_worker_count
 
-    @property
-    def _is_moge(self) -> bool:
-        """Check if the current model is a MoGe model."""
-        return "moge" in self.model_id.lower()
+    @staticmethod
+    def _dense_query_coord(batch: int, h: int, w: int, device: torch.device) -> torch.Tensor:
+        ys = (
+            (torch.arange(h, device=device, dtype=torch.float32) + 0.5) / max(float(h), 1.0)
+        ) * 2.0 - 1.0
+        xs = (
+            (torch.arange(w, device=device, dtype=torch.float32) + 0.5) / max(float(w), 1.0)
+        ) * 2.0 - 1.0
+        grid_y, grid_x = torch.meshgrid(ys, xs, indexing="ij")
+        query = torch.stack([grid_y, grid_x], dim=-1).reshape(1, -1, 2)
+        return query.expand(batch, -1, -1).contiguous()
+
+    @staticmethod
+    def _resize_for_inference(frame: np.ndarray, process_res: int) -> np.ndarray:
+        if process_res <= 0:
+            return frame
+
+        h, w = frame.shape[:2]
+        max_dim = max(h, w)
+        if max_dim <= process_res:
+            return frame
+
+        scale = float(process_res) / float(max_dim)
+        new_w = max(1, int(round(w * scale)))
+        new_h = max(1, int(round(h * scale)))
+        return cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+    @staticmethod
+    def _depth_tensor_to_numpy(depth_tensor: torch.Tensor, h: int, w: int) -> np.ndarray:
+        depth_tensor = depth_tensor.detach().float().cpu()
+
+        if depth_tensor.ndim == 4 and depth_tensor.shape[1] == 1:
+            depth = depth_tensor[0, 0].numpy()
+        elif depth_tensor.ndim == 3 and depth_tensor.shape[0] == 1:
+            if depth_tensor.shape[1] == h and depth_tensor.shape[2] == w:
+                depth = depth_tensor[0].numpy()
+            else:
+                depth = depth_tensor[0].reshape(h, w).numpy()
+        elif depth_tensor.ndim == 2:
+            depth = depth_tensor.reshape(h, w).numpy()
+        else:
+            depth = depth_tensor.reshape(h, w).numpy()
+
+        return np.asarray(depth, dtype=np.float32)
+
+    @staticmethod
+    def _compute_depth_range(depth: np.ndarray) -> tuple[float, float]:
+        valid = np.isfinite(depth) & (depth > 0.0)
+        if np.any(valid):
+            z_min = float(np.percentile(depth[valid], 1.0))
+            z_max = float(np.percentile(depth[valid], 99.0))
+        else:
+            z_min = 0.5
+            z_max = 10.0
+
+        if z_max <= z_min + 1e-6:
+            z_min = 0.5
+            z_max = 10.0
+        return z_min, z_max
+
+    def _resolve_model_path(self) -> str | None:
+        raw = (self.model_id or "").strip()
+        if raw.lower() in {"", "infinidepth", "infini_depth", "default"}:
+            return None
+
+        candidate = Path(raw).expanduser()
+        if not candidate.exists():
+            raise FileNotFoundError(
+                f"InfiniDepth checkpoint not found at '{candidate}'. "
+                "Set VIDEO_DEPTH_MODEL_ID to a local checkpoint .pth path."
+            )
+        return str(candidate)
 
     def _ensure_model(self) -> Any:
         if self._model is not None:
             return self._model
 
-        if self._is_moge:
-            # Check if moge is available
-            try:
-                from moge.model import import_model_class_by_version
-            except ImportError:
-                raise RuntimeError(
-                    "MoGe package is not available. Please ensure 'moge' is vendored in 'python/moge'."
-                )
-            # Determine version from model_id
-            version = "v2" if "moge-2" in self.model_id else "v1"
-            ModelClass = import_model_class_by_version(version)
-            self._model = ModelClass.from_pretrained(self.model_id).to(self.device).eval()
-            if "cuda" in str(self.device):
-                self._model.half()
-            return self._model
-
-        if DepthAnything3 is None:
+        if self.device.type != "cuda":
             raise RuntimeError(
-                'depth-anything-3 package is not installed; run `uv pip install "videodepthviewer3d[inference]"`.'
+                f"InfiniDepth requires CUDA, got device '{self.device}'. "
+                "Set VIDEO_DEPTH_DEVICE_SPEC=cuda and VIDEO_DEPTH_MODEL_ID=<checkpoint>."
             )
-        # Use HuggingFace default cache (~/.cache/huggingface/hub/)
-        model = DepthAnything3.from_pretrained(self.model_id)
-        self._model = model.to(self.device).eval()
+
+        try:
+            from InfiniDepth.model import InfiniDepth
+        except ImportError as exc:
+            raise RuntimeError(
+                "InfiniDepth package is not available. Install python extras with `--extra infini_depth`."
+            ) from exc
+
+        model_path = self._resolve_model_path()
+        with torch.cuda.device(self.device):
+            self._model = InfiniDepth(model_path=model_path)
         return self._model
 
     async def infer_depth_async(
@@ -88,15 +138,17 @@ class DepthModel:
         async with self._semaphore:
             loop = asyncio.get_running_loop()
             return await loop.run_in_executor(
-                None, self.infer_depth, frame, process_res, target_size
+                None,
+                self.infer_depth,
+                frame,
+                process_res,
+                target_size,
             )
 
     @property
     def inflight_count(self) -> int:
         if self._semaphore is None:
             return 0
-        # semaphore.value is the number of available slots.
-        # inflight = max_workers - available
         return self._max_workers - self._semaphore._value
 
     def infer_depth(
@@ -106,90 +158,43 @@ class DepthModel:
         target_size: Optional[tuple[int, int]] = None,
     ) -> DepthPrediction:
         model = self._ensure_model()
-
-        # Use provided process_res or default to self.process_res
         res = process_res if process_res is not None else self.process_res
 
-        # Ensure frame is numpy array
-        if isinstance(frame, torch.Tensor):
-            frame_np = frame.cpu().numpy()
+        frame_np = frame.cpu().numpy() if isinstance(frame, torch.Tensor) else np.asarray(frame)
+        frame_proc = self._resize_for_inference(frame_np, res)
+        h, w = frame_proc.shape[:2]
+
+        if frame_proc.dtype == np.uint8:
+            image = torch.from_numpy(frame_proc).to(torch.float32) / 255.0
         else:
-            frame_np = frame
+            image = torch.from_numpy(frame_proc).to(torch.float32)
+            image = image.clamp(0.0, 1.0)
 
-        if self._is_moge:
-            # MoGe inference
-            # MoGe expects RGB float tensor (0..1)
-            if frame_np.dtype == np.uint8:
-                img_tensor = torch.from_numpy(frame_np).float() / 255.0
-            else:
-                img_tensor = torch.from_numpy(frame_np).float()
+        image = image.permute(2, 0, 1).unsqueeze(0).to(self.device, non_blocking=True)
+        query_coord = self._dense_query_coord(batch=1, h=h, w=w, device=image.device)
 
-            # (H, W, 3) -> (3, H, W)
-            img_tensor = img_tensor.permute(2, 0, 1).to(self.device)
+        with torch.no_grad():
+            with torch.cuda.device(self.device):
+                output: Any = model.inference(
+                    image=image,
+                    query_coord=query_coord,
+                    use_batch_infer=True,
+                )
+        pred_depth = output[0]
 
-            if "cuda" in str(self.device):
-                img_tensor = img_tensor.half()
+        depth = self._depth_tensor_to_numpy(pred_depth, h=h, w=w)
+        depth = np.nan_to_num(depth, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
+        z_min, z_max = self._compute_depth_range(depth)
 
-            with torch.no_grad():
-                output = model.infer(img_tensor, resolution_level=9)
-
-            depth = output["depth"].cpu().float().numpy()
-            mask = output["mask"].cpu().float().numpy()
-
-            # Get normals if available
-            normals = None
-            if "normal" in output:
-                normals = output["normal"].cpu().float().numpy()
-
-            # Mask valid pixels
-            valid_mask = mask > 0.5
-
-            if valid_mask.sum() > 0:
-                z_min = float(depth[valid_mask].min())
-                z_max = float(depth[valid_mask].max())
-            else:
-                z_min = 0.1
-                z_max = 10.0
-        else:
-            # DA3 inference (original logic)
-            prediction = model.inference(
-                [frame_np],
-                process_res=res,
-                process_res_method="upper_bound_resize",
-                export_dir=None,
-            )
-            depth = np.array(prediction.depth[0], dtype=np.float32, copy=True)
-            normals = None
-
-            z_min = float(np.percentile(depth, 1))
-            z_max = float(np.percentile(depth, 99))
-
-            # If all values are 0 (NaN/Inf replaced), use fallback range
-            if z_max <= z_min + 1e-6:
-                z_min = 0.5
-                z_max = 10.0
-
-        # Resize to target size if provided, otherwise to original frame size
         tgt_w, tgt_h = target_size if target_size else (frame_np.shape[1], frame_np.shape[0])
         depth = self._resize_depth(depth, tgt_h, tgt_w)
 
-        # Resize normals if available
-        if normals is not None:
-            normals = cv2.resize(normals, (tgt_w, tgt_h), interpolation=cv2.INTER_CUBIC)
-            # Clip to valid range after resize
-            normals = np.clip(normals, -1.0, 1.0)
-
-        depth = np.nan_to_num(depth, copy=True, nan=0.0, posinf=0.0, neginf=0.0)
-
-        return DepthPrediction(depth=depth, z_min=z_min, z_max=z_max, normals=normals)
+        return DepthPrediction(depth=depth, z_min=z_min, z_max=z_max, normals=None)
 
     @staticmethod
     def _resize_depth(depth: np.ndarray, target_h: int, target_w: int) -> np.ndarray:
         if depth.shape == (target_h, target_w):
             return depth
-        # Use OpenCV for resizing to release GIL (PIL often holds it)
-        # cv2.resize expects (width, height)
-        # Use INTER_AREA if downscaling, INTER_CUBIC/LINEAR if upscaling
 
         interpolation = cv2.INTER_CUBIC
         if target_w < depth.shape[1] and target_h < depth.shape[0]:
@@ -210,10 +215,10 @@ def get_depth_model(use_multi_device: bool = False) -> DepthModel | MultiDeviceD
         if _multi_device_depth_model is None:
             _multi_device_depth_model = MultiDeviceDepthModel()
         return _multi_device_depth_model
-    else:
-        if _depth_model is None:
-            _depth_model = DepthModel()
-        return _depth_model
+
+    if _depth_model is None:
+        _depth_model = DepthModel()
+    return _depth_model
 
 
 class MultiDeviceDepthModel:
@@ -226,13 +231,7 @@ class MultiDeviceDepthModel:
         self._max_workers = settings.inference_worker_count
         self._executor: ThreadPoolExecutor | None = None
 
-    @property
-    def _is_moge(self) -> bool:
-        """Check if the current model is a MoGe model."""
-        return "moge" in self.model_id.lower()
-
     def _get_executor(self) -> ThreadPoolExecutor:
-        """Get or create the thread pool executor."""
         if self._executor is None:
             self._executor = ThreadPoolExecutor(max_workers=self._max_workers)
         return self._executor
@@ -241,27 +240,15 @@ class MultiDeviceDepthModel:
         if self._worker_pool is not None:
             return self._worker_pool
 
-        # Choose worker class based on model type
-        if self._is_moge:
-            from backend.workers.moge_worker import MoGEDeviceWorker
-
-            worker_class = MoGEDeviceWorker
-            # MoGe worker uses model_id only, resolution is fixed in the worker
-            worker_kwargs = {"model_id": self.model_id}
-        else:
-            from backend.workers.da3_worker import DA3DeviceWorker
-
-            worker_class = DA3DeviceWorker
-            # DA3 worker needs process_res
-            worker_kwargs = {
-                "model_id": self.model_id,
-                "process_res": self.process_res,
-            }
+        from backend.workers.infini_depth_worker import InfiniDepthDeviceWorker
 
         self._worker_pool = DeviceWorkerPool(
-            worker_class=worker_class,
+            worker_class=InfiniDepthDeviceWorker,
             device_spec=self.device_spec,
-            worker_kwargs=worker_kwargs,
+            worker_kwargs={
+                "model_id": self.model_id,
+                "process_res": self.process_res,
+            },
         )
         return self._worker_pool
 
@@ -288,14 +275,12 @@ class MultiDeviceDepthModel:
         target_size: Optional[tuple[int, int]] = None,
     ) -> DepthPrediction:
         pool = self._ensure_worker_pool()
-
-        future, device = pool.submit(frame)
+        future, _ = pool.submit(frame)
         depth, z_min, z_max, normals = future.result()
 
         tgt_w, tgt_h = target_size if target_size else (frame.shape[1], frame.shape[0])
         depth = self._resize_depth(depth, tgt_h, tgt_w)
 
-        # Resize normals if available
         if normals is not None:
             normals = cv2.resize(normals, (tgt_w, tgt_h), interpolation=cv2.INTER_CUBIC)
             normals = np.clip(normals, -1.0, 1.0)
@@ -309,24 +294,8 @@ class MultiDeviceDepthModel:
         process_res: int | None = None,
         batch_size: int | None = None,
     ) -> list[DepthPrediction]:
-        """Process multiple frames in parallel across devices.
-
-        Uses DeviceWorkerPool.map() for efficient parallel processing.
-        Supports per-worker batch inference for better throughput.
-
-        Args:
-            frames: List of input frames
-            target_sizes: Optional list of target sizes (W, H) for each frame output
-            process_res: Optional processing resolution override
-            batch_size: Optional batch size for per-worker batch inference.
-                       If None, processes one frame per worker call.
-
-        Returns:
-            List of DepthPrediction objects
-        """
         pool = self._ensure_worker_pool()
 
-        # Process in parallel using pool.map with optional batch processing
         results: list[DepthPrediction] = []
         for i, (depth, z_min, z_max, normals) in enumerate(pool.map(frames, batch_size=batch_size)):
             tgt_w, tgt_h = (
@@ -334,7 +303,6 @@ class MultiDeviceDepthModel:
             )
             depth = self._resize_depth(depth, tgt_h, tgt_w)
 
-            # Resize normals if available
             if normals is not None:
                 normals = cv2.resize(normals, (tgt_w, tgt_h), interpolation=cv2.INTER_CUBIC)
                 normals = np.clip(normals, -1.0, 1.0)

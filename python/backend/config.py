@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     data_root: Path = Field(default=Path("tmp/sessions"), validation_alias="VIDEO_DEPTH_DATA_ROOT")
     video_cache_size: int = Field(default=8, validation_alias="VIDEO_DEPTH_CACHE")
     depth_model_id: str = Field(
-        default="depth-anything/DA3METRIC-LARGE",
+        default="InfiniDepth",
         validation_alias="VIDEO_DEPTH_MODEL_ID",
     )
     depth_process_res: int = Field(default=640, validation_alias="VIDEO_DEPTH_PROCESS_RES")

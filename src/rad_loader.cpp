@@ -1,4 +1,5 @@
 #include "rad_loader.h"
+#include "rad_loader_partial.h"
 
 #include <algorithm>
 #include <array>
@@ -1083,6 +1084,11 @@ bool parseRadFile(const std::vector<uint8_t>& bytes, RadDecoded& decoded, std::f
   }
 
   size_t chunkIndex = 0;
+  uint32_t maxChunksToLoad = rad_partial::getMaxChunksFromEnv();
+  if(maxChunksToLoad > 0)
+  {
+    LOGI("RAD: partial mode enabled, loading max %u chunks\n", maxChunksToLoad);
+  }
   while(offset < bytes.size())
   {
     if(offset + 4 > bytes.size())
@@ -1101,6 +1107,11 @@ bool parseRadFile(const std::vector<uint8_t>& bytes, RadDecoded& decoded, std::f
       return false;
 
     chunkIndex++;
+    if(maxChunksToLoad > 0 && chunkIndex >= maxChunksToLoad)
+    {
+      LOGI("RAD: partial mode limit reached (%u chunks), stopping decode\n", maxChunksToLoad);
+      break;
+    }
     if(progressCallback)
     {
       float p = 0.05f + 0.90f * (float(offset) / float(bytes.size()));
