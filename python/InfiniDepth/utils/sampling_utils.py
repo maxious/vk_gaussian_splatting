@@ -10,15 +10,15 @@ def sample_by_equal_mass_inverse_cdf(p_map, N):
     cdf = torch.cumsum(flat_p, dim=0)
     cdf = cdf / cdf[-1]
     q = (torch.arange(N, device=flat_p.device, dtype=flat_p.dtype) + 0.5) / N
-    idx = torch.searchsorted(cdf, q, right=True).clamp_max(flat_p.numel()-1)
-    return idx 
+    idx = torch.searchsorted(cdf, q, right=True).clamp_max(flat_p.numel() - 1)
+    return idx
 
 
 def depth_to_normal(depth, K):
     H, W = depth.shape
-    i, j = np.meshgrid(np.arange(H), np.arange(W), indexing='ij')
-    fx, fy = K[0,0], K[1,1]
-    cx, cy = K[0,2], K[1,2]
+    i, j = np.meshgrid(np.arange(H), np.arange(W), indexing="ij")
+    fx, fy = K[0, 0], K[1, 1]
+    cx, cy = K[0, 2], K[1, 2]
 
     X = (j - cx) * depth / fx
     Y = (i - cy) * depth / fy
@@ -28,19 +28,18 @@ def depth_to_normal(depth, K):
     dzdx = points[:, 1:, :] - points[:, :-1, :]
     dzdy = points[1:, :, :] - points[:-1, :, :]
 
-    dzdx = np.pad(dzdx, ((0,0),(0,1),(0,0)), mode='edge')
-    dzdy = np.pad(dzdy, ((0,1),(0,0),(0,0)), mode='edge')
+    dzdx = np.pad(dzdx, ((0, 0), (0, 1), (0, 0)), mode="edge")
+    dzdy = np.pad(dzdy, ((0, 1), (0, 0), (0, 0)), mode="edge")
 
     normal = np.cross(dzdx, dzdy)
     norm = np.linalg.norm(normal, axis=2, keepdims=True)
-    normal /= norm + 1e-8 
+    normal /= norm + 1e-8
 
     return torch.from_numpy(normal)
 
 
 def make_2d_uniform_coord(shape, ranges=None, flatten=True):
-    """ Make coordinates at grid centers.
-    """
+    """Make coordinates at grid centers."""
     coord_seqs = []
     for i, n in enumerate(shape):
         if ranges is None:
@@ -65,8 +64,8 @@ def _depth_to_vertices(D, fx, fy, cx, cy):
     device = D.device
     js = torch.arange(w, device=device, dtype=torch.float32)
     is_ = torch.arange(h, device=device, dtype=torch.float32)
-    jj, ii = torch.meshgrid(js, is_, indexing='xy')  # jj: (h,w), ii: (h,w)
-    
+    jj, ii = torch.meshgrid(js, is_, indexing="xy")  # jj: (h,w), ii: (h,w)
+
     Z = D
     X = (jj - cx) / fx * Z
     Y = (ii - cy) / fy * Z
@@ -96,9 +95,10 @@ def _prune_faces_by_mask_and_edge(Vflat, faces, sky_mask_flat=None, max_edge=Non
         e0 = torch.norm(B - A, dim=1)
         e1 = torch.norm(C - B, dim=1)
         e2 = torch.norm(A - C, dim=1)
-        keep &= (torch.max(torch.max(e0, e1), e2) < max_edge)
+        keep &= torch.max(torch.max(e0, e1), e2) < max_edge
 
     return faces[keep]
+
 
 def _prune_faces(Vflat, faces, depth_ratio=1.05, max_edge=None, depth_ratio_far=1.10):
     """
@@ -108,26 +108,27 @@ def _prune_faces(Vflat, faces, depth_ratio=1.05, max_edge=None, depth_ratio_far=
     A = Vflat[faces[:, 0]]  # (N, 3)
     B = Vflat[faces[:, 1]]
     C = Vflat[faces[:, 2]]
-    
+
     zA, zB, zC = A[:, 2], B[:, 2], C[:, 2]
     zmin = torch.min(torch.min(zA, zB), zC)
     zmax = torch.max(torch.max(zA, zB), zC)
 
     zmean = (zA + zB + zC) / 3.0
-    
+
     log_z = torch.log10(zmean.clamp(min=1.0))  # log10(1)=0, log10(10)=1, log10(100)=2
     alpha = torch.clamp(log_z / 2.0, 0.0, 1.0)  # 0 @ 1m, 0.5 @ 10m, 1.0 @ 100m
     adaptive_ratio = depth_ratio + (depth_ratio_far - depth_ratio) * alpha
-    
+
     keep = (zmin > 0) & (zmax / torch.clamp(zmin, min=1e-9) < adaptive_ratio)
-    
+
     if max_edge is not None:
         e0 = torch.norm(B - A, dim=1)
         e1 = torch.norm(C - B, dim=1)
         e2 = torch.norm(A - C, dim=1)
-        keep &= (torch.max(torch.max(e0, e1), e2) < max_edge)
-    
+        keep &= torch.max(torch.max(e0, e1), e2) < max_edge
+
     return faces[keep]
+
 
 def _faces_to_ij(faces, h, w):
     """For each vertex index -> (i,j). Returns torch.Tensor."""
@@ -137,15 +138,15 @@ def _faces_to_ij(faces, h, w):
 
 
 def make_3d_uniform_coord_triangle(
-    depth_hw: torch.Tensor, 
-    fx: float, 
-    fy: float, 
-    cx: float, 
-    cy: float, 
-    N: int, 
+    depth_hw: torch.Tensor,
+    fx: float,
+    fy: float,
+    cx: float,
+    cy: float,
+    N: int,
     coord_norm: str = "minus_one_to_one",
     sample_filter_mode: typing.Literal["none", "max_depth", "sky_mask"] = "max_depth",
-    depth_ratio: float = 1.05, 
+    depth_ratio: float = 1.05,
     sky_mask_hw: Optional[torch.Tensor] = None,
     max_edge: Optional[float] = None,
     max_depth_margin: float = 0.9,
@@ -153,7 +154,7 @@ def make_3d_uniform_coord_triangle(
 ) -> torch.Tensor:
     """
     Triangle-based area-weighted sampling for depth maps (PyTorch version).
-    
+
     Args:
         depth_hw: (h,w) torch.Tensor predicted depth on the resized image grid
         fx, fy, cx, cy: Camera intrinsics
@@ -170,7 +171,7 @@ def make_3d_uniform_coord_triangle(
         max_depth_margin: Multiplier for auto-computed max depth when sample_filter_mode='max_depth'
         deterministic: If True, use deterministic sampling (centroid of each triangle).
                        This produces more regular/structured point clouds.
-        
+
     Returns:
         coords: (N, 2) torch.Tensor in normalized coordinates [y, x]
     """
@@ -207,9 +208,13 @@ def make_3d_uniform_coord_triangle(
 
     if len(faces) == 0:
         if sample_filter_mode == "sky_mask":
-            raise RuntimeError("All faces pruned; relax 'sky_mask_hw' coverage, 'depth_ratio', or 'max_edge'.")
+            raise RuntimeError(
+                "All faces pruned; relax 'sky_mask_hw' coverage, 'depth_ratio', or 'max_edge'."
+            )
         if sample_filter_mode == "max_depth":
-            raise RuntimeError("All faces pruned; relax 'depth_ratio', 'max_edge', or 'max_depth_margin'.")
+            raise RuntimeError(
+                "All faces pruned; relax 'depth_ratio', 'max_edge', or 'max_depth_margin'."
+            )
         raise RuntimeError("All faces pruned; relax 'depth_ratio' or 'max_edge'.")
 
     A = Vflat[faces[:, 0]]
@@ -224,16 +229,15 @@ def make_3d_uniform_coord_triangle(
     probs = areas / total_area
 
     num_faces = len(faces)
-    
+
     if deterministic:
-        
         fi_all, fj_all = _faces_to_ij(faces, h, w)  # each (num_faces, 3)
         fi_all = fi_all.float()
         fj_all = fj_all.float()
-        
+
         i_centroids = (fi_all[:, 0] + fi_all[:, 1] + fi_all[:, 2]) / 3.0
         j_centroids = (fj_all[:, 0] + fj_all[:, 1] + fj_all[:, 2]) / 3.0
-        
+
         if N <= num_faces:
             top_indices = torch.argsort(-areas)[:N]
             i_s = i_centroids[top_indices]
@@ -241,25 +245,25 @@ def make_3d_uniform_coord_triangle(
         else:
             base_i = i_centroids  # (num_faces,)
             base_j = j_centroids  # (num_faces,)
-            
+
             remaining_points = N - num_faces
-            
+
             if remaining_points <= 0:
                 i_s = base_i
                 j_s = base_j
             else:
                 sqrt_areas = torch.sqrt(areas)
                 sqrt_probs = sqrt_areas / sqrt_areas.sum()
-                
+
                 extra_raw = sqrt_probs * remaining_points
                 extra_counts = torch.floor(extra_raw).to(torch.int64)
-                
+
                 still_remaining = remaining_points - extra_counts.sum().item()
                 if still_remaining > 0:
                     frac = extra_raw - extra_counts.float()
-                    top_frac_idx = torch.argsort(-frac)[:int(still_remaining)]
+                    top_frac_idx = torch.argsort(-frac)[: int(still_remaining)]
                     extra_counts[top_frac_idx] += 1
-                
+
                 max_subdiv = 50
                 bary_list = []
                 for n in range(1, max_subdiv + 1):
@@ -267,7 +271,7 @@ def make_3d_uniform_coord_triangle(
                         for b in range(n + 1 - a):
                             c = n - a - b
                             w0, w1, w2 = a / n, b / n, c / n
-                            if abs(w0 - 1/3) < 0.01 and abs(w1 - 1/3) < 0.01:
+                            if abs(w0 - 1 / 3) < 0.01 and abs(w1 - 1 / 3) < 0.01:
                                 continue
                             bary_list.append((w0, w1, w2))
                             if len(bary_list) >= 2000:
@@ -276,17 +280,21 @@ def make_3d_uniform_coord_triangle(
                             break
                     if len(bary_list) >= 2000:
                         break
-                
-                bary_template = torch.tensor(bary_list, dtype=torch.float32, device=device)  # (M, 3)
+
+                bary_template = torch.tensor(
+                    bary_list, dtype=torch.float32, device=device
+                )  # (M, 3)
                 max_extra_per_tri = len(bary_list)
-                
+
                 has_extra = extra_counts > 0
                 extra_tri_indices = torch.nonzero(has_extra, as_tuple=True)[0]
                 extra_tri_counts = extra_counts[has_extra]
-                
+
                 if len(extra_tri_indices) > 0:
-                    tri_expanded = extra_tri_indices.repeat_interleave(extra_tri_counts)  # (total_extra,)
-                    
+                    tri_expanded = extra_tri_indices.repeat_interleave(
+                        extra_tri_counts
+                    )  # (total_extra,)
+
                     total_extra = int(extra_tri_counts.sum().item())
                     cumsum = extra_tri_counts.cumsum(0)
                     offsets = torch.zeros_like(cumsum)
@@ -294,38 +302,38 @@ def make_3d_uniform_coord_triangle(
                     offsets_expanded = offsets.repeat_interleave(extra_tri_counts)
                     global_idx = torch.arange(total_extra, device=device)
                     point_local_idx = global_idx - offsets_expanded
-                    
+
                     point_local_idx = point_local_idx.clamp(max=max_extra_per_tri - 1)
-                    
+
                     bary_w = bary_template[point_local_idx]  # (total_extra, 3)
                     w0, w1, w2 = bary_w[:, 0], bary_w[:, 1], bary_w[:, 2]
-                    
+
                     i0 = fi_all[tri_expanded, 0]
                     i1 = fi_all[tri_expanded, 1]
                     i2 = fi_all[tri_expanded, 2]
                     j0 = fj_all[tri_expanded, 0]
                     j1 = fj_all[tri_expanded, 1]
                     j2 = fj_all[tri_expanded, 2]
-                    
+
                     extra_i = w0 * i0 + w1 * i1 + w2 * i2
                     extra_j = w0 * j0 + w1 * j1 + w2 * j2
-                    
+
                     i_s = torch.cat([base_i, extra_i])
                     j_s = torch.cat([base_j, extra_j])
                 else:
                     i_s = base_i
                     j_s = base_j
-        
+
     else:
         tri_idx = torch.multinomial(probs, num_samples=N, replacement=True)  # (N,)
         f = faces[tri_idx]  # (N, 3)
 
         u = torch.rand(N, device=device)
         v = torch.rand(N, device=device)
-        mask = (u + v > 1.0)
+        mask = u + v > 1.0
         u[mask] = 1.0 - u[mask]
         v[mask] = 1.0 - v[mask]
-        
+
         w0 = 1.0 - u - v  # (N,)
         w1 = u
         w2 = v
@@ -336,7 +344,7 @@ def make_3d_uniform_coord_triangle(
 
         i_s = w0 * i0.float() + w1 * i1.float() + w2 * i2.float()  # (N,)
         j_s = w0 * j0.float() + w1 * j1.float() + w2 * j2.float()  # (N,)
-    
+
     # normalize (align_corners=False)
     if coord_norm == "minus_one_to_one":
         x = 2.0 * ((j_s + 0.5) / w) - 1.0
@@ -353,80 +361,104 @@ def make_3d_uniform_coord_triangle(
 
 
 def make_3d_uniform_coord_autograd(
-    model,                 
+    model,
     image,
-    prompt, 
-    K,                    
-    H, W,                 
-    N,                   
-    eps=1e-6,              
-    w_min=1e-6, w_max=1e6,
+    prompt,
+    K,
+    H,
+    W,
+    N,
+    eps=1e-6,
+    w_min=1e-6,
+    w_max=1e6,
     vis_normal=True,
     normal_save_path=None,
-    chunk_size=20000       
+    chunk_size=20000,
 ):
     device = image.device
-    dtype  = image.dtype
-    K_inv  = torch.inverse(K).to(device=device, dtype=dtype)
+    dtype = image.dtype
+    K_inv = torch.inverse(K).to(device=device, dtype=dtype)
 
-    flat_yx = make_2d_uniform_coord(shape=(H, W), flatten=True).unsqueeze(0).to(device=device, dtype=dtype) 
-    grid_yx = flat_yx.reshape(H, W, 2) 
-    grid_y, grid_x = grid_yx[..., 0], grid_yx[..., 1] 
+    flat_yx = (
+        make_2d_uniform_coord(shape=(H, W), flatten=True)
+        .unsqueeze(0)
+        .to(device=device, dtype=dtype)
+    )
+    grid_yx = flat_yx.reshape(H, W, 2)
+    grid_y, grid_x = grid_yx[..., 0], grid_yx[..., 1]
 
-    u = ((grid_x + 1) * W - 1) / 2.0  
-    v = ((grid_y + 1) * H - 1) / 2.0   
+    u = ((grid_x + 1) * W - 1) / 2.0
+    v = ((grid_y + 1) * H - 1) / 2.0
 
     with torch.no_grad():
-        z_full, _ = model.inference(image=image, query_coord=flat_yx, prompt_depth=prompt)  
-        z_full = z_full.reshape(H, W) 
+        z_full, _ = model.inference(image=image, query_coord=flat_yx, prompt_depth=prompt)
+        z_full = z_full.reshape(H, W)
         # depth --> 3d points
-        xy1_full = torch.stack([u, v, torch.ones_like(u, dtype=dtype, device=device)], dim=-1) 
-        dir_cam_full = torch.einsum("ij,...j->...i", K_inv, xy1_full)                        
-        X_full = z_full[..., None] * dir_cam_full                                           
+        xy1_full = torch.stack([u, v, torch.ones_like(u, dtype=dtype, device=device)], dim=-1)
+        dir_cam_full = torch.einsum("ij,...j->...i", K_inv, xy1_full)
+        X_full = z_full[..., None] * dir_cam_full
 
     Npix = H * W
     n_out = torch.empty((Npix, 3), device=device, dtype=dtype)
     Hf, Wf = float(H), float(W)
     for s in range(0, Npix, chunk_size):
         e = min(s + chunk_size, Npix)
-        q_chunk = flat_yx[:, s:e, :].detach().clone().requires_grad_(True) 
-        y_n, x_n = q_chunk[..., 0], q_chunk[..., 1]     
-        u_pix = ((x_n + 1) * W - 1) / 2.0                 
-        v_pix = ((y_n + 1) * H - 1) / 2.0                 
-        xy1   = torch.stack([u_pix, v_pix, torch.ones_like(u_pix)], dim=-1)  
-        dir_cam = torch.einsum("ij,bmj->bmi", K_inv, xy1) 
+        q_chunk = flat_yx[:, s:e, :].detach().clone().requires_grad_(True)
+        y_n, x_n = q_chunk[..., 0], q_chunk[..., 1]
+        u_pix = ((x_n + 1) * W - 1) / 2.0
+        v_pix = ((y_n + 1) * H - 1) / 2.0
+        xy1 = torch.stack([u_pix, v_pix, torch.ones_like(u_pix)], dim=-1)
+        dir_cam = torch.einsum("ij,bmj->bmi", K_inv, xy1)
 
-        z_chunk, _ = model.inference(image=image, query_coord=q_chunk, prompt_depth=prompt) 
-        z_chunk = z_chunk.reshape(1, -1)                  
-        X_chunk = z_chunk[..., None] * dir_cam             
+        z_chunk, _ = model.inference(image=image, query_coord=q_chunk, prompt_depth=prompt)
+        z_chunk = z_chunk.reshape(1, -1)
+        X_chunk = z_chunk[..., None] * dir_cam
         grads = []
         for c in range(3):
-            g = torch.ones_like(X_chunk[:, :, c])         
+            g = torch.ones_like(X_chunk[:, :, c])
             grad_c = torch.autograd.grad(
-                outputs=X_chunk[:, :, c],  
-                inputs=q_chunk,             
-                grad_outputs=g,            
-                create_graph=False,        
-                retain_graph=True,         
-                only_inputs=True
+                outputs=X_chunk[:, :, c],
+                inputs=q_chunk,
+                grad_outputs=g,
+                create_graph=False,
+                retain_graph=True,
+                only_inputs=True,
             )[0][0]  # (M,2)
-            grads.append(grad_c.unsqueeze(1))    
-        grad_full = torch.cat(grads, dim=1)       
-        dX_du = grad_full[:, :, 1] * (2.0 / Wf)   
-        dX_dv = grad_full[:, :, 0] * (2.0 / Hf)  
-        
-        n_cross = torch.cross(dX_du, dX_dv, dim=-1)   
+            grads.append(grad_c.unsqueeze(1))
+        grad_full = torch.cat(grads, dim=1)
+        dX_du = grad_full[:, :, 1] * (2.0 / Wf)
+        dX_dv = grad_full[:, :, 0] * (2.0 / Hf)
+
+        n_cross = torch.cross(dX_du, dX_dv, dim=-1)
         n_chunk = n_cross / (n_cross.norm(dim=-1, keepdim=True) + 1e-6)
         n_out[s:e] = n_chunk
 
-        del q_chunk, y_n, x_n, u_pix, v_pix, xy1, dir_cam, z_chunk, X_chunk, grads, grad_full, dX_dv, dX_du, n_cross, n_chunk
+        del (
+            q_chunk,
+            y_n,
+            x_n,
+            u_pix,
+            v_pix,
+            xy1,
+            dir_cam,
+            z_chunk,
+            X_chunk,
+            grads,
+            grad_full,
+            dX_dv,
+            dX_du,
+            n_cross,
+            n_chunk,
+        )
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+        elif hasattr(torch.xpu, "empty_cache") and torch.xpu.is_available():
+            torch.xpu.empty_cache()
 
-    n = n_out.view(H, W, 3)  
+    n = n_out.view(H, W, 3)
 
     X_norm = torch.norm(X_full, dim=-1, keepdim=True) + eps
-    v_dir  = -X_full / X_norm                                           # (H,W,3)
+    v_dir = -X_full / X_norm  # (H,W,3)
     cos_theta = torch.abs(torch.sum(n * v_dir, dim=-1)).clamp_min(eps)  # (H,W)
 
     if vis_normal and (normal_save_path is not None):
@@ -436,22 +468,22 @@ def make_3d_uniform_coord_autograd(
             pass
         try:
             diff_normal = depth_to_normal(z_full.detach().cpu().numpy(), K.detach().cpu().numpy())
-            visualize_normal(diff_normal, normal_save_path.replace('.png', '_diff_normal.png'))
+            visualize_normal(diff_normal, normal_save_path.replace(".png", "_diff_normal.png"))
         except Exception:
             pass
 
-    z_sq = z_full ** 2
-    w = z_sq / cos_theta   # (H,W)
+    z_sq = z_full**2
+    w = z_sq / cos_theta  # (H,W)
     w_clamped = torch.clamp(w, w_min, w_max)
     p = w_clamped / torch.sum(w_clamped)
 
-    cell_indices = sample_by_equal_mass_inverse_cdf(p, N)   # (N,)
+    cell_indices = sample_by_equal_mass_inverse_cdf(p, N)  # (N,)
 
-    y_idx = (cell_indices // W)  # row
-    x_idx = (cell_indices %  W)  # column
+    y_idx = cell_indices // W  # row
+    x_idx = cell_indices % W  # column
 
-    x_centers = (x_idx.float() + 0.5)
-    y_centers = (y_idx.float() + 0.5)
+    x_centers = x_idx.float() + 0.5
+    y_centers = y_idx.float() + 0.5
     offsets_x = torch.rand_like(x_centers, dtype=dtype) - 0.5
     offsets_y = torch.rand_like(y_centers, dtype=dtype) - 0.5
     samples_x = x_centers + offsets_x
@@ -464,9 +496,8 @@ def make_3d_uniform_coord_autograd(
     return xy_samples
 
 
-
 SAMPLING_METHODS = {
     "2d_uniform": make_2d_uniform_coord,
-    "3d_uniform":  make_3d_uniform_coord_autograd,
+    "3d_uniform": make_3d_uniform_coord_autograd,
     "3d_uniform_triangle": make_3d_uniform_coord_triangle,
 }

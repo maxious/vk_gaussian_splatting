@@ -331,7 +331,6 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
   nvpro2::nvvkgltf
   vk_radix_sort
   spz::spz
-  ovoxel
   meshoptimizer
   webp
   zlib

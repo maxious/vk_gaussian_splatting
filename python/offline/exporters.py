@@ -177,7 +177,7 @@ def export_video_to_gaussian_plys(
     chunk_size: int = 10,
     max_frames: int | None = None,
     device: str = "cuda",
-    process_res: int = 518,
+    process_res: int = 1024,
     opacity_threshold: float = 0.0,
     flip_y: bool = False,
     masks_dir: Path | None = None,
@@ -199,7 +199,7 @@ def export_video_to_gaussian_plys(
         chunk_size: Number of frames to process together
         max_frames: Maximum frames to process (None for all)
         device: PyTorch device
-        process_res: Processing resolution for DA3
+        process_res: Processing resolution for DA3 (higher = more Gaussians, but slower)
         opacity_threshold: Prune Gaussians with opacity below this threshold
         flip_y: If True, negate Y coordinates to flip the coordinate system
         masks_dir: Directory containing masks for background removal
@@ -617,7 +617,7 @@ def export_images_to_gaussian_plys(
     image_pattern: str = "*.jpg",
     max_frames: int | None = None,
     device: str = "cuda",
-    process_res: int = 518,
+    process_res: int = 1024,
     opacity_threshold: float = 0.0,
     masks_dir: Path | None = None,
     mask_first_frame: bool = True,
@@ -641,7 +641,7 @@ def export_images_to_gaussian_plys(
         image_pattern: Glob pattern for images
         max_frames: Maximum frames to process
         device: PyTorch device
-        process_res: Processing resolution for DA3
+        process_res: Processing resolution for DA3 (higher = more Gaussians, but slower)
         opacity_threshold: Prune Gaussians with opacity below this threshold
         flip_y: If True, negate Y coordinates to flip the coordinate system
     """

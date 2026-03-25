@@ -6,10 +6,30 @@ from .rope import RotaryPositionEmbedding2D
 from .utils.pe_utils import PositionEmbeddingRandom
 from torch import Tensor
 
+
+def _get_device():
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if hasattr(torch, "xpu") and torch.xpu.is_available():
+        return torch.device("xpu")
+    return torch.device("cpu")
+
+
+def _is_device_capability_at_least(device, major, minor=0):
+    if device.type == "cuda":
+        cap = torch.cuda.get_device_capability(device)
+        return cap[0] > major or (cap[0] == major and cap[1] >= minor)
+    elif device.type == "xpu":
+        return True
+    return False
+
+
+_DEVICE = _get_device()
+
 acc_dtype = (
     torch.bfloat16
-    if torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 8
-    else (torch.float16 if torch.cuda.is_available() else torch.float32)
+    if _is_device_capability_at_least(_DEVICE, 8)
+    else (torch.float16 if _DEVICE.type in ("cuda", "xpu") else torch.float32)
 )
 
 
@@ -33,7 +53,7 @@ class SelfAttnPromptModel(nn.Module):
           num_multimask_outputs (int): the number of masks to predict
             when disambiguating masks
           activation (nn.Module): the type of activation to use when
-            upscaling masks 
+            upscaling masks
           iou_head_depth (int): the depth of the MLP used to predict
             mask quality
           iou_head_hidden_dim (int): the hidden dimension of the MLP
@@ -47,7 +67,9 @@ class SelfAttnPromptModel(nn.Module):
         self.pe_layer = PositionEmbeddingRandom(pe_dim, image_pe_method=image_pe_method)
         self.prompt_blocks = nn.ModuleList(
             [
-                SelfAttenPromptBlock(dim=transformer_dim, num_heads=num_heads, first_block=(i == 0), pe=pe)
+                SelfAttenPromptBlock(
+                    dim=transformer_dim, num_heads=num_heads, first_block=(i == 0), pe=pe
+                )
                 for i in range(num_blocks)
             ]
         )
@@ -92,12 +114,12 @@ class SelfAttnPromptModel(nn.Module):
             sparse_depth_pos[:, 0] = (sparse_depth_pos[:, 0] + 0.5) / H
             sparse_depth_pos[:, 1] = (sparse_depth_pos[:, 1] + 0.5) / W
             sparse_depth = prompt_depth[b, 0][prompt_mask[b, 0] > 0.0]
-            prompt_embeddings = self.depth2feature(sparse_depth[:, None])[None, ...]   # 1, N, C
+            prompt_embeddings = self.depth2feature(sparse_depth[:, None])[None, ...]  # 1, N, C
             prompt_pe = self.pe_layer._pe_encoding(sparse_depth_pos[None, :, [1, 0]])  # 1, N, C
             query_pe = image_pe.reshape(1, -1, image_pe.shape[-1])
             prompt = prompt_embeddings  # + prompt_pe
             query = image_embeddings[b : (b + 1)]  # + query_pe
-            with torch.autocast("cuda", enabled=True, dtype=acc_dtype):
+            with torch.autocast(device_type=_DEVICE.type, enabled=True, dtype=acc_dtype):
                 for block in self.prompt_blocks:
                     query, prompt = block(query, query_pe, prompt, prompt_pe)
             image_embeddings_list.append(query[..., : image_embeddings.shape[-1]])
@@ -146,7 +168,11 @@ class SelfAttnRopePromptModel(nn.Module):
         self.prompt_blocks = nn.ModuleList(
             [
                 SelfAttenPromptBlock(
-                    dim=transformer_dim, num_heads=num_heads, first_block=(i == 0), pe=pe, use_sep=False
+                    dim=transformer_dim,
+                    num_heads=num_heads,
+                    first_block=(i == 0),
+                    pe=pe,
+                    use_sep=False,
                 )
                 for i in range(num_blocks)
             ]
@@ -179,7 +205,9 @@ class SelfAttnRopePromptModel(nn.Module):
           torch.Tensor: batched predictions of mask quality
         """
         B, _, H, W = prompt_depth.shape
-        image_pe = self.pe_layer((patch_h, patch_w), device=prompt_depth.device).permute(1, 2, 0)  # CxHxW -> HxWxC
+        image_pe = self.pe_layer((patch_h, patch_w), device=prompt_depth.device).permute(
+            1, 2, 0
+        )  # CxHxW -> HxWxC
         prompt_embeddings_list = []
         image_embeddings_list = []
         for b in range(B):
@@ -197,14 +225,14 @@ class SelfAttnRopePromptModel(nn.Module):
             query_pe = image_pe.reshape(1, -1, image_pe.shape[-1])
             prompt = prompt_embeddings  # + prompt_pe
             query = image_embeddings[b : (b + 1)]  # + query_pe
-            with torch.autocast("cuda", enabled=True, dtype=acc_dtype):
+            with torch.autocast(device_type=_DEVICE.type, enabled=True, dtype=acc_dtype):
                 for block in self.prompt_blocks:
                     query, prompt = block(query, query_pe, prompt, prompt_pe)
             image_embeddings_list.append(query[..., : image_embeddings.shape[-1]])
             prompt_embeddings_list.append(prompt)
         image_embeddings = torch.cat(image_embeddings_list, dim=0)
         return image_embeddings
-    
+
 
 class SelfAttenPromptBlock(nn.Module):
     """
@@ -251,7 +279,9 @@ class SelfAttenPromptBlock(nn.Module):
             else:
                 self.sep_pe = None
 
-    def forward(self, x: Tensor, x_pe: Tensor, context: Tensor, context_pe: Tensor) -> Tuple[Tensor, Tensor]:
+    def forward(
+        self, x: Tensor, x_pe: Tensor, context: Tensor, context_pe: Tensor
+    ) -> Tuple[Tensor, Tensor]:
         # Apply positional encoding if this is the first block and using normal PE
         if self.pe == "normal" and self.first_block:
             x = x + x_pe

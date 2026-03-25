@@ -120,7 +120,12 @@ def main():
     export_parser.add_argument(
         "--max-frames", type=int, default=None, help="Maximum frames to process"
     )
-    export_parser.add_argument("--process-res", type=int, default=768, help="Processing resolution")
+    export_parser.add_argument(
+        "--process-res",
+        type=int,
+        default=1024,
+        help="Processing resolution (higher = more Gaussians, but slower)",
+    )
     export_parser.add_argument(
         "--opacity-threshold",
         type=float,
@@ -280,7 +285,12 @@ def main():
     images_parser.add_argument(
         "--max-frames", type=int, default=None, help="Maximum frames to process"
     )
-    images_parser.add_argument("--process-res", type=int, default=768, help="Processing resolution")
+    images_parser.add_argument(
+        "--process-res",
+        type=int,
+        default=1024,
+        help="Processing resolution (higher = more Gaussians, but slower)",
+    )
     images_parser.add_argument(
         "--masks-dir",
         type=Path,

@@ -17,32 +17,61 @@ from .block.prompt_models import GeneralPromptModel, SelfAttnPromptModel
 from .block.implicit_decoder import ImplicitHead
 from .block.convolution import BasicEncoder
 
+
+def _get_device():
+    """Get the best available device (CUDA, XPU, or CPU)."""
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if hasattr(torch, "xpu") and torch.xpu.is_available():
+        return torch.device("xpu")
+    return torch.device("cpu")
+
+
+def _is_device_capability_at_least(device: torch.device, major: int, minor: int = 0) -> bool:
+    """Check if device meets minimum capability requirement."""
+    if device.type == "cuda":
+        cap = torch.cuda.get_device_capability(device)
+        return cap[0] > major or (cap[0] == major and cap[1] >= minor)
+    elif device.type == "xpu":
+        # Intel XPU doesn't have equivalent capability check, assume supported
+        return True
+    return False
+
+
+# Determine best available device once at module load
+_DEVICE = _get_device()
+
 acc_dtype = (
     torch.bfloat16
-    if torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 8
-    else (torch.float16 if torch.cuda.is_available() else torch.float32)
+    if _is_device_capability_at_least(_DEVICE, 8)
+    else (torch.float16 if _DEVICE.type in ("cuda", "xpu") else torch.float32)
 )
 
 
 def _resolve_local_dinov3_repo() -> str:
     """Always use the in-repo local DINOv3 torchhub path."""
-    dinov3_repo = os.path.abspath(os.path.join(os.path.dirname(__file__), "block", "torchhub", "dinov3"))
+    dinov3_repo = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "block", "torchhub", "dinov3")
+    )
     if not os.path.isdir(dinov3_repo):
         raise FileNotFoundError(
-            "DINOv3 local torchhub repo not found at fixed path: "
-            f"{dinov3_repo}"
+            f"DINOv3 local torchhub repo not found at fixed path: {dinov3_repo}"
         )
     return dinov3_repo
 
 
 def _make_dense_query_coord(batch: int, h: int, w: int, device: torch.device) -> torch.Tensor:
     """Create dense 2D query coordinates in [-1, 1], order (y, x)."""
-    ys = ((torch.arange(h, device=device, dtype=torch.float32) + 0.5) / max(float(h), 1.0)) * 2.0 - 1.0
-    xs = ((torch.arange(w, device=device, dtype=torch.float32) + 0.5) / max(float(w), 1.0)) * 2.0 - 1.0
+    ys = (
+        (torch.arange(h, device=device, dtype=torch.float32) + 0.5) / max(float(h), 1.0)
+    ) * 2.0 - 1.0
+    xs = (
+        (torch.arange(w, device=device, dtype=torch.float32) + 0.5) / max(float(w), 1.0)
+    ) * 2.0 - 1.0
     grid_y, grid_x = torch.meshgrid(ys, xs, indexing="ij")
     query = torch.stack([grid_y, grid_x], dim=-1).reshape(1, -1, 2)
     return query.expand(batch, -1, -1).contiguous()
-                      
+
 
 @dataclass
 class _InferenceState:
@@ -95,10 +124,10 @@ class _BaseInfiniDepthModel(nn.Module):
             else:
                 raise FileNotFoundError(f"Model file {model_path} not found")
 
-        # only for inference
-        if not torch.cuda.is_available():
-            raise RuntimeError("CUDA is required to initialize InfiniDepth models.")
-        self.cuda()
+        device = _get_device()
+        if device.type == "cpu":
+            raise RuntimeError("InfiniDepth requires GPU (CUDA or XPU) to run.")
+        self.to(device)
         self.eval()
 
     def _init_variant_modules(self):
@@ -133,7 +162,7 @@ class _BaseInfiniDepthModel(nn.Module):
     ):
         h, w = x.shape[-2:]
         x_dino = (x - self._mean) / self._std
-        with torch.autocast("cuda", enabled=True, dtype=acc_dtype):
+        with torch.autocast(device_type=_DEVICE.type, enabled=True, dtype=acc_dtype):
             features = self.pretrained.get_intermediate_layers(
                 x_dino,
                 n=self.model_config["layer_idxs"],
@@ -231,7 +260,7 @@ class _BaseInfiniDepthModel(nn.Module):
         preds = []
         while ql < n:
             qr = min(ql + bsize, n)
-            pred = self.depth_implicit_head._decode_dpt(feat, basic_feat, coord[:, ql: qr, :])
+            pred = self.depth_implicit_head._decode_dpt(feat, basic_feat, coord[:, ql:qr, :])
             preds.append(pred)
             ql = qr
         pred = torch.cat(preds, dim=1)
@@ -252,7 +281,7 @@ class _BaseInfiniDepthModel(nn.Module):
             x,
             state=state,
         )
-        with torch.autocast("cuda", enabled=True, dtype=torch.float32):
+        with torch.autocast(device_type=_DEVICE.type, enabled=True, dtype=torch.float32):
             depth = self.depth_implicit_head(features, basic_feat, patch_h, patch_w, coords)
         if return_dino_tokens:
             return depth, dino_tokens
@@ -348,7 +377,7 @@ class InfiniDepth_DepthSensor(_BaseInfiniDepthModel):
         patch_h: int,
         patch_w: int,
         state: _InferenceState,
-    ):  
+    ):
         return self.prompt_model(
             features,
             state.prompt_depth,
@@ -386,7 +415,9 @@ class InfiniDepth_DepthSensor(_BaseInfiniDepthModel):
         state: _InferenceState,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         if state.reference_meta is None:
-            raise ValueError("reference_meta is required for InfiniDepth_DepthSensor postprocessing.")
+            raise ValueError(
+                "reference_meta is required for InfiniDepth_DepthSensor postprocessing."
+            )
         pred = self.warp_func.unwarp(
             pred,
             reference_meta=state.reference_meta[..., 0],
@@ -437,7 +468,7 @@ class InfiniDepth(_BaseInfiniDepthModel):
         gt = gt.astype(np.float32)
         gt = gt.squeeze()
         pred = pred.squeeze()
-        mask = (gt > 1e-8)  # & (pred > 1e-8)
+        mask = gt > 1e-8  # & (pred > 1e-8)
         if mask0 is not None and mask0.sum() > 0:
             if type(mask0).__module__ == torch.__name__:
                 mask0 = mask0.cpu().numpy()
@@ -480,7 +511,9 @@ class InfiniDepth(_BaseInfiniDepthModel):
         return torch.from_numpy(pred_metric).unsqueeze(0).unsqueeze(0), float(a), float(b)
 
     @staticmethod
-    def _infer_dense_query_hw(query_coord: Optional[torch.Tensor], n_query: int) -> Optional[tuple[int, int]]:
+    def _infer_dense_query_hw(
+        query_coord: Optional[torch.Tensor], n_query: int
+    ) -> Optional[tuple[int, int]]:
         if query_coord is None or query_coord.ndim != 3 or query_coord.shape[1] != n_query:
             return None
 
@@ -526,9 +559,9 @@ class InfiniDepth(_BaseInfiniDepthModel):
             shifts = []
             for i in range(b):
                 aligned_i, scale_i, shift_i = self._ransac_align_depth(
-                    pred_map[i: i + 1],
-                    gt_align[i: i + 1],
-                    None if gt_mask_align is None else gt_mask_align[i: i + 1],
+                    pred_map[i : i + 1],
+                    gt_align[i : i + 1],
+                    None if gt_mask_align is None else gt_mask_align[i : i + 1],
                 )
                 aligned_i = aligned_i.to(device=image.device, dtype=pred.dtype)
                 aligned.append(aligned_i)
