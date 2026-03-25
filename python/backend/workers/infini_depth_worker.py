@@ -19,6 +19,16 @@ def _depth_to_disparity(depth: torch.Tensor) -> torch.Tensor:
     return disp
 
 
+def _get_device_context(device: str):
+    """Get device context manager for CUDA or XPU."""
+    if device.startswith("cuda"):
+        return torch.cuda.device(torch.device(device))
+    elif device.startswith("xpu"):
+        return torch.xpu.device(torch.device(device))
+    else:
+        return torch.device(device)
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -61,10 +71,10 @@ class InfiniDepthDeviceWorker(DeviceWorker[np.ndarray, tuple[np.ndarray, float, 
             return None, None
 
     def load_model(self) -> None:
-        if not self.device.startswith("cuda"):
+        if not (self.device.startswith("cuda") or self.device.startswith("xpu")):
             raise RuntimeError(
-                f"InfiniDepth worker requires CUDA device, got '{self.device}'. "
-                "Set VIDEO_DEPTH_DEVICE_SPEC=cuda or ensure CUDA is available."
+                f"InfiniDepth worker requires CUDA or XPU device, got '{self.device}'. "
+                "Set VIDEO_DEPTH_DEVICE_SPEC=cuda or xpu."
             )
 
         try:
@@ -76,7 +86,7 @@ class InfiniDepthDeviceWorker(DeviceWorker[np.ndarray, tuple[np.ndarray, float, 
 
         model_path, self.moge_path = self._resolve_model_path()
 
-        with torch.cuda.device(torch.device(self.device)):
+        with _get_device_context(self.device):
             self.model = InfiniDepth(model_path=model_path)
         logger.info(
             "InfiniDepth worker %s loaded model on %s (checkpoint=%s, moge=%s)",
@@ -183,7 +193,7 @@ class InfiniDepthDeviceWorker(DeviceWorker[np.ndarray, tuple[np.ndarray, float, 
         query_coord = self._dense_query_coord(batch=1, h=h, w=w, device=image.device)
 
         with torch.no_grad():
-            with torch.cuda.device(target_device):
+            with _get_device_context(self.device):
                 output: Any = self.model.inference(
                     image=image,
                     query_coord=query_coord,

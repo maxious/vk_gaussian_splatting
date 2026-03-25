@@ -14,6 +14,14 @@ from backend.config import get_settings
 from common.device_worker_pool import DeviceWorkerPool
 
 
+def _get_device_context(device: torch.device):
+    if device.type == "cuda":
+        return torch.cuda.device(device)
+    elif device.type == "xpu":
+        return torch.xpu.device(device)
+    return device
+
+
 @dataclass(slots=True)
 class DepthPrediction:
     depth: np.ndarray
@@ -109,10 +117,10 @@ class DepthModel:
         if self._model is not None:
             return self._model
 
-        if self.device.type != "cuda":
+        if self.device.type not in ("cuda", "xpu"):
             raise RuntimeError(
-                f"InfiniDepth requires CUDA, got device '{self.device}'. "
-                "Set VIDEO_DEPTH_DEVICE_SPEC=cuda and VIDEO_DEPTH_MODEL_ID=<checkpoint>."
+                f"InfiniDepth requires CUDA or XPU, got device '{self.device}'. "
+                "Set VIDEO_DEPTH_DEVICE_SPEC=cuda or xpu."
             )
 
         try:
@@ -123,7 +131,7 @@ class DepthModel:
             ) from exc
 
         model_path = self._resolve_model_path()
-        with torch.cuda.device(self.device):
+        with _get_device_context(self.device):
             self._model = InfiniDepth(model_path=model_path)
         return self._model
 
@@ -174,7 +182,7 @@ class DepthModel:
         query_coord = self._dense_query_coord(batch=1, h=h, w=w, device=image.device)
 
         with torch.no_grad():
-            with torch.cuda.device(self.device):
+            with _get_device_context(self.device):
                 output: Any = model.inference(
                     image=image,
                     query_coord=query_coord,
