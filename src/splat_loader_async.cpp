@@ -33,6 +33,7 @@
 //
 #include "splat_loader_async.h"
 #include "sog_loader.h"
+#include "supersplat_client.h"
 #include "lod_loader.h"
 #include "fourdv_loader.h"
 #include "npz_loader.h"
@@ -265,18 +266,34 @@ bool SplatLoaderAsync::innerLoad(std::filesystem::path filename, SplatSet& outpu
   std::string pathStr = filename.string();
   if(pathStr.find("http://") == 0 || pathStr.find("https://") == 0)
   {
-    std::string           superSplatId = extractSuperSplatId(pathStr);
-    std::filesystem::path cacheDir     = std::filesystem::temp_directory_path() / "vk_viewer_cache";
+    std::filesystem::path cacheDir = std::filesystem::temp_directory_path() / "vk_viewer_cache";
 
     if(!std::filesystem::exists(cacheDir))
     {
       std::filesystem::create_directories(cacheDir);
     }
 
-    if(!superSplatId.empty())
+    if(SupersplatClient::isSuperSplatUrl(pathStr))
     {
-      LOGI("Detected SuperSplat ID: %s\n", superSplatId.c_str());
-      std::filesystem::path sceneDir = cacheDir / superSplatId;
+      std::string contentUrl;
+      if(!SupersplatClient::resolveContentUrlSync(pathStr, contentUrl))
+      {
+        LOGE("Failed to resolve SuperSplat content URL\n");
+        return false;
+      }
+
+      size_t      lastSlash = contentUrl.find_last_of('/');
+      std::string baseUrl   = contentUrl.substr(0, lastSlash + 1);
+      std::string metaUrl   = baseUrl + "meta.json";
+
+      std::string cacheKey;
+      {
+        std::string superSplatId = extractSuperSplatId(pathStr);
+        cacheKey                 = superSplatId.empty() ? "scene" : superSplatId;
+      }
+
+      LOGI("Resolved content URL, base: %s\n", baseUrl.c_str());
+      std::filesystem::path sceneDir = cacheDir / cacheKey;
       if(!std::filesystem::exists(sceneDir))
       {
         std::filesystem::create_directories(sceneDir);
@@ -284,26 +301,9 @@ bool SplatLoaderAsync::innerLoad(std::filesystem::path filename, SplatSet& outpu
 
       std::filesystem::path metaPath = sceneDir / "meta.json";
 
-      // Try v3, v2, v1 in order - this is the versioned content path for SuperSplat
-      std::vector<std::string> versions = {"v3", "v2", "v1"};
-      std::string              successVersion;
-
-      for(const auto& version : versions)
+      if(!downloadFile(metaUrl, metaPath))
       {
-        std::string metaUrl = "https://d28zzqy0iyovbz.cloudfront.net/" + superSplatId + "/" + version + "/meta.json";
-        LOGI("Trying %s meta.json from %s...\n", version.c_str(), metaUrl.c_str());
-
-        if(downloadFile(metaUrl, metaPath))
-        {
-          successVersion = version;
-          LOGI("Successfully downloaded meta.json using %s format.\n", version.c_str());
-          break;
-        }
-      }
-
-      if(successVersion.empty())
-      {
-        LOGE("Failed to download meta.json from SuperSplat (tried v3, v2, v1).\n");
+        LOGE("Failed to download meta.json from SuperSplat\n");
         return false;
       }
 
@@ -343,7 +343,7 @@ bool SplatLoaderAsync::innerLoad(std::filesystem::path filename, SplatSet& outpu
             continue;
           }
 
-          std::string fileUrl = "https://d28zzqy0iyovbz.cloudfront.net/" + superSplatId + "/" + successVersion + "/" + file;
+          std::string fileUrl = baseUrl + file;
           LOGI("Downloading %s (%d/%d)...\n", file.c_str(), current, total);
 
           setProgress(static_cast<float>(current) / static_cast<float>(total));
