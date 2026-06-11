@@ -49,7 +49,7 @@ class HybridProcessor(GaussianProcessor):
         self,
         human_model_id: str = "facebook/sam-3d-body-vith",
         depth_model_id: str = "depth-anything/DA3-GIANT",
-        depth_processor_type: str = "da3",  # "da3", "moge", or "sharp"
+        depth_processor_type: str = "da3",  # "da3", "moge", "sharp", or "unisharp"
         device: str = "cuda",
         points_per_person: int = 10000,
         bbox_threshold: float = 0.8,
@@ -62,7 +62,7 @@ class HybridProcessor(GaussianProcessor):
         Args:
             human_model_id: HuggingFace repo for SAM 3D Body
             depth_model_id: Model ID for depth estimation
-            depth_processor_type: Type of depth processor ("da3", "moge", "sharp")
+            depth_processor_type: Type of depth processor ("da3", "moge", "sharp", "unisharp")
             device: Device for inference
             points_per_person: Points to sample per detected person
             bbox_threshold: Human detection confidence threshold
@@ -118,6 +118,17 @@ class HybridProcessor(GaussianProcessor):
                 device=self.device,
                 process_res=self.depth_process_res,
             )
+        elif self.depth_processor_type == "unisharp":
+            from .unisharp import UniSHARPGaussianProcessor
+
+            checkpoint_path = self.depth_model_id
+            camera_model = "pinhole"
+
+            self.depth_processor = UniSHARPGaussianProcessor(
+                checkpoint_path=checkpoint_path,
+                device=self.device,
+                camera_model=camera_model,
+            )
         elif self.depth_processor_type == "sharp":
             from .sharp import SharpGaussianProcessor
 
@@ -143,7 +154,7 @@ class HybridProcessor(GaussianProcessor):
         else:
             raise ValueError(
                 f"Unknown depth processor type: {self.depth_processor_type}. "
-                f"Must be 'da3', 'moge', or 'sharp'"
+                f"Must be 'da3', 'moge', 'sharp', or 'unisharp'"
             )
 
         logger.info("Both processors loaded successfully")

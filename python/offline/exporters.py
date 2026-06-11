@@ -19,6 +19,7 @@ from .processors.infini_depth import InfiniDepthGaussianProcessor
 from .processors.matrix3d import Matrix3DGaussianProcessor
 from .processors.sharp import SharpGaussianProcessor
 from .processors.ttt_lrm import TttLRMGaussianProcessor
+from .processors.unisharp import UniSHARPGaussianProcessor
 from .types import GaussianFrame
 from .video_utils import extract_video_frames, prune_gaussian_frame
 
@@ -268,6 +269,33 @@ def export_video_to_gaussian_plys(
 
     if "matrix3d" in model_id.lower():
         processor = Matrix3DGaussianProcessor(device=device)
+    elif "unisharp" in model_id.lower():
+        # Parse UniSHARP model configuration
+        # Format: unisharp:spherical:cap=10:size=256 or unisharp:/path/to/ckpt.pt:cap=5
+        checkpoint_path = None
+        camera_model = "pinhole"
+        distance_init_cap_m = None
+        internal_size = None
+
+        if ":" in model_id:
+            for part in model_id.split(":")[1:]:
+                if part.startswith("cap="):
+                    distance_init_cap_m = float(part.split("=", 1)[1])
+                elif part.startswith("size="):
+                    sz = int(part.split("=", 1)[1])
+                    internal_size = (sz, sz)
+                elif part in ("pinhole", "fisheye624", "spherical"):
+                    camera_model = part
+                else:
+                    checkpoint_path = part
+
+        processor = UniSHARPGaussianProcessor(
+            checkpoint_path=checkpoint_path,
+            device=device,
+            camera_model=camera_model,
+            distance_init_cap_m=distance_init_cap_m,
+            internal_size=internal_size,
+        )
     elif "sharp" in model_id.lower():
         # Parse SHARP model configuration
         model_path = None
@@ -394,7 +422,7 @@ def export_video_to_gaussian_plys(
                     mask_first_frame=mask_first_frame,
                     remove_black_splats=remove_black_splats,
                 )
-            elif isinstance(processor, SharpGaussianProcessor):
+            elif isinstance(processor, (SharpGaussianProcessor, UniSHARPGaussianProcessor)):
                 chunk_frames = processor.process_frames(
                     chunk_paths,
                     chunk_timestamps,
@@ -716,6 +744,31 @@ def export_images_to_gaussian_plys(
 
     elif "matrix3d" in model_id.lower():
         processor = Matrix3DGaussianProcessor(device=device)
+    elif "unisharp" in model_id.lower():
+        checkpoint_path = None
+        camera_model = "pinhole"
+        distance_init_cap_m = None
+        internal_size = None
+
+        if ":" in model_id:
+            for part in model_id.split(":")[1:]:
+                if part.startswith("cap="):
+                    distance_init_cap_m = float(part.split("=", 1)[1])
+                elif part.startswith("size="):
+                    sz = int(part.split("=", 1)[1])
+                    internal_size = (sz, sz)
+                elif part in ("pinhole", "fisheye624", "spherical"):
+                    camera_model = part
+                else:
+                    checkpoint_path = part
+
+        processor = UniSHARPGaussianProcessor(
+            checkpoint_path=checkpoint_path,
+            device=device,
+            camera_model=camera_model,
+            distance_init_cap_m=distance_init_cap_m,
+            internal_size=internal_size,
+        )
     elif "motioncrafter" in model_id.lower():
         from .processors.motioncrafter import MotionCrafterProcessor
 
@@ -760,7 +813,7 @@ def export_images_to_gaussian_plys(
             mask_first_frame=mask_first_frame,
             remove_black_splats=remove_black_splats,
         )
-    elif isinstance(processor, SharpGaussianProcessor):
+    elif isinstance(processor, (SharpGaussianProcessor, UniSHARPGaussianProcessor)):
         frames = processor.process_frames(
             image_paths,
             timestamps_ms,

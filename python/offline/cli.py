@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Export video to Gaussian Splatting PLY files using InfiniDepth/MoGe/SHARP/SAM 3D Body/Hybrid"
+        description="Export video to Gaussian Splatting PLY files using InfiniDepth/MoGe/SHARP/UniSHARP/SAM 3D Body/Hybrid"
     )
     subparsers = parser.add_subparsers(dest="command", help="Commands")
 
@@ -107,7 +107,7 @@ def main():
         "--model",
         type=str,
         default="InfiniDepth",
-        help="Model: InfiniDepth/MoGe/SHARP/MotionCrafter for depth, 'sam3dbody' for humans, 'hybrid' for SAM 3D Body + depth "
+        help="Model: InfiniDepth/MoGe/SHARP/UniSHARP/MotionCrafter for depth, 'sam3dbody' for humans, 'hybrid' for SAM 3D Body + depth "
         "(default: InfiniDepth). "
         "SAM 3D Body: sam3dbody:facebook/sam-3d-body-vith. "
         "Hybrid: hybrid:human+depth (e.g., hybrid:facebook/sam-3d-body-vith+InfiniDepth). "
@@ -275,7 +275,7 @@ def main():
         "--model",
         type=str,
         default="InfiniDepth",
-        help="Model ID. Options: 'InfiniDepth', 'sharp', 'motioncrafter', "
+        help="Model ID. Options: 'InfiniDepth', 'sharp', 'unisharp', 'motioncrafter', "
         "'tttlrm' (full model) or 'tttlrm-ar' (autoregressive, lower memory), "
         "optionally 'tttlrm:/path/to/checkpoint.pt' (multi-view LRM, input must be JSON manifests)",
     )

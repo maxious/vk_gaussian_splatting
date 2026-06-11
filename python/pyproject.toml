@@ -183,7 +183,7 @@ target-version = "py310"
 
 [tool.ty.src]
 include = ["*"]
-exclude = ["sharp/"]
+exclude = ["sharp/", "unisharp/", "UniK3D/"]
 
 [tool.uv]
 # Define mutually exclusive GPU backends

@@ -13,6 +13,7 @@ from .exporters import (
 from .ply_io import load_static_gaussian_ply, write_freetimegs_ply, write_static_gaussian_ply
 from .processors.da3 import DA3GaussianProcessor
 from .processors.sharp import SharpGaussianProcessor
+from .processors.unisharp import UniSHARPGaussianProcessor
 from .types import GaussianFrame
 from .video_utils import extract_video_frames, prune_gaussian_frame
 
