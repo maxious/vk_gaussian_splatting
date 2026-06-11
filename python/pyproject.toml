@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Python tools for vk_gaussian_splatting: depth streaming backend and offline preprocessing"
 authors = [{ name = "maxio" }]
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 
 # Base dependencies - NO torch here (managed by extras)
 dependencies = [
@@ -153,10 +153,14 @@ infini_depth = [
     "viser>=0.2.0",
     "gradio>=4.44.0",
     "spaces>=0.2.0",
-    "protobuf==3.20.2",
+    "protobuf>=3.20.2",
     "moviepy==1.0.3",
     "scikit-learn>=1.3.0",
     "moge @ git+https://github.com/microsoft/MoGe.git",
+]
+
+unisharp = [
+    "unik3d @ git+https://github.com/lpiccinelli-eth/UniK3D.git",
 ]
 
 [project.scripts]
@@ -183,7 +187,7 @@ target-version = "py310"
 
 [tool.ty.src]
 include = ["*"]
-exclude = ["sharp/", "unisharp/", "UniK3D/"]
+exclude = ["sharp/", "unisharp/"]
 
 [tool.uv]
 # Define mutually exclusive GPU backends

@@ -6,7 +6,7 @@ Gaussian Splatting with support for perspective, fisheye, and panoramic cameras.
 Setup:
     cd python/
     git clone https://github.com/Insta360-Research-Team/UniSHARP.git unisharp
-    git clone https://github.com/lpiccinelli-eth/UniK3D.git UniK3D
+    # UniK3D is installed automatically via pip from pyproject.toml
 
 Model weights are auto-downloaded from Hugging Face Hub:
     Insta360-Research/Unisharp (4.73 GB checkpoint)
@@ -25,6 +25,22 @@ from pathlib import Path
 
 import numpy as np
 import torch
+import sys
+
+# xformers is installed (UniK3D dependency) but its operators don't support
+# Blackwell (sm_120) GPUs. Force DINOv2's fallback to native attention by
+# making xformers.ops raise ImportError at module level.
+for _mod in list(sys.modules):
+    if _mod.startswith("xformers"):
+        del sys.modules[_mod]
+
+class _BlockXformersOps:
+    """Raise ImportError on any attribute access to force XFORMERS_AVAILABLE=False."""
+    @staticmethod
+    def __getattr__(_name: str) -> None:
+        raise ImportError("xformers.ops blocked for Blackwell compatibility")
+
+sys.modules["xformers"] = sys.modules.setdefault("xformers.ops", _BlockXformersOps)  # type: ignore[assignment]
 
 from ..types import GaussianFrame
 from .base import GaussianProcessor
@@ -232,27 +248,20 @@ class UniSHARPGaussianProcessor(GaussianProcessor):
         torch.set_float32_matmul_precision("high")
         ssl._create_default_https_context = ssl._create_unverified_context  # type: ignore[assignment]
 
-        # Ensure UniSHARP and UniK3D are on sys.path
+        # Ensure UniSHARP is on sys.path (vendored, not pip-installable)
+        # UniK3D is installed via pip (git+https://github.com/lpiccinelli-eth/UniK3D.git)
         import sys
 
         unisharp_dir = Path(__file__).resolve().parents[2] / "unisharp"
-        unik3d_dir = Path(__file__).resolve().parents[2] / "UniK3D"
 
         if not unisharp_dir.exists():
             raise FileNotFoundError(
                 f"UniSHARP not found at {unisharp_dir}. "
                 "Clone it: git clone https://github.com/Insta360-Research-Team/UniSHARP.git python/unisharp"
             )
-        if not unik3d_dir.exists():
-            raise FileNotFoundError(
-                f"UniK3D not found at {unik3d_dir}. "
-                "Clone it: git clone https://github.com/lpiccinelli-eth/UniK3D.git python/UniK3D"
-            )
 
         if str(unisharp_dir) not in sys.path:
             sys.path.insert(0, str(unisharp_dir))
-        if str(unik3d_dir) not in sys.path:
-            sys.path.insert(0, str(unik3d_dir))
 
         from unisharp.models.unisharp_feature import UnisharpFeatureConfig, UnisharpFeatureModel
 
