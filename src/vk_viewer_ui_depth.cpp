@@ -20,11 +20,59 @@
 // This file is included from vk_viewer_ui.cpp - do not compile separately
 // Contains: Depth streaming properties UI (guiDrawDepthStreamProperties)
 
+#ifdef WITH_TCP_DEPTH
+void guiDrawTcpServerProperties(VkViewer& viewer) {
+    if (!ImGui::CollapsingHeader("TCP Servers", ImGuiTreeNodeFlags_DefaultOpen))
+        return;
+    
+    auto* mgr = viewer.getTcpServerManager();
+    if (!mgr) return;
+    
+    ImGui::Text("Depth FPS: %.1f", viewer.getDepthFps());
+    
+    const auto& servers = mgr->getServers();
+    if (ImGui::BeginTable("servers", 5, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+        ImGui::TableSetupColumn("Server");
+        ImGui::TableSetupColumn("Status");
+        ImGui::TableSetupColumn("Sent");
+        ImGui::TableSetupColumn("Completed");
+        ImGui::TableSetupColumn("Avg Latency");
+        ImGui::TableHeadersRow();
+        
+        for (const auto& srv : servers) {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::Text("%s:%d", srv.host.c_str(), srv.port);
+            
+            ImGui::TableNextColumn();
+            if (srv.is_connected) {
+                ImGui::TextColored(ImVec4(0,1,0,1), "CONNECTED");
+            } else {
+                ImGui::TextColored(ImVec4(1,0,0,1), "DISCONNECTED");
+            }
+            
+            ImGui::TableNextColumn();
+            ImGui::Text("%llu", (unsigned long long)srv.frames_sent);
+            
+            ImGui::TableNextColumn();
+            ImGui::Text("%llu", (unsigned long long)srv.frames_completed);
+            
+            ImGui::TableNextColumn();
+            ImGui::Text("%.1f ms", srv.avg_latency_ms);
+        }
+        ImGui::EndTable();
+    }
+}
+#endif
+
 void VkViewerUI::guiDrawDepthStreamProperties()
 {
   namespace PE = nvgui::PropertyEditor;
 
-  if(ImGui::CollapsingHeader("Depth Streaming", ImGuiTreeNodeFlags_DefaultOpen))
+  static int depthSource = 0; // 0: Python Backend, 1: TCP Servers, 2: Offline Video
+  ImGui::Combo("Depth Source", &depthSource, "Python Backend\0TCP Servers\0Offline Video\0");
+
+  if(depthSource == 0 && ImGui::CollapsingHeader("Depth Streaming", ImGuiTreeNodeFlags_DefaultOpen))
   {
     PE::begin("##Depth Streaming");
 
@@ -404,7 +452,13 @@ void VkViewerUI::guiDrawDepthStreamProperties()
     PE::end();
   }
 
-  if(ImGui::CollapsingHeader("Offline Video+Depth", m_videoDepthPlaybackMode ? ImGuiTreeNodeFlags_DefaultOpen : 0))
+#ifdef WITH_TCP_DEPTH
+  if (depthSource == 1) {
+      guiDrawTcpServerProperties(*this);
+  }
+#endif
+
+  if(depthSource == 2 && ImGui::CollapsingHeader("Offline Video+Depth", m_videoDepthPlaybackMode ? ImGuiTreeNodeFlags_DefaultOpen : 0))
   {
     PE::begin("##Offline Video+Depth");
 

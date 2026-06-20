@@ -25,6 +25,17 @@ namespace vk_viewer {
 void VkViewer::updateDepthRendering(VkCommandBuffer cmd)
 {
 #ifdef WITH_TCP_DEPTH
+  static auto lastFpsTime = std::chrono::steady_clock::now();
+  auto now = std::chrono::steady_clock::now();
+  float elapsed_sec = std::chrono::duration<float>(now - lastFpsTime).count();
+  if (elapsed_sec >= 1.0f) {
+      m_depthFps = m_depthFrameCount / elapsed_sec;
+      m_depthFrameCount = 0;
+      lastFpsTime = now;
+  }
+#endif
+
+#ifdef WITH_TCP_DEPTH
   if(m_tcpDepthEnabled && m_tcpServerManager)
   {
     if(m_playbackPaused)
@@ -40,6 +51,9 @@ void VkViewer::updateDepthRendering(VkCommandBuffer cmd)
     {
       m_depthManager->uploadDepthFrame(frame, cmd);
       ++m_depthFrameCounter;
+#ifdef WITH_TCP_DEPTH
+      ++m_depthFrameCount;
+#endif
 
       if(m_descriptorSet != VK_NULL_HANDLE)
       {
@@ -237,6 +251,9 @@ void VkViewer::updateDepthRendering(VkCommandBuffer cmd)
         m_depthManager->uploadDepthFrame(uploadFrame, cmd);
         m_lastVdzFrameIndex = pf.frameIndex;
         m_depthFrameCounter++;
+#ifdef WITH_TCP_DEPTH
+        m_depthFrameCount++;
+#endif
         
         if(pf.zMax > pf.zMin && pf.zMax > 0.0f)
         {
@@ -408,6 +425,9 @@ void VkViewer::updateDepthRendering(VkCommandBuffer cmd)
         m_depthManager->uploadDepthFrame(uploadFrame, cmd);
         m_lastVdzFrameIndex = frameHash;
         m_depthFrameCounter++;
+#ifdef WITH_TCP_DEPTH
+        m_depthFrameCount++;
+#endif
 
         prmFrame.vdzZMin = m_hlsMetadata.zMin;
         prmFrame.vdzZMax = m_hlsMetadata.zMax;
@@ -455,6 +475,9 @@ void VkViewer::updateDepthRendering(VkCommandBuffer cmd)
     if(m_depthClient->getFrame(timestampMs, frame)) {
         if(m_depthManager) {
              m_depthManager->uploadDepthFrame(frame, cmd);
+#ifdef WITH_TCP_DEPTH
+             m_depthFrameCount++;
+#endif
              
              if(m_descriptorSet != VK_NULL_HANDLE) {
                const auto& depthTexture = m_depthManager->getCurrentTexture();
