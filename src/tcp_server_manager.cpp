@@ -128,10 +128,35 @@ void TcpServerManager::addServer(const std::string& host, int port)
     for(size_t server_idx = 0; server_idx < m_servers.size(); ++server_idx)
     {
         m_servers[server_idx].client.setDepthFrameCallback([this, server_idx](const DepthFrame& frame) {
-            std::scoped_lock callback_lock(m_mutex);
-            m_completedFrames.push_back({server_idx, frame});
+            DepthBuffer* depth_buffer = nullptr;
+            {
+                std::scoped_lock lock(this->m_mutex);
+                depth_buffer = this->m_depthBuffer;
+
+                this->m_completedFrames.push_back({server_idx, frame});
+            }
+
+            if(depth_buffer)
+            {
+                depth_buffer->addFrame(frame);
+            }
         });
     }
+}
+
+void TcpServerManager::setDepthBuffer(DepthBuffer* buffer)
+{
+    std::scoped_lock lock(m_mutex);
+    m_depthBuffer = buffer;
+}
+
+void TcpServerManager::setFrameSkip(int video_fps, int server_fps_estimate)
+{
+    m_frameSkip = std::max(1, video_fps / std::max(1, server_fps_estimate));
+    LOGI("TcpServerManager: frame skip set to %d (video %dfps, server ~%dfps)\n",
+         m_frameSkip,
+         video_fps,
+         server_fps_estimate);
 }
 
 void TcpServerManager::connectAll()
@@ -176,6 +201,11 @@ int TcpServerManager::sendFrame(uint32_t frame_index,
                                 uint32_t width,
                                 uint32_t height)
 {
+    if(m_frameSkip > 1 && (frame_index % static_cast<uint32_t>(m_frameSkip)) != 0)
+    {
+        return static_cast<int>(frame_index);
+    }
+
     PendingFrame frame{};
     frame.frame_index = frame_index;
     frame.timestamp_ms = timestamp_ms;
@@ -438,10 +468,10 @@ void TcpServerManager::processCompletedFrames()
                     return in_flight_frame.frame.timestamp_ms == completed.frame.timestampMs;
                 });
 
-                if(it != in_flight.end())
-                {
-                    const double latency_ms = static_cast<double>(current_ms - it->dispatch_time_ms);
-                    ++server.frames_completed;
+        if(it != in_flight.end())
+        {
+            const double latency_ms = static_cast<double>(current_ms - it->dispatch_time_ms);
+            ++server.frames_completed;
                     if(server.frames_completed == 1)
                     {
                         server.avg_latency_ms = latency_ms;
@@ -450,11 +480,11 @@ void TcpServerManager::processCompletedFrames()
                     {
                         server.avg_latency_ms += (latency_ms - server.avg_latency_ms)
                                                  / static_cast<double>(server.frames_completed);
-                    }
-                    in_flight.erase(it);
-                    matched_in_flight = true;
-                }
             }
+            in_flight.erase(it);
+            matched_in_flight = true;
+        }
+    }
         }
 
         if(!matched_in_flight)

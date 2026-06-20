@@ -38,10 +38,12 @@ public:
     void addServer(const std::string& host, int port);
     void connectAll();
     void disconnectAll();
+    void setDepthBuffer(DepthBuffer* buffer);
+    void setFrameSkip(int video_fps, int server_fps_estimate);
 
     // Send frame via round-robin, re-queue on failure
     int sendFrame(uint32_t frame_index,
-                  uint32_t timestamp_ms,
+                   uint32_t timestamp_ms,
                   const uint8_t* rgb_data,
                   uint32_t width,
                   uint32_t height);
@@ -90,6 +92,8 @@ private:
     std::vector<std::vector<InFlightFrame>> m_inFlightFrames;
     size_t m_nextServer = 0;
     DepthFrameCallback m_callback;
+    DepthBuffer* m_depthBuffer = nullptr;
+    int m_frameSkip = 1;
     std::vector<PendingFrame> m_pendingFrames;
     std::vector<CompletedFrame> m_completedFrames;
 };
