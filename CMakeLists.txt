@@ -255,6 +255,25 @@ if(ENABLE_VULKAN_VIDEO)
 endif()
 
 #####################################################################################
+# TCP Depth Processing Server
+#
+option(ENABLE_TCP_DEPTH "Enable TCP depth processing server using depth-anything.cpp" OFF)
+option(DA_GGML_CUDA "Enable CUDA backend for depth-anything.cpp GPU inference" OFF)
+
+if(ENABLE_TCP_DEPTH)
+  message(STATUS "TCP depth processing enabled")
+  set(DA_BUILD_CLI OFF CACHE BOOL "" FORCE)
+  set(DA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/depth-anything-cpp)
+  set_property(TARGET depthanything PROPERTY FOLDER "ThirdParty")
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/depth_server)
+  find_package(CUDAToolkit QUIET)
+  if(CUDAToolkit_FOUND AND DA_GGML_CUDA)
+    message(STATUS "CUDA found for depth-anything.cpp backend")
+  endif()
+endif()
+
+#####################################################################################
 # Source files for this project
 #
 # Note: GLOB is used here, so if you add new files, you must re-run CMake or touch this file.
@@ -269,6 +288,12 @@ endif()
 if (NOT ENABLE_DEPTH_STREAMING)
      list(FILTER SOURCE_FILES EXCLUDE REGEX "depth_(stream_client|parser|buffer|to_vk)\\.cpp$")
      list(FILTER SOURCE_FILES EXCLUDE REGEX "backend_process_manager\\.cpp$")
+endif()
+
+# Exclude TCP depth client files if disabled
+if (NOT ENABLE_TCP_DEPTH)
+     list(FILTER SOURCE_FILES EXCLUDE REGEX "tcp_depth_client\\.cpp$")
+     list(FILTER SOURCE_FILES EXCLUDE REGEX "tcp_server_manager\\.cpp$")
 endif()
 
 # Exclude Video Decoder files if disabled

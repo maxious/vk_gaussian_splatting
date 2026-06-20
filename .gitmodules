@@ -7,3 +7,6 @@
 [submodule "python/sam_3d_body_git"]
 	path = python/sam_3d_body_git
 	url = https://github.com/Erant/sam-3d-body.git
+[submodule "3rdparty/depth-anything-cpp"]
+	path = 3rdparty/depth-anything-cpp
+	url = https://github.com/maxious/depth-anything.cpp
