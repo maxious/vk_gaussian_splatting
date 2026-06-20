@@ -5,6 +5,7 @@ cmake_minimum_required(VERSION 3.22)
 add_executable(unit_tests
     main.cpp
     test_depth.cpp
+    test_tcp_protocol.cpp
     test_npz_loader.cpp
     test_lod_loader.cpp
     test_morton_order.cpp
@@ -13,6 +14,7 @@ add_executable(unit_tests
 # Add source files we need to test
 target_sources(unit_tests PRIVATE
     ../src/depth_parser.cpp
+    ../depth_server/protocol_parser.cpp
     ../src/npz_loader.cpp
     ../src/lod_loader.cpp
     ../src/sog_loader.cpp
@@ -22,6 +24,7 @@ target_sources(unit_tests PRIVATE
 target_include_directories(unit_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../depth_server
     ${CMAKE_CURRENT_SOURCE_DIR}/../3rdparty/miniply
     ${CMAKE_CURRENT_SOURCE_DIR}/../3rdparty/spz/src/cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../nvpro_core2/third_party
