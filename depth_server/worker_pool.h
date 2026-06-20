@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <deque>
 #include <string>
+#include <mutex>
 #include <vector>
 
 #include <sys/types.h>
@@ -38,6 +39,11 @@ public:
                     int& out_w, int& out_h, float& scale, float& bias, float& z_max);
     void shutdown();
     int activeWorkers() const;
+    size_t workerCount() const;
+    pid_t workerPid(size_t index) const;
+    std::string workerDevice(size_t index) const;
+    bool restartWorker(size_t index);
+    void retireWorker(size_t index);
     int queueDepth() const;
     float avgProcessingMs() const;
     std::vector<int> getWorkerLoads() const;
@@ -51,8 +57,9 @@ private:
     std::vector<std::int64_t> m_dispatchTimesNs;
     double m_totalProcessingMs = 0.0;
     std::uint64_t m_completedFrames = 0;
+    mutable std::mutex m_mutex;
 
-    int spawnWorker(int id, const std::string& device);
+    bool spawnWorker(int id, const std::string& device, WorkerProcess& out_worker);
     int dispatchFrame(const PendingFrame& frame);
     bool readResult(int worker_idx, int& frame_index, std::vector<float>& depth_data,
                     int& out_w, int& out_h, float& scale, float& bias, float& z_max);

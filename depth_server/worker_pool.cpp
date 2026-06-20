@@ -167,12 +167,14 @@ bool WorkerPool::initialize(const std::string& model_path, int num_workers, cons
     for(int worker_id = 0; worker_id < m_numWorkers; ++worker_id)
     {
         const std::string& device = devices[static_cast<size_t>(worker_id) % devices.size()];
-        if(spawnWorker(worker_id, device) != 0)
+        WorkerProcess worker{};
+        if(!spawnWorker(worker_id, device, worker))
         {
             LOGE("WorkerPool: failed to spawn worker %d\n", worker_id);
             shutdown();
             return false;
         }
+        m_workers.push_back(std::move(worker));
         m_dispatchTimesNs.push_back(0);
     }
 
@@ -180,13 +182,13 @@ bool WorkerPool::initialize(const std::string& model_path, int num_workers, cons
     return true;
 }
 
-int WorkerPool::spawnWorker(int id, const std::string& device)
+bool WorkerPool::spawnWorker(int id, const std::string& device, WorkerProcess& worker_out)
 {
     int sv[2];
     if(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == -1)
     {
         LOGE("WorkerPool: socketpair failed: %s\n", std::strerror(errno));
-        return -1;
+        return false;
     }
 
     const pid_t pid = fork();
@@ -195,7 +197,7 @@ int WorkerPool::spawnWorker(int id, const std::string& device)
         LOGE("WorkerPool: fork failed: %s\n", std::strerror(errno));
         close(sv[0]);
         close(sv[1]);
-        return -1;
+        return false;
     }
 
     if(pid == 0)
@@ -324,21 +326,20 @@ int WorkerPool::spawnWorker(int id, const std::string& device)
         close(sv[0]);
         int status = 0;
         waitpid(pid, &status, 0);
-        return -1;
+        return false;
     }
 
-    WorkerProcess worker{};
-    worker.id = id;
-    worker.pid = pid;
-    worker.device = device;
-    worker.socket_fd = sv[0];
-    worker.busy = false;
-    worker.current_frame = 0;
-    worker.pending_depth_fd = -1;
-    m_workers.push_back(worker);
+    worker_out = WorkerProcess{};
+    worker_out.id = id;
+    worker_out.pid = pid;
+    worker_out.device = device;
+    worker_out.socket_fd = sv[0];
+    worker_out.busy = false;
+    worker_out.current_frame = 0;
+    worker_out.pending_depth_fd = -1;
 
     LOGI("WorkerPool: worker %d started (pid=%d, device=%s)\n", id, static_cast<int>(pid), device.c_str());
-    return 0;
+    return true;
 }
 
 int WorkerPool::submitFrame(uint32_t frame_index,
@@ -347,6 +348,7 @@ int WorkerPool::submitFrame(uint32_t frame_index,
                             uint32_t width,
                             uint32_t height)
 {
+    std::scoped_lock lock(m_mutex);
     if(rgb_data == nullptr || width == 0 || height == 0)
     {
         LOGE("WorkerPool: invalid frame %u submission\n", frame_index);
@@ -434,6 +436,7 @@ bool WorkerPool::pollResult(int& frame_index,
                             float& bias,
                             float& z_max)
 {
+    std::scoped_lock lock(m_mutex);
     for(size_t worker_idx = 0; worker_idx < m_workers.size(); ++worker_idx)
     {
         WorkerProcess& worker = m_workers[worker_idx];
@@ -543,6 +546,7 @@ bool WorkerPool::readResult(int worker_idx,
 
 void WorkerPool::shutdown()
 {
+    std::scoped_lock lock(m_mutex);
     for(WorkerProcess& worker : m_workers)
     {
         if(worker.socket_fd >= 0)
@@ -583,6 +587,7 @@ void WorkerPool::shutdown()
 
 int WorkerPool::activeWorkers() const
 {
+    std::scoped_lock lock(m_mutex);
     int active = 0;
     for(const WorkerProcess& worker : m_workers)
     {
@@ -594,13 +599,95 @@ int WorkerPool::activeWorkers() const
     return active;
 }
 
+size_t WorkerPool::workerCount() const
+{
+    std::scoped_lock lock(m_mutex);
+    return m_workers.size();
+}
+
+pid_t WorkerPool::workerPid(size_t index) const
+{
+    std::scoped_lock lock(m_mutex);
+    if(index >= m_workers.size())
+    {
+        return -1;
+    }
+    return m_workers[index].pid;
+}
+
+std::string WorkerPool::workerDevice(size_t index) const
+{
+    std::scoped_lock lock(m_mutex);
+    if(index >= m_workers.size())
+    {
+        return {};
+    }
+    return m_workers[index].device;
+}
+
+bool WorkerPool::restartWorker(size_t index)
+{
+    std::scoped_lock lock(m_mutex);
+    if(index >= m_workers.size())
+    {
+        return false;
+    }
+
+    WorkerProcess& worker = m_workers[index];
+    const int old_pid = worker.pid;
+    const std::string device = worker.device;
+
+    if(worker.socket_fd >= 0)
+    {
+        close(worker.socket_fd);
+        worker.socket_fd = -1;
+    }
+    worker.busy = false;
+    worker.current_frame = 0;
+    worker.pending_depth_fd = -1;
+
+    WorkerProcess replacement{};
+    if(!spawnWorker(worker.id, device, replacement))
+    {
+        worker.pid = -1;
+        return false;
+    }
+
+    m_workers[index] = std::move(replacement);
+    LOGI("WorkerPool: restarted worker %d (old pid=%d, new pid=%d, device=%s)\n", worker.id, old_pid,
+         static_cast<int>(m_workers[index].pid), device.c_str());
+    return true;
+}
+
+void WorkerPool::retireWorker(size_t index)
+{
+    std::scoped_lock lock(m_mutex);
+    if(index >= m_workers.size())
+    {
+        return;
+    }
+
+    WorkerProcess& worker = m_workers[index];
+    if(worker.socket_fd >= 0)
+    {
+        close(worker.socket_fd);
+        worker.socket_fd = -1;
+    }
+    worker.pid = -1;
+    worker.busy = false;
+    worker.current_frame = 0;
+    worker.pending_depth_fd = -1;
+}
+
 int WorkerPool::queueDepth() const
 {
+    std::scoped_lock lock(m_mutex);
     return static_cast<int>(m_pendingQueue.size());
 }
 
 float WorkerPool::avgProcessingMs() const
 {
+    std::scoped_lock lock(m_mutex);
     if(m_completedFrames == 0)
     {
         return 0.0f;
@@ -610,6 +697,7 @@ float WorkerPool::avgProcessingMs() const
 
 std::vector<int> WorkerPool::getWorkerLoads() const
 {
+    std::scoped_lock lock(m_mutex);
     std::vector<int> loads;
     loads.reserve(m_workers.size());
     for(const WorkerProcess& worker : m_workers)
