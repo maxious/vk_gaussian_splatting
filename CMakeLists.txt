@@ -290,7 +290,7 @@ if (NOT ENABLE_DEPTH_STREAMING)
      list(FILTER SOURCE_FILES EXCLUDE REGEX "backend_process_manager\\.cpp$")
 endif()
 
-# Exclude TCP depth client files if disabled
+# Exclude TCP depth client/manager files if disabled
 if (NOT ENABLE_TCP_DEPTH)
      list(FILTER SOURCE_FILES EXCLUDE REGEX "tcp_depth_client\\.cpp$")
      list(FILTER SOURCE_FILES EXCLUDE REGEX "tcp_server_manager\\.cpp$")
