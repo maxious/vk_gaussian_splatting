@@ -1,5 +1,6 @@
 #include "worker_monitor.h"
 #include "worker_pool.h"
+#include "tcp_server.h"
 
 #include <nvutils/logger.hpp>
 
@@ -11,9 +12,9 @@
 #include <string>
 #include <thread>
 
-namespace {
-
 std::atomic<bool> g_shutdownRequested{false};
+
+namespace {
 
 void handleSignal(int sig)
 {
@@ -53,6 +54,7 @@ int main(int argc, char** argv)
     std::string modelPath;
     std::string backend = "cpu";
     int numWorkers = 0;
+    int port = 9000;
 
     for(int i = 1; i < argc; ++i)
     {
@@ -64,6 +66,11 @@ int main(int argc, char** argv)
         if(std::strcmp(argv[i], "--model") == 0 && i + 1 < argc)
         {
             modelPath = argv[++i];
+            continue;
+        }
+        if(std::strcmp(argv[i], "--port") == 0 && i + 1 < argc)
+        {
+            port = std::stoi(argv[++i]);
             continue;
         }
         if(std::strcmp(argv[i], "--backend") == 0 && i + 1 < argc)
@@ -80,8 +87,8 @@ int main(int argc, char** argv)
 
     if(modelPath.empty())
     {
-        LOGI("TCP depth server skeleton. Use --help for options.\n");
-        return 0;
+        LOGE("--model PATH is required\n");
+        return 1;
     }
 
     WorkerPool pool;
@@ -99,12 +106,23 @@ int main(int argc, char** argv)
         return 1;
     }
 
+    TcpServer server(pool);
+    if(!server.start(port))
+    {
+        LOGE("Failed to start TCP server\n");
+        monitor.stop();
+        pool.shutdown();
+        return 1;
+    }
+
     while(!g_shutdownRequested.load())
     {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        server.update();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
     LOGI("Shutting down...\n");
+    server.stop();
     monitor.stop();
     pool.shutdown();
     return 0;

@@ -1,2 +1,61 @@
 #pragma once
-// Placeholder for Task 8
+
+#include "protocol_parser.h"
+#include "worker_pool.h"
+
+#include <atomic>
+#include <cstdint>
+#include <functional>
+#include <poll.h>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+struct ClientConnection {
+    int fd = -1;
+    TcpProtocolParser parser;
+    uint64_t frames_received = 0;
+    uint64_t frames_processed = 0;
+    uint64_t bytes_rx = 0;
+    uint64_t bytes_tx = 0;
+    int64_t last_activity_ms = 0;   // epoch ms of last recv/send
+};
+
+class TcpServer {
+public:
+    TcpServer(WorkerPool& pool);
+    ~TcpServer();
+
+    bool start(int port);
+    void stop();
+    bool isRunning() const;
+
+    // Called each frame from main loop — poll clients, dispatch frames, send responses
+    void update();
+
+    int activeConnections() const;
+    uint64_t totalFramesProcessed() const;
+
+private:
+    struct InFlightFrame {
+        int client_slot = -1;
+        uint64_t client_generation = 0;
+        uint32_t timestamp_ms = 0;
+    };
+
+    WorkerPool& m_pool;
+    int m_listenFd = -1;
+    std::atomic<bool> m_running{false};
+    std::vector<ClientConnection> m_clients;
+    int m_port = 9000;
+    int64_t m_lastCleanupMs = 0;
+    uint64_t m_totalFramesProcessed = 0;
+    uint32_t m_nextFrameIndex = 1;
+    std::vector<uint64_t> m_clientGenerations;
+    std::unordered_map<uint32_t, InFlightFrame> m_inFlightFrames;
+
+    // Constants
+    static constexpr int MAX_CLIENTS = 16;
+    static constexpr int IDLE_TIMEOUT_MS = 60000;  // 60 seconds
+    static constexpr int CLEANUP_INTERVAL_MS = 5000;  // check every 5s
+};

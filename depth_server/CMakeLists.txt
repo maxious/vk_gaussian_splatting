@@ -2,6 +2,7 @@ add_executable(depth_server
     main.cpp
     da_capi_buffer.cpp
     protocol_parser.cpp
+    tcp_server.cpp
     worker_pool.cpp
     worker_monitor.cpp
 )
