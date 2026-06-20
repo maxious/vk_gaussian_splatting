@@ -1,4 +1,5 @@
 #include "worker_monitor.h"
+#include "benchmark.h"
 #include "worker_pool.h"
 #include "tcp_server.h"
 
@@ -55,6 +56,11 @@ int main(int argc, char** argv)
     std::string backend = "cpu";
     int numWorkers = 0;
     int port = 9000;
+    bool benchmarkMode = false;
+    std::string benchmarkFramesDir;
+    int benchmarkRepeat = 10;
+    int benchmarkWarmup = 3;
+    std::string benchmarkOutputPath;
 
     for(int i = 1; i < argc; ++i)
     {
@@ -83,12 +89,43 @@ int main(int argc, char** argv)
             numWorkers = std::max(0, std::stoi(argv[++i]));
             continue;
         }
+        if(std::strcmp(argv[i], "--benchmark") == 0)
+        {
+            benchmarkMode = true;
+            continue;
+        }
+        if(std::strcmp(argv[i], "--benchmark-frames") == 0 && i + 1 < argc)
+        {
+            benchmarkFramesDir = argv[++i];
+            continue;
+        }
+        if(std::strcmp(argv[i], "--benchmark-repeat") == 0 && i + 1 < argc)
+        {
+            benchmarkRepeat = std::max(1, std::stoi(argv[++i]));
+            continue;
+        }
+        if(std::strcmp(argv[i], "--benchmark-warmup") == 0 && i + 1 < argc)
+        {
+            benchmarkWarmup = std::max(0, std::stoi(argv[++i]));
+            continue;
+        }
+        if(std::strcmp(argv[i], "--benchmark-output") == 0 && i + 1 < argc)
+        {
+            benchmarkOutputPath = argv[++i];
+            continue;
+        }
     }
 
     if(modelPath.empty())
     {
         LOGE("--model PATH is required\n");
         return 1;
+    }
+
+    if(benchmarkMode)
+    {
+        return runBenchmark(modelPath.c_str(), benchmarkFramesDir.c_str(), numWorkers, backend.c_str(),
+                            benchmarkRepeat, benchmarkWarmup, benchmarkOutputPath.c_str());
     }
 
     WorkerPool pool;

@@ -1,5 +1,6 @@
 add_executable(depth_server
     main.cpp
+    benchmark.cpp
     da_capi_buffer.cpp
     protocol_parser.cpp
     tcp_server.cpp
