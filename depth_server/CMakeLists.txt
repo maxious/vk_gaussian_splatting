@@ -1,5 +1,6 @@
 add_executable(depth_server
     main.cpp
+    da_capi_buffer.cpp
 )
 
 target_include_directories(depth_server PRIVATE
@@ -12,8 +13,25 @@ target_include_directories(depth_server PRIVATE
 target_link_libraries(depth_server PRIVATE depthanything nvpro2::nvutils)
 target_compile_features(depth_server PRIVATE cxx_std_20)
 
+add_executable(test_da_capi_buffer
+    test_da_capi_buffer.cpp
+    da_capi_buffer.cpp
+)
+
+target_include_directories(test_da_capi_buffer PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../3rdparty/depth-anything-cpp/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../nvpro_core2
+)
+
+target_link_libraries(test_da_capi_buffer PRIVATE depthanything nvpro2::nvutils)
+target_compile_features(test_da_capi_buffer PRIVATE cxx_std_20)
+
 if(CMAKE_BUILD_TYPE MATCHES "Release")
     target_compile_definitions(depth_server PRIVATE NDEBUG)
+    target_compile_definitions(test_da_capi_buffer PRIVATE NDEBUG)
 endif()
 
 set_property(TARGET depth_server PROPERTY FOLDER "DepthServer")
+set_property(TARGET test_da_capi_buffer PROPERTY FOLDER "DepthServer")
