@@ -325,7 +325,20 @@ int main(int argc, char** argv)
 #ifdef WITH_TCP_DEPTH
   if(!tcpDepthServers.empty())
   {
-    vkViewer->enableTcpDepth(tcpDepthServers, prmScene.sceneToLoadFilename.string());
+    if(!prmScene.sceneToLoadFilename.empty() && isImageFile(prmScene.sceneToLoadFilename.string()))
+    {
+      vkViewer->requestSingleImageDepth(prmScene.sceneToLoadFilename.string(), tcpDepthServers);
+      prmScene.sceneToLoadFilename.clear();
+    }
+    else
+    {
+      vkViewer->enableTcpDepth(tcpDepthServers, prmScene.sceneToLoadFilename.string());
+    }
+  }
+  else if(!prmScene.sceneToLoadFilename.empty() && isImageFile(prmScene.sceneToLoadFilename.string()))
+  {
+    LOGW("Ignoring image input without --tcp-depth-servers: %s\n", prmScene.sceneToLoadFilename.string().c_str());
+    prmScene.sceneToLoadFilename.clear();
   }
 #endif
 

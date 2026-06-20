@@ -393,6 +393,78 @@ void VkViewer::enableTcpDepth(const std::string& serverList, const std::string& 
 
   LOGI("TCP depth enabled with servers: %s\n", serverList.c_str());
 }
+
+void VkViewer::requestSingleImageDepth(const std::string& imagePath, const std::string& serverList)
+{
+  LOGI("Single image depth: %s\n", imagePath.c_str());
+
+  m_tcpDepthSingleImageRequested = false;
+  m_tcpDepthSingleImageDone = false;
+
+#ifdef WITH_VIDEO_DECODER
+  auto decoder = std::make_unique<VideoDecoder>();
+  decoder->initializeVulkan(m_app->getInstance(), m_app->getPhysicalDevice(), m_app->getDevice(), m_app->getQueue(0).familyIndex, 0);
+  if(!decoder->open(imagePath))
+  {
+    LOGE("Failed to open image: %s\n", imagePath.c_str());
+    return;
+  }
+
+  decoder->startDecoding();
+
+  DecodedFrame frame;
+  if(!decoder->getNextFrame(frame) || frame.data.empty() || frame.width == 0 || frame.height == 0)
+  {
+    LOGE("Failed to decode image frame: %s\n", imagePath.c_str());
+    decoder->stopDecoding();
+    decoder->close();
+    return;
+  }
+
+  const uint32_t w = static_cast<uint32_t>(frame.width);
+  const uint32_t h = static_cast<uint32_t>(frame.height);
+  std::vector<uint8_t> rgb(w * h * 3);
+  for(uint32_t i = 0; i < w * h; ++i)
+  {
+    rgb[i * 3 + 0] = frame.data[i * 4 + 0];
+    rgb[i * 3 + 1] = frame.data[i * 4 + 1];
+    rgb[i * 3 + 2] = frame.data[i * 4 + 2];
+  }
+
+  if(!m_depthManager)
+  {
+    m_depthManager = std::make_unique<DepthTextureManager>();
+    m_depthManager->initialize(m_device, m_app->getPhysicalDevice(), m_app->getQueue(0).queue, &m_alloc);
+  }
+
+  if(!m_tcpServerManager)
+  {
+    m_tcpServerManager = std::make_unique<TcpServerManager>();
+  }
+  m_tcpServerManager->setDepthBuffer(&m_depthBuffer);
+  m_tcpServerManager->setDepthFrameCallback([this](const DepthFrame&) {
+    // Depth frames are polled on the render thread in updateDepthRendering().
+  });
+  m_tcpServerManager->parseServerList(serverList);
+  m_tcpServerManager->connectAll();
+
+  if(m_tcpServerManager->sendFrame(0, 0, rgb.data(), w, h) >= 0)
+  {
+    m_tcpDepthSingleImageRequested = true;
+    LOGI("Single image depth frame sent: %dx%d\n", w, h);
+  }
+  else
+  {
+    LOGE("Failed to send single image depth frame: %s\n", imagePath.c_str());
+  }
+
+  decoder->stopDecoding();
+  decoder->close();
+#else
+  (void)serverList;
+  LOGE("Video decoder not available - rebuild with ENABLE_VIDEO_DECODER=ON\n");
+#endif
+}
 #endif
 
 void VkViewer::onResize(VkCommandBuffer cmd, const VkExtent2D& viewportSize)

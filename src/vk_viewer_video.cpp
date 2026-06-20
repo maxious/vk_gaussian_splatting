@@ -25,6 +25,46 @@ namespace vk_viewer {
 void VkViewer::updateDepthRendering(VkCommandBuffer cmd)
 {
 #ifdef WITH_TCP_DEPTH
+  if(m_tcpDepthSingleImageRequested)
+  {
+    if(!m_tcpDepthSingleImageDone && m_tcpServerManager)
+    {
+      m_tcpServerManager->update();
+
+      DepthFrame frame;
+      if(m_depthBuffer.getFrame(0, frame) && m_depthManager)
+      {
+        m_depthManager->uploadDepthFrame(frame, cmd);
+        ++m_depthFrameCounter;
+        ++m_depthFrameCount;
+
+        if(m_descriptorSet != VK_NULL_HANDLE)
+        {
+          const auto& depthTexture = m_depthManager->getCurrentTexture();
+          if(depthTexture.image.descriptor.imageView)
+          {
+            VkDescriptorImageInfo depthImageInfo{};
+            depthImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            depthImageInfo.imageView = depthTexture.image.descriptor.imageView;
+            depthImageInfo.sampler = m_sampler;
+
+            VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+            write.dstSet = m_descriptorSet;
+            write.dstBinding = BINDING_VDZ_DEPTH_TEXTURE;
+            write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            write.descriptorCount = 1;
+            write.pImageInfo = &depthImageInfo;
+            vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
+          }
+        }
+
+        m_tcpDepthSingleImageDone = true;
+        LOGI("Single image depth received: %dx%d\n", frame.width, frame.height);
+      }
+    }
+    return;
+  }
+
   static auto lastFpsTime = std::chrono::steady_clock::now();
   auto now = std::chrono::steady_clock::now();
   float elapsed_sec = std::chrono::duration<float>(now - lastFpsTime).count();

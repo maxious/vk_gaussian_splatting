@@ -143,11 +143,12 @@ public:
 #endif
 
 	void enableDepthRendering(const std::string& host, int port, const std::string& videoPath);
-	#ifdef WITH_TCP_DEPTH
-	void enableTcpDepth(const std::string& serverList, const std::string& videoPath);
-	TcpServerManager* getTcpServerManager() { return m_tcpServerManager.get(); }
-	float getDepthFps() const { return m_depthFps; }
-	#endif
+#ifdef WITH_TCP_DEPTH
+  void enableTcpDepth(const std::string& serverList, const std::string& videoPath);
+  void requestSingleImageDepth(const std::string& imagePath, const std::string& serverList);
+  TcpServerManager* getTcpServerManager() { return m_tcpServerManager.get(); }
+  float getDepthFps() const { return m_depthFps; }
+  #endif
 	void enableDepthVideoPlayback(const std::string& metadataPath);
 	void enableHlsPlayback(const std::string& hlsPlaylistPath);
 	void updateDepthRendering(VkCommandBuffer cmd);
@@ -722,6 +723,8 @@ protected:
   DepthBuffer m_depthBuffer;
   std::unique_ptr<TcpServerManager> m_tcpServerManager;
   bool m_tcpDepthEnabled = false;
+  bool m_tcpDepthSingleImageRequested = false;
+  bool m_tcpDepthSingleImageDone = false;
   float m_depthFps = 0.0f;
   uint32_t m_depthFrameCount = 0;
 #endif

@@ -20,6 +20,7 @@
 #ifndef _UTILITIES_H_
 #define _UTILITIES_H_
 
+#include <algorithm>
 #include <filesystem>
 #include <fmt/format.h>
 #include <glm/vec3.hpp>
@@ -66,6 +67,18 @@ inline bool hasExtension(const std::filesystem::path& filePath, std::string ext)
   auto fileExt = filePath.extension().string();
   std::transform(fileExt.begin(), fileExt.end(), fileExt.begin(), ::tolower);
   return fileExt == ext;
+}
+
+static bool isImageFile(const std::string& path)
+{
+  std::string ext;
+  size_t      dot = path.find_last_of('.');
+  if(dot != std::string::npos)
+  {
+    ext = path.substr(dot);
+  }
+  std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+  return ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp";
 }
 
 inline static std::vector<std::filesystem::path> getResourcesDirs()
