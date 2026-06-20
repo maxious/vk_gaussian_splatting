@@ -1,6 +1,7 @@
 add_executable(depth_server
     main.cpp
     da_capi_buffer.cpp
+    worker_pool.cpp
 )
 
 target_include_directories(depth_server PRIVATE
