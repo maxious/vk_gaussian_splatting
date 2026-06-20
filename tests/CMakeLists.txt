@@ -6,6 +6,7 @@ add_executable(unit_tests
     main.cpp
     test_depth.cpp
     test_tcp_protocol.cpp
+    test_tcp_depth_client.cpp
     test_npz_loader.cpp
     test_lod_loader.cpp
     test_morton_order.cpp
@@ -15,6 +16,9 @@ add_executable(unit_tests
 target_sources(unit_tests PRIVATE
     ../src/depth_parser.cpp
     ../depth_server/protocol_parser.cpp
+    ../src/tcp_depth_client.cpp
+    ../src/tcp_server_manager.cpp
+    depth_buffer_stub.cpp
     ../src/npz_loader.cpp
     ../src/lod_loader.cpp
     ../src/sog_loader.cpp
@@ -42,6 +46,8 @@ target_link_libraries(unit_tests PRIVATE webp)
 
 # C++20 required
 target_compile_features(unit_tests PRIVATE cxx_std_20)
+
+target_compile_definitions(unit_tests PRIVATE WITH_TCP_DEPTH)
 
 # Disable assertions in Release builds to prevent SIGTRAP
 if(CMAKE_BUILD_TYPE MATCHES "Release")
