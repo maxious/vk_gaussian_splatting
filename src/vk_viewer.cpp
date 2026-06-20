@@ -239,6 +239,15 @@ void VkViewer::onDetach()
   m_splatSetVk.deinit();
   m_meshSetVk.deinit();
   m_vdzMesh.cleanup();
+
+#ifdef WITH_TCP_DEPTH
+  if(m_tcpServerManager)
+  {
+    m_tcpServerManager->disconnectAll();
+    m_tcpServerManager.reset();
+  }
+  m_tcpDepthEnabled = false;
+#endif
   
   if(m_depthManager)
   {
@@ -314,6 +323,77 @@ void VkViewer::enableDepthRendering(const std::string& host, int port, const std
 
   LOGI("Depth rendering enabled for streaming session\n");
 }
+
+#ifdef WITH_TCP_DEPTH
+void VkViewer::enableTcpDepth(const std::string& serverList, const std::string& videoPath)
+{
+  LOGI("enableTcpDepth called: servers=%s, video=%s\n", serverList.c_str(), videoPath.c_str());
+
+  if(!m_depthManager)
+  {
+    m_depthManager = std::make_unique<DepthTextureManager>();
+    m_depthManager->initialize(m_device, m_app->getPhysicalDevice(), m_app->getQueue(0).queue, &m_alloc);
+  }
+
+  if(!m_tcpServerManager)
+  {
+    m_tcpServerManager = std::make_unique<TcpServerManager>();
+  }
+
+  m_tcpServerManager->setDepthBuffer(&m_depthBuffer);
+  m_tcpServerManager->setDepthFrameCallback([this](const DepthFrame&) {
+    // Depth frames are polled on the render thread in updateDepthRendering().
+  });
+  m_tcpServerManager->parseServerList(serverList);
+  m_tcpServerManager->connectAll();
+
+#ifdef WITH_VIDEO_DECODER
+  if(!videoPath.empty())
+  {
+    if(m_videoDecoder)
+    {
+      vkDeviceWaitIdle(m_device);
+      m_videoDecoder->stopDecoding();
+      m_videoDecoder->close();
+      m_videoDecoder.reset();
+    }
+
+    m_videoDecoder = std::make_unique<VideoDecoder>();
+    m_videoDecoder->initializeVulkan(m_app->getInstance(), m_app->getPhysicalDevice(), m_app->getDevice(), m_app->getQueue(0).familyIndex, 0);
+    if(m_videoDecoder->open(videoPath))
+    {
+      m_videoDecoder->startDecoding();
+      LOGI("TCP depth video decoder opened: %s\n", videoPath.c_str());
+    }
+    else
+    {
+      LOGE("Failed to open TCP depth video: %s\n", videoPath.c_str());
+      m_videoDecoder.reset();
+    }
+  }
+#endif
+
+  prmFrame.vdzZScale = 10.0f;
+  prmFrame.vdzZBias = 2.0f;
+  prmFrame.vdzZGamma = 5.0f;
+  prmFrame.vdzZMaxClip = 0.2f;
+  prmFrame.vdzPlaneScale = 1.4f;
+  prmFrame.vdzEdgeThreshold = 1.0f;
+
+  m_tcpDepthEnabled = true;
+  m_enableDepthRendering = true;
+  m_videoDepthPlaybackMode = false;
+#ifdef WITH_VIDEO_DECODER
+  m_hlsPlaybackMode = false;
+#endif
+  m_playbackStartTime = std::chrono::steady_clock::now();
+  m_playbackTimeOffset = 0.0;
+  m_playbackPaused = false;
+  m_lastVdzFrameIndex = SIZE_MAX;
+
+  LOGI("TCP depth enabled with servers: %s\n", serverList.c_str());
+}
+#endif
 
 void VkViewer::onResize(VkCommandBuffer cmd, const VkExtent2D& viewportSize)
 {

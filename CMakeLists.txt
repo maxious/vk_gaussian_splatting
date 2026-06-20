@@ -294,6 +294,8 @@ endif()
 if (NOT ENABLE_TCP_DEPTH)
      list(FILTER SOURCE_FILES EXCLUDE REGEX "tcp_depth_client\\.cpp$")
      list(FILTER SOURCE_FILES EXCLUDE REGEX "tcp_server_manager\\.cpp$")
+else()
+     list(APPEND SOURCE_FILES depth_server/protocol_parser.cpp)
 endif()
 
 # Exclude Video Decoder files if disabled

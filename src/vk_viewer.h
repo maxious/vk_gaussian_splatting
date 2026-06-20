@@ -23,6 +23,9 @@
 #include "depth_stream_client.h"
 #include "depth_to_vk.h"
 #include "backend_process_manager.h"
+#ifdef WITH_TCP_DEPTH
+#include "tcp_server_manager.h"
+#endif
 #ifdef WITH_VIDEO_DECODER
 #include "video_decoder.h"
 #include "depth_video_loader.h"
@@ -139,11 +142,14 @@ public:
                                    std::vector<std::string>& outDeviceExtensions);
 #endif
 
-    void enableDepthRendering(const std::string& host, int port, const std::string& videoPath);
-    void enableDepthVideoPlayback(const std::string& metadataPath);
-    void enableHlsPlayback(const std::string& hlsPlaylistPath);
-    void updateDepthRendering(VkCommandBuffer cmd);
-    bool isDepthVideoPlaying() const;
+	void enableDepthRendering(const std::string& host, int port, const std::string& videoPath);
+	#ifdef WITH_TCP_DEPTH
+	void enableTcpDepth(const std::string& serverList, const std::string& videoPath);
+	#endif
+	void enableDepthVideoPlayback(const std::string& metadataPath);
+	void enableHlsPlayback(const std::string& hlsPlaylistPath);
+	void updateDepthRendering(VkCommandBuffer cmd);
+	bool isDepthVideoPlaying() const;
 
   public:
     // Camera manipulator
@@ -709,6 +715,12 @@ protected:
   bool m_vdzWorldSpaceInitialized = false;
   float m_depthScale = 1.0f;
   float m_depthBias = 0.0f;
+
+#ifdef WITH_TCP_DEPTH
+  DepthBuffer m_depthBuffer;
+  std::unique_ptr<TcpServerManager> m_tcpServerManager;
+  bool m_tcpDepthEnabled = false;
+#endif
 
   // Parallax rendering state
   glm::vec2 m_lastMousePos = {-1.0f, -1.0f};  // Last mouse position for drag detection

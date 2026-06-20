@@ -24,6 +24,47 @@ namespace vk_viewer {
 
 void VkViewer::updateDepthRendering(VkCommandBuffer cmd)
 {
+#ifdef WITH_TCP_DEPTH
+  if(m_tcpDepthEnabled && m_tcpServerManager)
+  {
+    if(m_playbackPaused)
+    {
+      return;
+    }
+
+    m_tcpServerManager->update();
+
+    const uint64_t currentTimeMs = static_cast<uint64_t>(prmFrame.currentTime * 1000.0f);
+    DepthFrame frame;
+    if(m_depthBuffer.getFrame(currentTimeMs, frame) && m_depthManager)
+    {
+      m_depthManager->uploadDepthFrame(frame, cmd);
+      ++m_depthFrameCounter;
+
+      if(m_descriptorSet != VK_NULL_HANDLE)
+      {
+        const auto& depthTexture = m_depthManager->getCurrentTexture();
+        if(depthTexture.image.descriptor.imageView)
+        {
+          VkDescriptorImageInfo depthImageInfo{};
+          depthImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+          depthImageInfo.imageView = depthTexture.image.descriptor.imageView;
+          depthImageInfo.sampler = m_sampler;
+
+          VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+          write.dstSet = m_descriptorSet;
+          write.dstBinding = BINDING_VDZ_DEPTH_TEXTURE;
+          write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+          write.descriptorCount = 1;
+          write.pImageInfo = &depthImageInfo;
+          vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
+        }
+      }
+    }
+    return;
+  }
+#endif
+
 #ifdef WITH_VIDEO_DECODER
   if (m_videoDepthManager && m_videoDepthManager->isPlaying())
   {

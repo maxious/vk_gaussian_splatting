@@ -58,6 +58,7 @@ int main(int argc, char** argv)
   nvapp::ApplicationCreateInfo appInfo;  // Information to create the application
   appInfo.vSync = false;
   bool                         benchmarkMode = false;
+  std::string                  tcpDepthServers;
 
   /////////////////////////////////
   // Parse the command line to get the application creation information
@@ -69,6 +70,7 @@ int main(int argc, char** argv)
   parameterRegistry.add({"validation", "Enable validation layers"}, &vkSetup.enableValidationLayers);
   parameterRegistry.add({"benchmark", "Enable benchmarking, prevents async loadings and turns off vsync"}, &benchmarkMode);
   parameterRegistry.add({"forcegpu", "Force the use of a specific GPU by probviding its ID"}, &vkSetup.forceGPU);
+  parameterRegistry.add({"tcp-depth-servers", "Comma separated list of TCP depth servers"}, &tcpDepthServers);
 
   registerCommandLineParameters(&parameterRegistry);
 
@@ -319,6 +321,14 @@ int main(int argc, char** argv)
   // onAttach will be invoked on elements at this stage
   application.addElement(elemSequencer);
   application.addElement(vkViewer);
+
+#ifdef WITH_TCP_DEPTH
+  if(!tcpDepthServers.empty())
+  {
+    vkViewer->enableTcpDepth(tcpDepthServers, prmScene.sceneToLoadFilename.string());
+  }
+#endif
+
   application.addElement(std::make_shared<nvapp::ElementDefaultWindowTitle>("", fmt::format("({})", "GLSL")));
 
   auto elemCamera = std::make_shared<nvapp::ElementCamera>();
