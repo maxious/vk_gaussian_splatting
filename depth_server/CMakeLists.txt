@@ -1,14 +1,19 @@
-cmake_minimum_required(VERSION 3.18)
+add_executable(depth_server
+    main.cpp
+)
 
-file(GLOB DEPTH_SERVER_SOURCES CONFIGURE_DEPENDS
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/*.c)
+target_include_directories(depth_server PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../3rdparty/depth-anything-cpp/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../nvpro_core2
+)
 
-if(DEPTH_SERVER_SOURCES)
-  add_executable(depth_server ${DEPTH_SERVER_SOURCES})
-  target_link_libraries(depth_server PRIVATE depthanything)
-  target_include_directories(depth_server PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-  set_property(TARGET depth_server PROPERTY FOLDER "DepthServer")
-else()
-  message(STATUS "depth_server sources not present yet; integration scaffold only")
+target_link_libraries(depth_server PRIVATE depthanything nvpro2::nvutils)
+target_compile_features(depth_server PRIVATE cxx_std_20)
+
+if(CMAKE_BUILD_TYPE MATCHES "Release")
+    target_compile_definitions(depth_server PRIVATE NDEBUG)
 endif()
+
+set_property(TARGET depth_server PROPERTY FOLDER "DepthServer")
