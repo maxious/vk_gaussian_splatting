@@ -56,3 +56,8 @@ endif()
 
 # Register with CTest
 add_test(NAME unit_tests COMMAND unit_tests)
+
+if(ENABLE_TCP_DEPTH)
+    add_test(NAME tcp_depth_e2e 
+             COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/integration/test_tcp_depth_e2e.sh $<TARGET_FILE_DIR:vk_viewer>)
+endif()
