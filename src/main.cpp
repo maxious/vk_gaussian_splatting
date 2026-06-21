@@ -56,7 +56,7 @@ int main(int argc, char** argv)
   nvvk::ContextInitInfo        vkSetup;    // Information to create the Vulkan context
   nvapp::Application           application;
   nvapp::ApplicationCreateInfo appInfo;  // Information to create the application
-  appInfo.vSync = false;
+  appInfo.vSync = true;
   bool                         benchmarkMode = false;
   std::string                  tcpDepthServers;
 
