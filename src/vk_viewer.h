@@ -146,6 +146,7 @@ public:
 	void enableDepthRendering(const std::string& host, int port, const std::string& videoPath);
 #ifdef WITH_TCP_DEPTH
   void enableTcpDepth(const std::string& serverList, const std::string& videoPath);
+  void ensureTcpServerManager();
   void requestSingleImageDepth(const std::string& imagePath, const std::string& serverList);
   TcpServerManager* getTcpServerManager() { return m_tcpServerManager.get(); }
   LocalDepthServerManager* getLocalDepthServerManager() { return m_localDepthServer.get(); }

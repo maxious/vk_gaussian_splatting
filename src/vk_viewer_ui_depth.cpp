@@ -25,6 +25,7 @@ void guiDrawTcpServerProperties(VkViewer& viewer) {
     if (!ImGui::CollapsingHeader("TCP Servers", ImGuiTreeNodeFlags_DefaultOpen))
         return;
 
+    viewer.ensureTcpServerManager();
     auto* mgr = viewer.getTcpServerManager();
     if (!mgr) return;
 

@@ -394,8 +394,20 @@ void VkViewer::enableTcpDepth(const std::string& serverList, const std::string& 
   LOGI("TCP depth enabled with servers: %s\n", serverList.c_str());
 }
 
+void VkViewer::ensureTcpServerManager()
+{
+  if(!m_tcpServerManager)
+  {
+    m_tcpServerManager = std::make_unique<TcpServerManager>();
+    m_tcpServerManager->setDepthBuffer(&m_depthBuffer);
+    LOGI("TcpServerManager created (lazy init from UI)\n");
+  }
+}
+
 void VkViewer::startLocalDepthServer(const std::string& modelPath, int port, int workers, const std::string& backend)
 {
+  ensureTcpServerManager();
+
   if(!m_localDepthServer)
   {
     m_localDepthServer = std::make_unique<LocalDepthServerManager>();
@@ -405,15 +417,6 @@ void VkViewer::startLocalDepthServer(const std::string& modelPath, int port, int
   {
     LOGE("Failed to start local depth_server\n");
     return;
-  }
-
-  if(!m_tcpServerManager)
-  {
-    m_tcpServerManager = std::make_unique<TcpServerManager>();
-    m_tcpServerManager->setDepthBuffer(&m_depthBuffer);
-    m_tcpServerManager->setDepthFrameCallback([this](const DepthFrame&) {
-      // Depth frames are polled on the render thread in updateDepthRendering().
-    });
   }
 
   m_tcpServerManager->addServer("127.0.0.1", port);
