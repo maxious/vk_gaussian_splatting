@@ -70,8 +70,53 @@ void guiDrawTcpServerProperties(VkViewer& viewer) {
         static int  localWorkers  = 4;
         static int  localBackend  = 0;
 
+        static const char* modelOptions[] = {
+            "mudler/depth-anything.cpp-gguf:depth-anything-base-q4_k.gguf (99 MB, fast)",
+            "mudler/depth-anything.cpp-gguf:depth-anything-base-q8_0.gguf (142 MB, accurate)",
+            "mudler/depth-anything.cpp-gguf:depth-anything-base-f16.gguf (233 MB, GPU)",
+            "Custom path..."
+        };
+        static const char* modelRefs[] = {
+            "mudler/depth-anything.cpp-gguf:depth-anything-base-q4_k.gguf",
+            "mudler/depth-anything.cpp-gguf:depth-anything-base-q8_0.gguf",
+            "mudler/depth-anything.cpp-gguf:depth-anything-base-f16.gguf",
+            ""
+        };
+        static int  selectedModel   = 0;
+        const int   customIndex     = 3;
+        static bool userEditedPath  = false;
+
+        if(!userEditedPath && selectedModel != customIndex)
+        {
+            const std::string ref = modelRefs[selectedModel];
+            if(!ref.empty())
+            {
+                std::snprintf(localModelPath, sizeof(localModelPath), "%s", ref.c_str());
+            }
+        }
+
         ImGui::SetNextItemWidth(300);
-        ImGui::InputText("Model Path", localModelPath, sizeof(localModelPath));
+        ImGui::Combo("Model", &selectedModel, modelOptions, IM_ARRAYSIZE(modelOptions));
+        if(ImGui::IsItemHovered())
+        {
+            nvgui::tooltip("Pick a HF model to auto-download, or 'Custom path...' for a local file.\n"
+                           "HF models are cached at ~/.cache/depth_server/.");
+        }
+
+        ImGui::SetNextItemWidth(300);
+        if(ImGui::InputText("Model Path", localModelPath, sizeof(localModelPath)))
+        {
+            userEditedPath = true;
+        }
+        if(selectedModel != customIndex)
+        {
+            ImGui::SameLine();
+            if(ImGui::SmallButton("Use##clearCustom"))
+            {
+                userEditedPath = false;
+            }
+        }
+
         ImGui::SetNextItemWidth(60);
         ImGui::InputInt("Port", &localPort, 1, 100);
         ImGui::SameLine();

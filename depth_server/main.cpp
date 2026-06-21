@@ -2,6 +2,7 @@
 #include "benchmark.h"
 #include "worker_pool.h"
 #include "tcp_server.h"
+#include "model_downloader.h"
 
 #include <nvutils/logger.hpp>
 
@@ -39,7 +40,12 @@ void printHelp()
     LOGI("  --benchmark-repeat N     Repeat each frame N times (default: 10)\n");
     LOGI("  --benchmark-warmup N     Warmup frames before measurement (default: 3)\n");
     LOGI("  --benchmark-output PATH  JSON output path\n");
+    LOGI("  --list-models        Print available HuggingFace models\n");
     LOGI("  --help               Show this help and exit\n");
+    LOGI("\n");
+    LOGI("The --model argument accepts either a local file path or a\n");
+    LOGI("HuggingFace reference of the form 'repo_id:filename'. HF references\n");
+    LOGI("are auto-downloaded to ~/.cache/depth_server/ on first use.\n");
 }
 
 }  // namespace
@@ -67,6 +73,11 @@ int main(int argc, char** argv)
         if(std::strcmp(argv[i], "--help") == 0 || std::strcmp(argv[i], "-h") == 0)
         {
             printHelp();
+            return 0;
+        }
+        if(std::strcmp(argv[i], "--list-models") == 0)
+        {
+            printAvailableModels();
             return 0;
         }
         if(std::strcmp(argv[i], "--model") == 0 && i + 1 < argc)
@@ -122,21 +133,28 @@ int main(int argc, char** argv)
         return 1;
     }
 
+    std::string resolvedModel = resolveModelPath(modelPath);
+    if(resolvedModel.empty())
+    {
+        LOGE("Failed to resolve model: %s\n", modelPath.c_str());
+        return 1;
+    }
+
     if(benchmarkMode)
     {
-        return runBenchmark(modelPath.c_str(), benchmarkFramesDir.c_str(), numWorkers, backend.c_str(),
+        return runBenchmark(resolvedModel.c_str(), benchmarkFramesDir.c_str(), numWorkers, backend.c_str(),
                             benchmarkRepeat, benchmarkWarmup, benchmarkOutputPath.c_str());
     }
 
     WorkerPool pool;
-    if(!pool.initialize(modelPath, numWorkers, backend))
+    if(!pool.initialize(resolvedModel, numWorkers, backend))
     {
         LOGE("Failed to initialize worker pool\n");
         return 1;
     }
 
     WorkerMonitor monitor(pool);
-    if(!monitor.start(modelPath, backend))
+    if(!monitor.start(resolvedModel, backend))
     {
         LOGE("Failed to start worker monitor\n");
         pool.shutdown();
