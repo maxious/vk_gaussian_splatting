@@ -25,6 +25,7 @@
 #include "backend_process_manager.h"
 #ifdef WITH_TCP_DEPTH
 #include "tcp_server_manager.h"
+#include "local_depth_server_manager.h"
 #endif
 #ifdef WITH_VIDEO_DECODER
 #include "video_decoder.h"
@@ -147,6 +148,8 @@ public:
   void enableTcpDepth(const std::string& serverList, const std::string& videoPath);
   void requestSingleImageDepth(const std::string& imagePath, const std::string& serverList);
   TcpServerManager* getTcpServerManager() { return m_tcpServerManager.get(); }
+  LocalDepthServerManager* getLocalDepthServerManager() { return m_localDepthServer.get(); }
+  void startLocalDepthServer(const std::string& modelPath, int port, int workers, const std::string& backend);
   float getDepthFps() const { return m_depthFps; }
   #endif
 	void enableDepthVideoPlayback(const std::string& metadataPath);
@@ -722,6 +725,7 @@ protected:
 #ifdef WITH_TCP_DEPTH
   DepthBuffer m_depthBuffer;
   std::unique_ptr<TcpServerManager> m_tcpServerManager;
+  std::unique_ptr<LocalDepthServerManager> m_localDepthServer;
   bool m_tcpDepthEnabled = false;
   bool m_tcpDepthSingleImageRequested = false;
   bool m_tcpDepthSingleImageDone = false;

@@ -36,6 +36,7 @@ public:
     ~TcpServerManager();
 
     void addServer(const std::string& host, int port);
+    bool removeServer(size_t index);
     void connectAll();
     void disconnectAll();
     void setDepthBuffer(DepthBuffer* buffer);

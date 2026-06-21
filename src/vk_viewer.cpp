@@ -394,6 +394,43 @@ void VkViewer::enableTcpDepth(const std::string& serverList, const std::string& 
   LOGI("TCP depth enabled with servers: %s\n", serverList.c_str());
 }
 
+void VkViewer::startLocalDepthServer(const std::string& modelPath, int port, int workers, const std::string& backend)
+{
+  if(!m_localDepthServer)
+  {
+    m_localDepthServer = std::make_unique<LocalDepthServerManager>();
+  }
+
+  if(!m_localDepthServer->start(modelPath, port, workers, backend))
+  {
+    LOGE("Failed to start local depth_server\n");
+    return;
+  }
+
+  if(!m_tcpServerManager)
+  {
+    m_tcpServerManager = std::make_unique<TcpServerManager>();
+    m_tcpServerManager->setDepthBuffer(&m_depthBuffer);
+    m_tcpServerManager->setDepthFrameCallback([this](const DepthFrame&) {
+      // Depth frames are polled on the render thread in updateDepthRendering().
+    });
+  }
+
+  m_tcpServerManager->addServer("127.0.0.1", port);
+  m_tcpServerManager->connectAll();
+
+  if(!m_depthManager)
+  {
+    m_depthManager = std::make_unique<DepthTextureManager>();
+    m_depthManager->initialize(m_device, m_app->getPhysicalDevice(), m_app->getQueue(0).queue, &m_alloc);
+  }
+
+  m_tcpDepthEnabled = true;
+  m_enableDepthRendering = true;
+
+  LOGI("Local depth_server started and added to TCP server list (port %d)\n", port);
+}
+
 void VkViewer::requestSingleImageDepth(const std::string& imagePath, const std::string& serverList)
 {
   LOGI("Single image depth: %s\n", imagePath.c_str());

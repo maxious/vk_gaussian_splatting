@@ -24,39 +24,106 @@
 void guiDrawTcpServerProperties(VkViewer& viewer) {
     if (!ImGui::CollapsingHeader("TCP Servers", ImGuiTreeNodeFlags_DefaultOpen))
         return;
-    
+
     auto* mgr = viewer.getTcpServerManager();
     if (!mgr) return;
-    
+
     ImGui::Text("Depth FPS: %.1f", viewer.getDepthFps());
-    
+
+    ImGui::SeparatorText("Add Remote Server");
+    static char newHost[128] = "192.168.1.10";
+    static int  newPort = 9000;
+    ImGui::SetNextItemWidth(150);
+    ImGui::InputText("##host", newHost, sizeof(newHost));
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(60);
+    ImGui::InputInt("##port", &newPort, 1, 100, ImGuiInputTextFlags_CharsDecimal);
+    ImGui::SameLine();
+    if (ImGui::Button("Add")) {
+        mgr->addServer(newHost, newPort);
+        newPort++;
+    }
+
+    ImGui::SeparatorText("Start Local Server");
+    auto*  localMgr      = viewer.getLocalDepthServerManager();
+    bool   localRunning  = localMgr && localMgr->isRunning();
+    if (localRunning) {
+        ImGui::TextColored(ImVec4(0, 1, 0, 1), "Local server running on port %d", localMgr->getPort());
+        if (ImGui::Button("Stop Local Server")) {
+            if (localMgr) {
+                const int port = localMgr->getPort();
+                localMgr->stop();
+                if (mgr) {
+                    const auto& list = mgr->getServers();
+                    for (size_t i = 0; i < list.size(); ++i) {
+                        if (list[i].host == "127.0.0.1" && list[i].port == port) {
+                            mgr->removeServer(i);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        static char localModelPath[512] = "/tmp/model.gguf";
+        static int  localPort     = 9000;
+        static int  localWorkers  = 4;
+        static int  localBackend  = 0;
+
+        ImGui::SetNextItemWidth(300);
+        ImGui::InputText("Model Path", localModelPath, sizeof(localModelPath));
+        ImGui::SetNextItemWidth(60);
+        ImGui::InputInt("Port", &localPort, 1, 100);
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(60);
+        ImGui::InputInt("Workers", &localWorkers, 1, 100);
+        ImGui::Combo("Backend", &localBackend, "CPU\0CUDA\0");
+
+        if (ImGui::Button("Start Local Server")) {
+            viewer.startLocalDepthServer(localModelPath, localPort, localWorkers,
+                                         localBackend == 0 ? "cpu" : "cuda");
+        }
+    }
+
+    ImGui::SeparatorText("Connected Servers");
     const auto& servers = mgr->getServers();
-    if (ImGui::BeginTable("servers", 5, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+    if (servers.empty()) {
+        ImGui::TextDisabled("No servers configured");
+    } else if (ImGui::BeginTable("servers", 6, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+        ImGui::TableSetupColumn("");
         ImGui::TableSetupColumn("Server");
         ImGui::TableSetupColumn("Status");
         ImGui::TableSetupColumn("Sent");
-        ImGui::TableSetupColumn("Completed");
-        ImGui::TableSetupColumn("Avg Latency");
+        ImGui::TableSetupColumn("Done");
+        ImGui::TableSetupColumn("Latency");
         ImGui::TableHeadersRow();
-        
-        for (const auto& srv : servers) {
+
+        for (size_t i = 0; i < servers.size(); ++i) {
+            const auto& srv = servers[i];
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
-            ImGui::Text("%s:%d", srv.host.c_str(), srv.port);
-            
-            ImGui::TableNextColumn();
-            if (srv.is_connected) {
-                ImGui::TextColored(ImVec4(0,1,0,1), "CONNECTED");
-            } else {
-                ImGui::TextColored(ImVec4(1,0,0,1), "DISCONNECTED");
+            const std::string removeId = "X##" + std::to_string(i);
+            if (ImGui::SmallButton(removeId.c_str())) {
+                mgr->removeServer(i);
+                ImGui::TableNextColumn();
+                ImGui::TableNextColumn();
+                ImGui::TableNextColumn();
+                ImGui::TableNextColumn();
+                ImGui::TableNextColumn();
+                continue;
             }
-            
+            ImGui::SameLine();
+            ImGui::TableNextColumn();
+            ImGui::Text("%s:%d", srv.host.c_str(), srv.port);
+            ImGui::TableNextColumn();
+            if (srv.is_connected)
+                ImGui::TextColored(ImVec4(0, 1, 0, 1), "CONNECTED");
+            else
+                ImGui::TextColored(ImVec4(1, 0, 0, 1), "DOWN");
             ImGui::TableNextColumn();
             ImGui::Text("%llu", (unsigned long long)srv.frames_sent);
-            
             ImGui::TableNextColumn();
             ImGui::Text("%llu", (unsigned long long)srv.frames_completed);
-            
             ImGui::TableNextColumn();
             ImGui::Text("%.1f ms", srv.avg_latency_ms);
         }

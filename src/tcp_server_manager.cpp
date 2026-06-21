@@ -144,6 +144,52 @@ void TcpServerManager::addServer(const std::string& host, int port)
     }
 }
 
+bool TcpServerManager::removeServer(size_t index)
+{
+    std::scoped_lock lock(m_mutex);
+    if(index >= m_servers.size())
+    {
+        return false;
+    }
+
+    ServerConnection& removed = m_servers[index];
+    LOGI("TcpServerManager: removing server %s:%d\n", removed.host.c_str(), removed.port);
+    removed.client.disconnect();
+    removed.is_connected = false;
+
+    m_servers.erase(m_servers.begin() + index);
+
+    if(index < m_inFlightFrames.size())
+    {
+        m_inFlightFrames.erase(m_inFlightFrames.begin() + index);
+    }
+
+    if(m_nextServer >= m_servers.size())
+    {
+        m_nextServer = m_servers.empty() ? 0 : m_servers.size() - 1;
+    }
+
+    for(size_t server_idx = 0; server_idx < m_servers.size(); ++server_idx)
+    {
+        m_servers[server_idx].client.setDepthFrameCallback([this, server_idx](const DepthFrame& frame) {
+            DepthBuffer* depth_buffer = nullptr;
+            {
+                std::scoped_lock lock(this->m_mutex);
+                depth_buffer = this->m_depthBuffer;
+
+                this->m_completedFrames.push_back({server_idx, frame});
+            }
+
+            if(depth_buffer)
+            {
+                depth_buffer->addFrame(frame);
+            }
+        });
+    }
+
+    return true;
+}
+
 void TcpServerManager::setDepthBuffer(DepthBuffer* buffer)
 {
     std::scoped_lock lock(m_mutex);
