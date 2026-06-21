@@ -71,19 +71,19 @@ void guiDrawTcpServerProperties(VkViewer& viewer) {
         static int  localBackend  = 0;
 
         static const char* modelOptions[] = {
-            "mudler/depth-anything.cpp-gguf:depth-anything-base-q4_k.gguf (99 MB, fast)",
-            "mudler/depth-anything.cpp-gguf:depth-anything-base-q8_0.gguf (142 MB, accurate)",
+            "mudler/depth-anything.cpp-gguf:depth-anything-large-f32.gguf (1.38 GB, depth+pose) ⭐",
+            "mudler/depth-anything.cpp-gguf:depth-anything-base-q8_0.gguf (142 MB, fast CPU)",
             "mudler/depth-anything.cpp-gguf:depth-anything-base-f16.gguf (233 MB, GPU)",
             "Custom path..."
         };
         static const char* modelRefs[] = {
-            "mudler/depth-anything.cpp-gguf:depth-anything-base-q4_k.gguf",
+            "mudler/depth-anything.cpp-gguf:depth-anything-large-f32.gguf",
             "mudler/depth-anything.cpp-gguf:depth-anything-base-q8_0.gguf",
             "mudler/depth-anything.cpp-gguf:depth-anything-base-f16.gguf",
             ""
         };
-        static int  selectedModel   = 0;
-        const int   customIndex     = 3;
+        static int  selectedModel   = 0;  // large-f32 is now index 0
+        const int   customIndex     = 3;  // still last entry
         static bool userEditedPath  = false;
 
         if(!userEditedPath && selectedModel != customIndex)
