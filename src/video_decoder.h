@@ -46,7 +46,8 @@ struct DecodedFrame {
     int height;
     double timestamp;  // In seconds
     int64_t pts;       // Presentation timestamp
-    
+    bool is_keyframe = false;  // FFmpeg AVFrame->key_frame
+
     // Vulkan HW Decoding fields
     VkImage image = VK_NULL_HANDLE;
     VkImageView view = VK_NULL_HANDLE; // Optional: View might be created by consumer
@@ -102,6 +103,7 @@ public:
      * @return true if frame available, false if end of stream or error
      */
     bool getNextFrame(DecodedFrame& frame);
+    bool tryGetNextFrame(DecodedFrame& frame);  // non-blocking, returns false if queue empty
 
     /**
      * @brief Seek to specific timestamp

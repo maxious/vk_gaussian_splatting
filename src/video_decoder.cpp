@@ -305,6 +305,17 @@ bool VideoDecoder::getNextFrame(DecodedFrame& frame)
     return true;
 }
 
+bool VideoDecoder::tryGetNextFrame(DecodedFrame& frame)
+{
+    std::lock_guard<std::mutex> lock(m_queueMutex);
+    if(m_frameQueue.empty())
+        return false;
+
+    frame = std::move(m_frameQueue.front());
+    m_frameQueue.erase(m_frameQueue.begin());
+    return true;
+}
+
 bool VideoDecoder::seekToTime(double timestamp)
 {
     if (!m_formatContext) {
@@ -478,6 +489,7 @@ void VideoDecoder::processFrame()
     frame.width = m_width;
     frame.height = m_height;
     frame.pts = m_avFrame->pts;
+    frame.is_keyframe = (m_avFrame->pict_type == AV_PICTURE_TYPE_I);
 
     AVRational time_base = m_formatContext->streams[m_videoStreamIndex]->time_base;
     frame.timestamp = m_avFrame->pts * av_q2d(time_base);

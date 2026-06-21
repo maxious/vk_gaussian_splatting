@@ -15,6 +15,7 @@ namespace {
 
 constexpr int kDefaultTcpDepthPort = 9000;
 constexpr int kConnectTimeoutMs = 100;
+constexpr int kResponseTimeoutMs = 30000;
 constexpr int kInitialBackoffMs = 100;
 
 int64_t nowMs()
@@ -214,6 +215,7 @@ void TcpServerManager::connectAll()
         server.is_connected = server.client.connect(server.host, server.port, kConnectTimeoutMs);
         if(server.is_connected)
         {
+            server.client.setResponseTimeoutMs(kResponseTimeoutMs);
             server.retry_count = 0;
         }
         else
@@ -371,6 +373,17 @@ void TcpServerManager::update()
     }
 }
 
+size_t TcpServerManager::getInFlightCount() const
+{
+    std::scoped_lock lock(m_mutex);
+    size_t total = 0;
+    for(const auto& frames : m_inFlightFrames)
+    {
+        total += frames.size();
+    }
+    return total;
+}
+
 size_t TcpServerManager::serverCount() const
 {
     return m_servers.size();
@@ -478,6 +491,7 @@ void TcpServerManager::reconnectFailedServers()
         server.last_connect_attempt = current_ms;
         if(server.client.connect(server.host, server.port, kConnectTimeoutMs))
         {
+            server.client.setResponseTimeoutMs(kResponseTimeoutMs);
             server.is_connected = true;
             server.retry_count = 0;
             LOGI("TcpServerManager: reconnected %s:%d\n", server.host.c_str(), server.port);

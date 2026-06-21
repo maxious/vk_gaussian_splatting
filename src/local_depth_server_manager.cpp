@@ -35,6 +35,7 @@
 #include <cstring>
 #include <filesystem>
 #include <thread>
+#include <vector>
 
 namespace vk_viewer {
 
@@ -62,25 +63,45 @@ std::filesystem::path locateDepthServerBinary()
 {
     namespace fs = std::filesystem;
 
+    auto isExecutable = [](const fs::path& p) -> bool {
+        // Check both existence and execute permission in one go.
+        // access(2) with X_OK tests real-user execute permission,
+        // avoiding TOCTOU between exists() and exec().
+        if(::access(p.c_str(), X_OK) != 0)
+        {
+            if(errno == EACCES)
+            {
+                LOGW("LocalDepthServerManager: depth_server at '%s' exists but is not executable (missing +x?)\n",
+                     p.c_str());
+            }
+            return false;
+        }
+        return true;
+    };
+
     const char* env_path = std::getenv("VK_GS_DEPTH_SERVER");
     if(env_path != nullptr && env_path[0] != '\0')
     {
-        return fs::path(env_path);
+        fs::path p(env_path);
+        if(isExecutable(p))
+            return p;
+        return {};
     }
 
+    // CWD-relative (e.g., _bin/Debug/depth_server)
     fs::path candidate = fs::current_path() / "depth_server";
-    if(fs::exists(candidate))
+    if(isExecutable(candidate))
     {
         return candidate;
     }
 
+    // Build-tree relative paths
     for(const char* prefix : {"../..", "../depth_server/build", "../../depth_server/build", "depth_server/build"})
     {
-        fs::path p = prefix;
-        p /= "depth_server";
-        if(fs::exists(p))
+        fs::path p = fs::absolute(fs::path(prefix) / "depth_server");
+        if(isExecutable(p))
         {
-            return fs::absolute(p);
+            return p;
         }
     }
 
@@ -135,21 +156,22 @@ bool LocalDepthServerManager::start(const std::string& modelPath, int port, int 
 
     if(pid == 0)
     {
-        const std::string binary_str = binary.string();
-        const char* const model_arg   = modelPath.c_str();
-        const char* const port_arg    = port_str.c_str();
-        const char* const workers_arg = workers_str.c_str();
-        const char* const backend_arg = backend.c_str();
-        const char* const binary_arg  = binary_str.c_str();
+        std::vector<const char*> argv;
+        argv.push_back(binary.c_str());
+        argv.push_back("--model");
+        argv.push_back(modelPath.c_str());
+        argv.push_back("--port");
+        argv.push_back(port_str.c_str());
+        argv.push_back("--workers");
+        argv.push_back(workers_str.c_str());
+        argv.push_back("--backend");
+        argv.push_back(backend.c_str());
+        argv.push_back(nullptr);
 
-        ::execlp(binary_arg, binary_arg,
-                 "--model", model_arg,
-                 "--port", port_arg,
-                 "--workers", workers_arg,
-                 "--backend", backend_arg,
-                 static_cast<char*>(nullptr));
+        ::execv(binary.c_str(), const_cast<char* const*>(argv.data()));
 
-        LOGE("LocalDepthServerManager: execlp failed: %s\n", std::strerror(errno));
+        LOGE("LocalDepthServerManager: execv('%s') failed: %s\n",
+             binary.c_str(), std::strerror(errno));
         std::_Exit(1);
     }
 

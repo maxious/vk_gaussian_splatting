@@ -175,6 +175,96 @@ void guiDrawTcpServerProperties(VkViewer& viewer) {
         }
         ImGui::EndTable();
     }
+
+    ImGui::SeparatorText("Load Video / Image");
+    static std::filesystem::path tcpVideoPath;
+    bool tcpPlaying = viewer.isTcpDepthPlaying();
+
+    if(!tcpPlaying)
+    {
+        static bool tcpKeyframeOnly = false;
+        static int tcpBufferFrames = 5;
+
+        if(ImGui::Button("Select Video/Image File..."))
+        {
+            tcpVideoPath = nvgui::windowOpenFileDialog(viewer.getApp()->getWindowHandle(),
+                                                       "Select Video/Image for Depth Processing",
+                                                       "Video/Image Files|*.mp4;*.avi;*.mov;*.mkv;*.jpg;*.jpeg;*.png|All Files|*.*");
+        }
+        ImGui::SameLine();
+        ImGui::Text("%s", tcpVideoPath.empty() ? "(none)" : tcpVideoPath.filename().string().c_str());
+
+        bool hasServers = !servers.empty();
+        if(!hasServers)
+        {
+            ImGui::TextDisabled("Add a server above before loading a video");
+        }
+
+        ImGui::BeginDisabled(!hasServers || tcpVideoPath.empty());
+        if(ImGui::Button("Load & Start"))
+        {
+            std::string serverList;
+            const auto& srvList = mgr->getServers();
+            for(size_t i = 0; i < srvList.size(); ++i)
+            {
+                if(i > 0) serverList += ",";
+                serverList += srvList[i].host + ":" + std::to_string(srvList[i].port);
+            }
+            viewer.setTcpDepthKeyframeOnly(tcpKeyframeOnly);
+            viewer.setTcpDepthMinBufferedFrames(tcpBufferFrames);
+            viewer.enableTcpDepth(serverList, tcpVideoPath.string());
+        }
+        ImGui::EndDisabled();
+
+        ImGui::Checkbox("I-frames only", &tcpKeyframeOnly);
+        nvgui::tooltip("Only dispatch keyframes (I-frames) to the depth server.\n"
+                       "Greatly reduces processing load — I-frames are typically\n"
+                       "every 1–10 seconds in most videos.");
+        ImGui::SetNextItemWidth(120);
+        ImGui::SliderInt("Buffer frames", &tcpBufferFrames, 1, 30);
+        nvgui::tooltip("Number of depth frames to buffer before playback starts.\n"
+                       "Higher = smoother start but longer wait.");
+    }
+    else
+    {
+        bool buffering = viewer.isTcpDepthBuffering();
+        if(buffering)
+        {
+            int cached = viewer.getTcpDepthBufferedCount();
+            int needed = viewer.getTcpDepthMinBufferedFrames();
+            ImGui::TextColored(ImVec4(1, 1, 0, 1), "Buffering: %d / %d depth frames", cached, needed);
+            ImGui::ProgressBar(static_cast<float>(cached) / static_cast<float>(needed),
+                               ImVec2(-FLT_MIN, 0.0f));
+        }
+        else
+        {
+            ImGui::TextColored(ImVec4(0, 1, 0, 1), "Streaming active");
+        }
+        ImGui::Text("Frames dispatched: %u", viewer.getTcpDepthSentFrames());
+        ImGui::Text("Depth FPS: %.1f", viewer.getDepthFps());
+
+        bool paused = viewer.isTcpDepthPaused();
+        if(paused)
+        {
+            if(ImGui::Button(ICON_MS_PLAY_ARROW " Play"))
+                viewer.setTcpDepthPaused(false);
+        }
+        else
+        {
+            if(ImGui::Button(ICON_MS_PAUSE " Pause"))
+                viewer.setTcpDepthPaused(true);
+        }
+        ImGui::SameLine();
+        if(ImGui::Button(ICON_MS_STOP " Stop"))
+            viewer.stopTcpDepth();
+        ImGui::SameLine();
+        if(ImGui::Button(ICON_MS_REPLAY " Rewind"))
+            viewer.rewindTcpDepth();
+
+        bool useVideo = viewer.getUseVideoTexture();
+        if(ImGui::Checkbox("Use Video Texture", &useVideo))
+            viewer.setUseVideoTexture(useVideo);
+    }
 }
 #endif
 

@@ -338,14 +338,11 @@ void VkViewer::enableTcpDepth(const std::string& serverList, const std::string& 
   if(!m_tcpServerManager)
   {
     m_tcpServerManager = std::make_unique<TcpServerManager>();
+    m_tcpServerManager->setDepthBuffer(&m_depthBuffer);
+    m_tcpServerManager->setDepthFrameCallback([this](const DepthFrame&) {});
+    m_tcpServerManager->parseServerList(serverList);
+    m_tcpServerManager->connectAll();
   }
-
-  m_tcpServerManager->setDepthBuffer(&m_depthBuffer);
-  m_tcpServerManager->setDepthFrameCallback([this](const DepthFrame&) {
-    // Depth frames are polled on the render thread in updateDepthRendering().
-  });
-  m_tcpServerManager->parseServerList(serverList);
-  m_tcpServerManager->connectAll();
 
 #ifdef WITH_VIDEO_DECODER
   if(!videoPath.empty())
@@ -380,16 +377,23 @@ void VkViewer::enableTcpDepth(const std::string& serverList, const std::string& 
   prmFrame.vdzPlaneScale = 1.4f;
   prmFrame.vdzEdgeThreshold = 1.0f;
 
-  m_tcpDepthEnabled = true;
-  m_enableDepthRendering = true;
-  m_videoDepthPlaybackMode = false;
+    m_tcpDepthEnabled = true;
+    m_tcpDepthBuffering = true;
+    m_enableDepthRendering = true;
+    m_videoDepthPlaybackMode = false;
 #ifdef WITH_VIDEO_DECODER
-  m_hlsPlaybackMode = false;
+    m_hlsPlaybackMode = false;
 #endif
-  m_playbackStartTime = std::chrono::steady_clock::now();
-  m_playbackTimeOffset = 0.0;
-  m_playbackPaused = false;
-  m_lastVdzFrameIndex = SIZE_MAX;
+    m_playbackStartTime = std::chrono::steady_clock::now();
+    m_playbackTimeOffset = 0.0;
+    m_playbackPaused = false;
+    m_lastVdzFrameIndex = SIZE_MAX;
+
+    if(m_tcpDepthKeyframeOnly && m_tcpDepthMinBufferedFrames > 2)
+    {
+      m_tcpDepthMinBufferedFrames = 2;
+      LOGI("TCP depth: I-frame mode — lowered buffering threshold to %d\n", m_tcpDepthMinBufferedFrames);
+    }
 
   LOGI("TCP depth enabled with servers: %s\n", serverList.c_str());
 }
@@ -505,6 +509,46 @@ void VkViewer::requestSingleImageDepth(const std::string& imagePath, const std::
   LOGE("Video decoder not available - rebuild with ENABLE_VIDEO_DECODER=ON\n");
 #endif
 }
+
+void VkViewer::stopTcpDepth()
+{
+  m_tcpDepthEnabled = false;
+  m_tcpDepthSingleImageRequested = false;
+  m_tcpDepthSingleImageDone = false;
+  m_tcpDepthBuffering = false;
+  m_tcpVideoFrameIndex = 0;
+
+#ifdef WITH_VIDEO_DECODER
+  if(m_videoDecoder)
+  {
+    m_videoDecoder->stopDecoding();
+    m_videoDecoder->close();
+    m_videoDecoder.reset();
+  }
+#endif
+
+  if(m_tcpServerManager)
+  {
+    m_tcpServerManager->disconnectAll();
+  }
+
+  LOGI("TCP depth stopped\n");
+}
+
+void VkViewer::rewindTcpDepth()
+{
+  m_tcpDepthBuffering = true;
+  m_tcpVideoFrameIndex = 0;
+#ifdef WITH_VIDEO_DECODER
+  if(m_videoDecoder)
+  {
+    m_videoDecoder->seekToTime(0.0);
+  }
+#endif
+  m_playbackStartTime = std::chrono::steady_clock::now();
+  m_playbackTimeOffset = 0.0;
+  LOGI("TCP depth rewound to start\n");
+}
 #endif
 
 void VkViewer::onResize(VkCommandBuffer cmd, const VkExtent2D& viewportSize)
@@ -550,6 +594,108 @@ void VkViewer::onPreRender()
 
       // Skip rendering this frame to let descriptor sets stabilize
       m_xrResizedThisFrame = true;
+    }
+  }
+#endif
+
+#ifdef WITH_TCP_DEPTH
+  // TCP depth video frame dispatch: decode frames and send to depth servers
+  if(m_tcpDepthEnabled && m_videoDecoder && m_tcpServerManager && !m_playbackPaused)
+  {
+    m_tcpServerManager->update();
+
+    double videoFps = m_videoDecoder->getFrameRate();
+    if(videoFps <= 0.0) videoFps = 30.0;
+
+    // Recalculate frame-skip only every 30 dispatched frames to avoid
+    // useless setFrameSkip() calls every render frame.
+    static int lastSkipEstimate = 0;
+    static uint32_t lastSkipRecalcAt = 0;
+    if(m_tcpVideoFrameIndex - lastSkipRecalcAt >= 30 || lastSkipEstimate == 0)
+    {
+      double serverFpsEstimate = 2.0 * static_cast<double>(m_tcpServerManager->serverCount());
+      const auto& servers = m_tcpServerManager->getServers();
+      for(const auto& srv : servers)
+      {
+        if(srv.avg_latency_ms > 0.0)
+        {
+          double measuredFps = 1000.0 / srv.avg_latency_ms;
+          if(measuredFps > serverFpsEstimate)
+            serverFpsEstimate = measuredFps;
+        }
+      }
+      int newEstimate = static_cast<int>(serverFpsEstimate);
+      if(newEstimate != lastSkipEstimate)
+      {
+        m_tcpServerManager->setFrameSkip(static_cast<int>(videoFps), newEstimate);
+        lastSkipEstimate = newEstimate;
+      }
+      lastSkipRecalcAt = m_tcpVideoFrameIndex;
+    }
+
+    // Backpressure: don't dispatch if too many frames are in-flight.
+    // Allow 2× server_count buffered frames to keep the pipeline fed.
+    const size_t maxInFlight = m_tcpServerManager->serverCount() * 2;
+    if(m_tcpServerManager->getInFlightCount() >= maxInFlight)
+      return;
+
+    double frameIntervalSec = 1.0 / videoFps;
+    auto now = std::chrono::steady_clock::now();
+    double elapsedSinceLastDispatch =
+        std::chrono::duration<double>(now - m_tcpVideoLastDispatchTime).count();
+
+    if(elapsedSinceLastDispatch >= frameIntervalSec)
+    {
+      DecodedFrame decoded;
+      bool gotValidFrame = false;
+      while(m_videoDecoder->tryGetNextFrame(decoded))
+      {
+        if(decoded.data.empty() || decoded.width <= 0 || decoded.height <= 0)
+          continue;
+
+        if(m_tcpDepthKeyframeOnly && !decoded.is_keyframe)
+          continue;
+
+        gotValidFrame = true;
+        m_tcpVideoRgba = decoded.data;
+        m_tcpVideoRgbaWidth = static_cast<uint32_t>(decoded.width);
+        m_tcpVideoRgbaHeight = static_cast<uint32_t>(decoded.height);
+        break;
+      }
+
+      if(gotValidFrame)
+      {
+        uint32_t tsMs = static_cast<uint32_t>(decoded.timestamp * 1000.0);
+
+        // Skip dispatch if this timestamp is already in the depth cache
+        bool alreadyCached = m_depthBuffer.hasCachedFrame(tsMs);
+        if(!alreadyCached)
+        {
+          const uint32_t w = static_cast<uint32_t>(decoded.width);
+          const uint32_t h = static_cast<uint32_t>(decoded.height);
+          std::vector<uint8_t> rgb(w * h * 3);
+          for(uint32_t i = 0; i < w * h; ++i)
+          {
+            rgb[i * 3 + 0] = decoded.data[i * 4 + 0];
+            rgb[i * 3 + 1] = decoded.data[i * 4 + 1];
+            rgb[i * 3 + 2] = decoded.data[i * 4 + 2];
+          }
+
+          int sent = m_tcpServerManager->sendFrame(m_tcpVideoFrameIndex, tsMs, rgb.data(), w, h);
+          if(sent >= 0)
+          {
+            ++m_tcpVideoFrameIndex;
+          }
+        }
+        m_tcpVideoLastDispatchTime = now;
+      }
+      else if(!m_videoDecoder->isRunning() || m_videoDecoder->isAtEnd())
+      {
+        m_videoDecoder->seekToTime(0.0);
+        m_tcpVideoFrameIndex = 0;
+        m_tcpVideoLastDispatchTime = now;
+        LOGI("TCP depth video looped back to start\n");
+      }
     }
   }
 #endif

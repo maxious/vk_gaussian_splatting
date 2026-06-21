@@ -85,7 +85,27 @@ void VkViewer::updateDepthRendering(VkCommandBuffer cmd)
 
     m_tcpServerManager->update();
 
-    const uint64_t currentTimeMs = static_cast<uint64_t>(prmFrame.currentTime * 1000.0f);
+    if(m_tcpDepthBuffering)
+    {
+      size_t cached = m_depthBuffer.getCachedCount();
+      if(cached >= static_cast<size_t>(m_tcpDepthMinBufferedFrames))
+      {
+        m_tcpDepthBuffering = false;
+        uint64_t firstTs = m_depthBuffer.getFirstCachedTimestamp();
+        m_playbackStartTime = std::chrono::steady_clock::now();
+        m_playbackTimeOffset = static_cast<double>(firstTs);
+        LOGI("TCP depth buffering complete: %zu frames cached, starting playback at ts=%lu\n",
+             cached, static_cast<unsigned long>(firstTs));
+      }
+      else
+      {
+        return;
+      }
+    }
+
+    auto now = std::chrono::steady_clock::now();
+    double elapsedMs = std::chrono::duration<double, std::milli>(now - m_playbackStartTime).count();
+    uint64_t currentTimeMs = static_cast<uint64_t>(elapsedMs + m_playbackTimeOffset);
     DepthFrame frame;
     if(m_depthBuffer.getFrame(currentTimeMs, frame) && m_depthManager)
     {
@@ -111,6 +131,83 @@ void VkViewer::updateDepthRendering(VkCommandBuffer cmd)
           write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
           write.descriptorCount = 1;
           write.pImageInfo = &depthImageInfo;
+          vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
+        }
+      }
+
+      // Upload video RGB texture if enabled
+      if(prmFrame.vdzUseVideoTexture && !m_tcpVideoRgba.empty()
+         && m_tcpVideoRgbaWidth > 0 && m_tcpVideoRgbaHeight > 0)
+      {
+        const uint32_t vw = m_tcpVideoRgbaWidth;
+        const uint32_t vh = m_tcpVideoRgbaHeight;
+        if(m_videoTexture.width != vw || m_videoTexture.height != vh
+           || m_videoTexture.image.image == VK_NULL_HANDLE)
+        {
+          if(m_videoTexture.view != VK_NULL_HANDLE)
+          { vkDestroyImageView(m_device, m_videoTexture.view, nullptr); m_videoTexture.view = VK_NULL_HANDLE; }
+          if(m_videoTexture.image.image != VK_NULL_HANDLE)
+          { m_alloc.destroyImage(m_videoTexture.image); m_videoTexture.image = {}; }
+
+          VkImageCreateInfo info = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+          info.imageType = VK_IMAGE_TYPE_2D;
+          info.format = VK_FORMAT_R8G8B8A8_UNORM;
+          info.extent = {vw, vh, 1};
+          info.mipLevels = 1;
+          info.arrayLayers = 1;
+          info.samples = VK_SAMPLE_COUNT_1_BIT;
+          info.tiling = VK_IMAGE_TILING_OPTIMAL;
+          info.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+          info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+          m_alloc.createImage(m_videoTexture.image, info);
+
+          VkImageViewCreateInfo viewInfo = {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+          viewInfo.image = m_videoTexture.image.image;
+          viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+          viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+          viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+          vkCreateImageView(m_device, &viewInfo, nullptr, &m_videoTexture.view);
+
+          m_videoTexture.width = vw;
+          m_videoTexture.height = vh;
+        }
+
+        VkImageMemoryBarrier barrier = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.srcAccessMask = 0;
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.image = m_videoTexture.image.image;
+        barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+                             0, nullptr, 0, nullptr, 1, &barrier);
+
+        VkDeviceSize imageSize = m_tcpVideoRgba.size();
+        m_uploader.appendImage(m_videoTexture.image, imageSize, m_tcpVideoRgba.data());
+        m_uploader.cmdUploadAppended(cmd);
+
+        barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0,
+                             0, nullptr, 0, nullptr, 1, &barrier);
+
+        if(m_descriptorSet != VK_NULL_HANDLE)
+        {
+          VkDescriptorImageInfo imageInfo{};
+          imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+          imageInfo.imageView = m_videoTexture.view;
+          imageInfo.sampler = m_sampler;
+
+          VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+          write.dstSet = m_descriptorSet;
+          write.dstBinding = BINDING_VDZ_VIDEO_TEXTURE;
+          write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+          write.descriptorCount = 1;
+          write.pImageInfo = &imageInfo;
           vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
         }
       }

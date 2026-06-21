@@ -30,6 +30,7 @@ public:
                           uint32_t height);
 
     void setDepthFrameCallback(DepthFrameCallback cb);
+    void setResponseTimeoutMs(int ms) { m_responseTimeoutMs = ms; }
     void update();
 
     enum class State { DISCONNECTED, CONNECTING, CONNECTED, DISCONNECTING };

@@ -28,6 +28,14 @@ public:
     void cleanup(uint64_t oldThresholdMs);
 
     size_t getPendingCount() const { return m_pendingFrames.size(); }
+    size_t getCachedCount() const { return m_receivedFrames.size(); }
+    bool hasCachedFrame(uint64_t timestampMs) const {
+      return m_receivedFrames.find(timestampMs) != m_receivedFrames.end();
+    }
+    uint64_t getFirstCachedTimestamp() const {
+      if(m_receivedFrames.empty()) return 0;
+      return m_receivedFrames.begin()->first;
+    }
     float getRTT() const { return m_rtt; }
     float getJitter() const { return m_jitter; }
 

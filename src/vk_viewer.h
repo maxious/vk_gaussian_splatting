@@ -148,10 +148,25 @@ public:
   void enableTcpDepth(const std::string& serverList, const std::string& videoPath);
   void ensureTcpServerManager();
   void requestSingleImageDepth(const std::string& imagePath, const std::string& serverList);
+  nvapp::Application* getApp() { return m_app; }
   TcpServerManager* getTcpServerManager() { return m_tcpServerManager.get(); }
   LocalDepthServerManager* getLocalDepthServerManager() { return m_localDepthServer.get(); }
   void startLocalDepthServer(const std::string& modelPath, int port, int workers, const std::string& backend);
   float getDepthFps() const { return m_depthFps; }
+  bool isTcpDepthPlaying() const { return m_tcpDepthEnabled && m_videoDecoder != nullptr; }
+  void stopTcpDepth();
+  void rewindTcpDepth();
+  void setTcpDepthPaused(bool paused) { m_playbackPaused = paused; }
+  bool isTcpDepthPaused() const { return m_playbackPaused; }
+  bool getTcpDepthKeyframeOnly() const { return m_tcpDepthKeyframeOnly; }
+  void setTcpDepthKeyframeOnly(bool v) { m_tcpDepthKeyframeOnly = v; }
+  void setTcpDepthMinBufferedFrames(int n) { m_tcpDepthMinBufferedFrames = n; }
+  int getTcpDepthMinBufferedFrames() const { return m_tcpDepthMinBufferedFrames; }
+  int getTcpDepthBufferedCount() const { return static_cast<int>(m_depthBuffer.getCachedCount()); }
+  bool isTcpDepthBuffering() const { return m_tcpDepthBuffering; }
+  bool getUseVideoTexture() const { return prmFrame.vdzUseVideoTexture != 0; }
+  void setUseVideoTexture(bool v) { prmFrame.vdzUseVideoTexture = v ? 1 : 0; }
+  uint32_t getTcpDepthSentFrames() const { return m_tcpVideoFrameIndex; }
   #endif
 	void enableDepthVideoPlayback(const std::string& metadataPath);
 	void enableHlsPlayback(const std::string& hlsPlaylistPath);
@@ -732,6 +747,14 @@ protected:
   bool m_tcpDepthSingleImageDone = false;
   float m_depthFps = 0.0f;
   uint32_t m_depthFrameCount = 0;
+  uint32_t m_tcpVideoFrameIndex = 0;
+  bool m_tcpDepthKeyframeOnly = false;
+  int m_tcpDepthMinBufferedFrames = 5;  // frames to buffer before playback starts
+  bool m_tcpDepthBuffering = false;     // true during initial buffering phase
+  std::vector<uint8_t> m_tcpVideoRgba;
+  uint32_t m_tcpVideoRgbaWidth = 0;
+  uint32_t m_tcpVideoRgbaHeight = 0;
+  std::chrono::steady_clock::time_point m_tcpVideoLastDispatchTime;
 #endif
 
   // Parallax rendering state

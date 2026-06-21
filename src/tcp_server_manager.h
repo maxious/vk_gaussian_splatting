@@ -55,6 +55,9 @@ public:
     // Called each frame — check connections, reconnect, process completions
     void update();
 
+    // Backpressure: total in-flight frames across all servers
+    size_t getInFlightCount() const;
+
     // Stats
     size_t serverCount() const;
     const std::vector<ServerConnection>& getServers() const;
