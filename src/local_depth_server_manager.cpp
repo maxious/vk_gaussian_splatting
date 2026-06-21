@@ -110,12 +110,7 @@ bool LocalDepthServerManager::start(const std::string& modelPath, int port, int 
         return false;
     }
 
-    if(!std::filesystem::exists(std::filesystem::path(modelPath)))
-    {
-        LOGE("LocalDepthServerManager: model file not found: %s\n", modelPath.c_str());
-        return false;
-    }
-
+    // Don't check if file exists — depth_server handles HF refs + auto-download
     const std::filesystem::path binary = locateDepthServerBinary();
     if(binary.empty() || !std::filesystem::exists(binary))
     {
