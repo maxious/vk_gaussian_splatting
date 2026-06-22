@@ -33,10 +33,10 @@ This enables `LOGD()` debug messages which are suppressed by default.
 ### Vulkan SDK Setup
 
 Ensure the Vulkan SDK is installed and the environment variables are set.
-If you installed the SDK to `/opt/vulkan` (e.g., `/opt/vulkan/1.4.335.0/`), source the setup script before building:
+If you installed the SDK to `/opt/vulkan` (e.g., `/opt/vulkan/1.4.350.1/`), source the setup script before building:
 
 ```bash
-source /opt/vulkan/1.4.335.0/setup-env.sh
+source /opt/vulkan/1.4.350.1/setup-env.sh
 ```
 
 ### Building
@@ -53,7 +53,7 @@ cmake --build build --config Debug
 
 **Important Build Notes:**
 - **DO NOT run `rm -rf build`** - CMake caches configuration and re-running is faster. Only delete build if you need a completely clean slate.
-- **Slang comes from Vulkan SDK** at `/opt/vulkan/1.4.335.0/x86_64/` - no need to specify `Slang_ROOT`
+- **Slang comes from Vulkan SDK** at `/opt/vulkan/1.4.350.1/x86_64/` - no need to specify `Slang_ROOT`
 
 ### Running Tests
 
@@ -78,7 +78,7 @@ Test files are located in the `tests/` directory. Add new test files to `tests/C
 To verify the rendering pipeline works correctly, run the viewer with a test scene and auto-screenshot:
 
 ```bash
-source /opt/vulkan/1.4.335.0/setup-env.sh
+source /opt/vulkan/1.4.350.1/setup-env.sh
 cd _bin/Debug
 ./vk_viewer --inputFile ../../_downloaded_resources/flowers_1/flowers_1.ply \
   --screenshotDelay 3.0 --screenshot /tmp/test_render.png \
