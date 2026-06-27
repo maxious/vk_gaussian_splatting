@@ -62,3 +62,17 @@ if(ENABLE_TCP_DEPTH)
     add_test(NAME tcp_depth_e2e 
              COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/integration/test_tcp_depth_e2e.sh $<TARGET_FILE_DIR:vk_viewer>)
 endif()
+
+if(ENABLE_FREESPLATTER)
+    add_executable(test_splat_client
+        ../src/free_splatter_client.cpp
+        test_splat_client.cpp
+    )
+    target_link_libraries(test_splat_client PRIVATE pthread nvpro2::nvutils)
+    target_include_directories(test_splat_client PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../src
+    )
+    target_compile_definitions(test_splat_client PRIVATE WITH_FREE_SPLATTER)
+    target_compile_features(test_splat_client PRIVATE cxx_std_20)
+    set_property(TARGET test_splat_client PROPERTY FOLDER "DepthServer")
+endif()

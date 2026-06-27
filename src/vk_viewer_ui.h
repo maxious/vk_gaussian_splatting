@@ -111,6 +111,10 @@
 
 #include "supersplat_client.h"
 
+#ifdef WITH_FREE_SPLATTER
+#include "free_splatter_client.h"
+#endif
+
 // Json
 #include <tinygltf/json.hpp>
 using nlohmann::json;
@@ -337,6 +341,9 @@ private:
 
   void guiDrawFileDialog();
   void guiDrawSupersplatDialog();
+#ifdef WITH_FREE_SPLATTER
+  void guiDrawFreeSplatterDialog();
+#endif
   void createTextureFromRGBA(const std::vector<uint8_t>& data, int width, int height, nvvk::Image& texture, VkImageView& view);
 
   std::unique_ptr<SupersplatClient> m_supersplatClient;
@@ -351,6 +358,19 @@ private:
   std::mutex m_thumbnailMutex;
   struct PendingThumbnail { std::string url; std::vector<uint8_t> data; int w, h; };
   std::vector<PendingThumbnail> m_pendingThumbnails;
+
+#ifdef WITH_FREE_SPLATTER
+  std::unique_ptr<vk_viewer::FreeSplatterClient> m_freeSplatterClient;
+  bool                                          m_showFreeSplatterDialog = false;
+  std::vector<std::filesystem::path>            m_freeSplatterImages;
+  int                                           m_freeSplatterServerPort = 9001;
+  bool                                          m_freeSplatterServerReachable = false;
+  float                                         m_freeSplatterProgress = 0.0f;
+  std::string                                   m_freeSplatterStatusText = "Ready";
+  std::string                                   m_freeSplatterOutputPath;
+  uint32_t                                      m_freeSplatterCurrentJobId = 0;
+  bool                                          m_freeSplatterJobInFlight = false;
+#endif
 
   bool m_showVrMenu = false;
   void guiDrawVrMenu();

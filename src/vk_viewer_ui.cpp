@@ -76,6 +76,9 @@ VkViewerUI::VkViewerUI(nvutils::ProfilerManager* profilerManager, nvutils::Param
                          &m_autoScreenshotDelay);
 
   m_supersplatClient = std::make_unique<SupersplatClient>();
+#ifdef WITH_FREE_SPLATTER
+  m_freeSplatterClient = std::make_unique<vk_viewer::FreeSplatterClient>();
+#endif
 };
 
 VkViewerUI::~VkViewerUI() {
@@ -410,14 +413,14 @@ void VkViewerUI::onUIMenu()
     {
       prmScene.sceneToLoadFilename = nvgui::windowOpenFileDialog(
           m_app->getWindowHandle(), "Load splat file",
-          "All Files|*.ply;*.spz;*.rad;*.sog;*.4dv|PLY Files|*.ply|SPZ files|*.spz|RAD files|*.rad|SOG files|*.sog|4DV files|*.4dv");
+          "All Files|*.ply;*.spz;*.rad;*.sog;*.4dv;*.splat|PLY Files|*.ply|SPZ files|*.spz|RAD files|*.rad|SOG files|*.sog|4DV files|*.4dv|Splat files|*.splat");
       prmScene.addSceneToExisting = false;
     }
     if(ImGui::MenuItem(ICON_MS_ADD " Add file", ""))
     {
       prmScene.sceneToLoadFilename = nvgui::windowOpenFileDialog(
           m_app->getWindowHandle(), "Add splat file",
-          "All Files|*.ply;*.spz;*.rad;*.sog;*.4dv|PLY Files|*.ply|SPZ files|*.spz|RAD files|*.rad|SOG files|*.sog|4DV files|*.4dv");
+          "All Files|*.ply;*.spz;*.rad;*.sog;*.4dv;*.splat|PLY Files|*.ply|SPZ files|*.spz|RAD files|*.rad|SOG files|*.sog|4DV files|*.4dv|Splat files|*.splat");
       prmScene.addSceneToExisting = true;
     }
     if(ImGui::MenuItem(ICON_MS_FOLDER_OPEN " Load from Resources...", ""))
@@ -559,6 +562,24 @@ void VkViewerUI::onUIMenu()
         }
       }
     }
+#ifdef WITH_FREE_SPLATTER
+    if(ImGui::MenuItem(ICON_MS_AUTO_AWESOME " Generate Splats from Images...", ""))
+    {
+      m_showFreeSplatterDialog = true;
+      m_freeSplatterImages.clear();
+      m_freeSplatterStatusText = "Connecting to server...";
+      m_freeSplatterServerReachable = false;
+      if(m_freeSplatterClient)
+      {
+        m_freeSplatterClient->setServerAddress("127.0.0.1", m_freeSplatterServerPort);
+        m_freeSplatterClient->testConnection([this](const vk_viewer::FreeSplatterClient::ConnectionStatus& s) {
+          m_freeSplatterServerReachable = s.reachable;
+          m_freeSplatterStatusText = s.reachable ? "Server: connected (127.0.0.1:" + std::to_string(m_freeSplatterServerPort) + ")"
+                                                : "Server: unreachable - check splat server";
+        });
+      }
+    }
+#endif
     ImGui::Separator();
     if(ImGui::MenuItem(ICON_MS_SCAN_DELETE " Close", ""))
     {
@@ -685,6 +706,8 @@ void VkViewerUI::onFileDrop(const std::filesystem::path& filename)
   else if(extension == ".sog")
     prmScene.sceneToLoadFilename = filename;
   else if(extension == ".4dv")
+    prmScene.sceneToLoadFilename = filename;
+  else if(extension == ".splat")
     prmScene.sceneToLoadFilename = filename;
   else if(extension == ".vkgs")
     prmScene.projectToLoadFilename = filename;
@@ -1150,6 +1173,9 @@ void VkViewerUI::onUIRender()
 
   guiDrawFileDialog();
   guiDrawSupersplatDialog();
+#ifdef WITH_FREE_SPLATTER
+  guiDrawFreeSplatterDialog();
+#endif
   if(m_showVrMenu)
     guiDrawVrMenu();
 
@@ -1408,7 +1434,7 @@ void VkViewerUI::guiDrawRadianceFieldsTree()
   {
     prmScene.sceneToLoadFilename =
         nvgui::windowOpenFileDialog(m_app->getWindowHandle(), "Add splat file",
-                                    "All Files|*.ply;*.spz;*.rad;*.sog|PLY Files|*.ply|SPZ files|*.spz|RAD files|*.rad|SOG files|*.sog");
+                                    "All Files|*.ply;*.spz;*.rad;*.sog;*.4dv;*.splat|PLY Files|*.ply|SPZ files|*.spz|RAD files|*.rad|SOG files|*.sog|4DV files|*.4dv|Splat files|*.splat");
     prmScene.addSceneToExisting = true;  // Add to existing instead of replacing
   }
   nvgui::tooltip("Add radiance field to scene");
@@ -3240,6 +3266,166 @@ void VkViewerUI::guiDrawVrMenu()
   }
   ImGui::End();
 }
+
+#ifdef WITH_FREE_SPLATTER
+void VkViewerUI::guiDrawFreeSplatterDialog()
+{
+  if(!m_showFreeSplatterDialog)
+    return;
+
+  ImGui::SetNextWindowSize(ImVec2(600, 500), ImGuiCond_Appearing);
+  if(!ImGui::Begin("Generate Splats from Images", &m_showFreeSplatterDialog, ImGuiWindowFlags_NoDocking))
+  {
+    ImGui::End();
+    return;
+  }
+
+  ImGui::TextColored(m_freeSplatterServerReachable ? ImVec4(0, 1, 0, 1) : ImVec4(1, 0, 0, 1), "\xe2\x97\x8f");
+  ImGui::SameLine();
+  ImGui::Text("%s", m_freeSplatterStatusText.c_str());
+
+  ImGui::Separator();
+
+  ImGui::Text("Input Images (%zu/4, need at least 2):", m_freeSplatterImages.size());
+
+  for(size_t i = 0; i < m_freeSplatterImages.size(); ++i)
+  {
+    ImGui::Text("  [%zu] %s", i + 1, m_freeSplatterImages[i].filename().string().c_str());
+    ImGui::SameLine();
+    std::string rm_label = "X##freesplatter_remove_" + std::to_string(i);
+    if(!m_freeSplatterJobInFlight)
+    {
+      if(ImGui::SmallButton(rm_label.c_str()))
+      {
+        m_freeSplatterImages.erase(m_freeSplatterImages.begin() + static_cast<std::ptrdiff_t>(i));
+        break;
+      }
+    }
+  }
+
+  if(!m_freeSplatterJobInFlight && m_freeSplatterImages.size() < 4)
+  {
+    if(ImGui::Button("Add Image..."))
+    {
+      auto path = nvgui::windowOpenFileDialog(m_app->getWindowHandle(), "Select Image",
+                                             "Image Files|*.png;*.jpg;*.jpeg");
+      if(!path.empty())
+      {
+        m_freeSplatterImages.push_back(path);
+      }
+    }
+  }
+
+  ImGui::Separator();
+
+  ImGui::Text("Options");
+  ImGui::TextDisabled("Server: 127.0.0.1:%d", m_freeSplatterServerPort);
+
+  ImGui::Separator();
+
+  if(m_freeSplatterJobInFlight)
+  {
+    ImGui::ProgressBar(m_freeSplatterProgress, ImVec2(-1, 0));
+    ImGui::Text("%s", m_freeSplatterStatusText.c_str());
+
+    if(ImGui::Button("Cancel"))
+    {
+      if(m_freeSplatterClient)
+      {
+        m_freeSplatterClient->cancelJob(m_freeSplatterCurrentJobId);
+        m_freeSplatterJobInFlight = false;
+        m_freeSplatterStatusText = "Cancelled";
+      }
+    }
+  }
+  else
+  {
+    bool can_submit = m_freeSplatterServerReachable && m_freeSplatterImages.size() >= 2 && m_freeSplatterImages.size() <= 4;
+    ImGui::BeginDisabled(!can_submit);
+    if(ImGui::Button("Generate", ImVec2(200, 40)))
+    {
+      m_freeSplatterJobInFlight = true;
+      m_freeSplatterProgress     = 0.0f;
+      m_freeSplatterStatusText   = "Submitting job...";
+
+      if(m_freeSplatterClient)
+      {
+        m_freeSplatterCurrentJobId = m_freeSplatterClient->submitJob(
+            m_freeSplatterImages,
+            [this](uint32_t job_id, const vk_viewer::FreeSplatterClient::JobStatus& status) {
+              m_freeSplatterProgress = static_cast<float>(status.percent) / 100.0f;
+              switch(status.state)
+              {
+                case vk_viewer::FreeSplatterClient::JobStatus::State::Queued:
+                  m_freeSplatterStatusText = "Queued...";
+                  break;
+                case vk_viewer::FreeSplatterClient::JobStatus::State::Preprocessing:
+                  m_freeSplatterStatusText = "Preprocessing...";
+                  break;
+                case vk_viewer::FreeSplatterClient::JobStatus::State::Inference:
+                  m_freeSplatterStatusText = "Running inference...";
+                  break;
+                case vk_viewer::FreeSplatterClient::JobStatus::State::Writing:
+                  m_freeSplatterStatusText = "Writing output...";
+                  break;
+                case vk_viewer::FreeSplatterClient::JobStatus::State::Done:
+                  m_freeSplatterStatusText = "Done!";
+                  break;
+                case vk_viewer::FreeSplatterClient::JobStatus::State::Error:
+                  m_freeSplatterStatusText = "Error: " + status.error_message;
+                  break;
+                case vk_viewer::FreeSplatterClient::JobStatus::State::Cancelled:
+                  m_freeSplatterStatusText = "Cancelled";
+                  break;
+              }
+            },
+            [this](uint32_t job_id, const std::string& local_path, const std::string& error) {
+              m_freeSplatterJobInFlight = false;
+              if(!error.empty())
+              {
+                m_freeSplatterStatusText = "Error: " + error;
+              }
+              else if(!local_path.empty())
+              {
+                m_freeSplatterStatusText = "Loading splat: " + local_path;
+                m_freeSplatterOutputPath = local_path;
+                prmScene.sceneToLoadFilename = local_path;
+                m_showFreeSplatterDialog    = false;
+              }
+            });
+        if(m_freeSplatterCurrentJobId == 0)
+        {
+          m_freeSplatterJobInFlight = false;
+          m_freeSplatterStatusText   = "Failed to submit job (see log)";
+        }
+      }
+    }
+    ImGui::EndDisabled();
+
+    if(!m_freeSplatterServerReachable)
+    {
+      ImGui::TextColored(ImVec4(1, 0.5f, 0, 1), "Server not reachable. Start depth_server --mode splat on port %d", m_freeSplatterServerPort);
+    }
+    else if(m_freeSplatterImages.size() < 2)
+    {
+      ImGui::TextColored(ImVec4(1, 0.5f, 0, 1), "Add at least 2 images");
+    }
+  }
+
+  ImGui::Separator();
+  if(ImGui::Button("Close"))
+  {
+    m_showFreeSplatterDialog = false;
+    if(m_freeSplatterJobInFlight && m_freeSplatterClient)
+    {
+      m_freeSplatterClient->cancelJob(m_freeSplatterCurrentJobId);
+    }
+    m_freeSplatterJobInFlight = false;
+  }
+
+  ImGui::End();
+}
+#endif  // WITH_FREE_SPLATTER
 
 // Include UI partial files (unity build pattern)
 #include "vk_viewer_ui_renderer.cpp"

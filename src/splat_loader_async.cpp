@@ -22,6 +22,7 @@
 #include <fstream>
 #include <array>
 #include <chrono>
+#include <cstring>
 #include <filesystem>
 
 #include <nvutils/logger.hpp>
@@ -541,6 +542,72 @@ bool SplatLoaderAsync::innerLoad(std::filesystem::path filename, SplatSet& outpu
       LOGI("4DV file loaded in %lldms\n", loadTime);
     }
     return success;
+  }
+
+  // Antimatter15 .splat format (32 bytes/gaussian, little-endian)
+  //   bytes 0-11:  position (3xf32)
+  //   bytes 12-23: scale (3xf32)
+  //   bytes 24-27: RGBA (4xu8)
+  //   bytes 28-31: rotation (4xu8, 128-centered quaternion w,x,y,z)
+  if(hasExtension(filename, ".splat"))
+  {
+    LOGI("Loading antimatter15 .splat format: %s\n", pathStr.c_str());
+    std::ifstream file(filename, std::ios::binary | std::ios::ate);
+    if(!file)
+    {
+      LOGE("Failed to open .splat file: %s\n", pathStr.c_str());
+      return false;
+    }
+    const std::streamsize size = file.tellg();
+    file.seekg(0);
+    std::vector<uint8_t> data(static_cast<size_t>(size));
+    if(!file.read(reinterpret_cast<char*>(data.data()), size))
+    {
+      LOGE("Failed to read .splat file: %s\n", pathStr.c_str());
+      return false;
+    }
+    if(data.empty() || data.size() % 32 != 0)
+    {
+      LOGE("Invalid .splat file: size=%zu (expected multiple of 32)\n", data.size());
+      return false;
+    }
+    const size_t n_gaussians = data.size() / 32;
+    output.positions.resize(n_gaussians * 3);
+    output.scale.resize(n_gaussians * 3);
+    output.rotation.resize(n_gaussians * 4);
+    output.opacity.resize(n_gaussians);
+    output.f_dc.resize(n_gaussians * 3);
+    // SplatSet stores SH DC coefficients (f_dc), not direct colors.
+    // color = 0.5 + SH_C0 * f_dc  =>  f_dc = (color - 0.5) / SH_C0
+    constexpr float SH_C0 = 0.28209479177387814f;
+    for(size_t i = 0; i < n_gaussians; ++i)
+    {
+      const uint8_t* p = data.data() + i * 32;
+      // position (3xf32 little-endian)
+      std::memcpy(&output.positions[i * 3], p, 12);
+      // scale (3xf32 little-endian)
+      std::memcpy(&output.scale[i * 3], p + 12, 12);
+      // color (4 xu8: r,g,b,a) → f_dc SH DC coefficients
+      const float r = p[24] / 255.0f;
+      const float g = p[25] / 255.0f;
+      const float b = p[26] / 255.0f;
+      const float a = p[27] / 255.0f;
+      output.f_dc[i * 3 + 0] = (r - 0.5f) / SH_C0;
+      output.f_dc[i * 3 + 1] = (g - 0.5f) / SH_C0;
+      output.f_dc[i * 3 + 2] = (b - 0.5f) / SH_C0;
+      // opacity = alpha
+      output.opacity[i] = a;
+      // rotation (4 xu8, 128-centered, -1..1) quaternion w,x,y,z
+      for(int c = 0; c < 4; c++)
+      {
+        output.rotation[i * 4 + c] = (p[28 + c] - 128.0f) / 128.0f;
+      }
+    }
+    LOGI("Loaded .splat: %zu gaussians\n", n_gaussians);
+    auto      endTime  = std::chrono::high_resolution_clock::now();
+    long long loadTime = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
+    LOGI(".splat file loaded in %lldms\n", loadTime);
+    return true;
   }
 
   // NPZ Loader (SplatAD format)
