@@ -63,7 +63,13 @@
 // constants
 
 static const float sqrt8    = sqrt(8.0);
+// SH_C1 may also be defined by stochasticgs.h.slang (same value, different
+// trailing digits). Guard against redefinition when both headers are included
+// in the same translation unit (e.g. stochasticgs_resolve.comp.slang).
+#ifndef SH_C1_DEFINED
+#define SH_C1_DEFINED
 static const float SH_C1    = 0.4886025119029199f;
+#endif
 static const float SH_C2[5] = { 1.0925484, -1.0925484, 0.3153916, -1.0925484, 0.5462742 };
 static const float SH_C3[7] = { -0.5900435899266435f, 2.890611442640554f, -0.4570457994644658f, 0.3731763325901154f,
                                 -0.4570457994644658f, 1.445305721320277f, -0.5900435899266435f };
