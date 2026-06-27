@@ -347,6 +347,75 @@ VIDEO_DEPTH_MULTI_DEVICE=1 VIDEO_DEPTH_LOG_LEVEL=DEBUG \
   uv run --extra backend uvicorn backend.main:app --host 0.0.0.0 --port 8000
 ```
 
+## Free-Splatter (Image-to-Gaussians)
+
+`depth_server` can run in `--mode splat` to accept 2-4 photos and generate 3D Gaussian Splat scenes using `localai-org/free-splatter.cpp`. The generated `.splat` files load directly in vk_viewer.
+
+### Building with Free-Splatter
+
+```bash
+# Configure with free-splatter enabled
+cmake -S . -B build -DENABLE_FREESPLATTER=ON
+
+# Vulkan backend is auto-detected; force CPU if Vulkan loader missing
+cmake -S . -B build -DENABLE_FREESPLATTER=ON -DFREE_SPLATTER_VULKAN=OFF
+```
+
+### Starting the Splat Server
+
+Run the splat server as a separate process (on a different port than the depth server):
+
+```bash
+source /opt/vulkan/1.4.350.1/setup-env.sh
+./_bin/Debug/depth_server --mode splat --port 9001 \\
+  --splat-model LocalAI-io/free-splatter.cpp:freesplatter-scene-f16.gguf \\
+  --splat-workers 1 --splat-backend cpu
+```
+
+First run downloads the model (~625MB) to `~/.cache/depth_server/`.
+
+### Using from vk_viewer
+
+File > Generate Splats from Images... > pick 2-4 photos > wait for progress > scene auto-loads.
+
+### Functional Test
+
+```bash
+# Build the test client
+cmake --build build --target test_splat_client --config Debug
+
+# Start server, then run test
+./_bin/Debug/depth_server --mode splat --port 9001 \\
+  --splat-model ~/.cache/depth_server/freesplatter-scene-f16.gguf &
+./_bin/Debug/test_splat_client --port 9001 \\
+  --images tests/fixtures/free_splatter/box_00.png,tests/fixtures/free_splatter/box_01.png \\
+  --output /tmp/test.splat
+```
+
+### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `ENABLE_FREESPLATTER` | CMake option (ON/OFF) | OFF |
+| `FREE_SPLATTER_VULKAN` | Enable Vulkan backend for ggml | auto-detect |
+
+### Key Files
+
+- `depth_server/freesplatter_capi_buffer.{h,cpp}` — C++ wrapper around free-splatter C API
+- `depth_server/splat_worker.{h,cpp}` — per-process worker (ggml context + model)
+- `depth_server/splat_worker_pool.{h,cpp}` — parent-side worker pool
+- `depth_server/protocol.h` — MSG_SPLAT_* message types (0x10-0x15)
+- `src/free_splatter_client.{h,cpp}` — raw POSIX TCP client in vk_viewer
+- `src/local_splat_server_manager.{h,cpp}` — lifecycle manager for spawning the splat server
+- `tests/test_splat_client.cpp` — CLI client for functional verification
+- `tests/fixtures/free_splatter/` — synthetic 2-image test fixture
+
+### 3rdparty
+
+- `3rdparty/free-splatter/` — git submodule at `https://github.com/localai-org/free-splatter.cpp.git`
+- `ggml` (nested submodule in `3rdparty/free-splatter/ggml/`) — tensor/ML backend
+- License: Apache-2.0 (both free-splatter.cpp and its model weights)
+
 ## Third-party Libraries
 
 - nvpro_core2 - NVIDIA Vulkan utilities (submodule)

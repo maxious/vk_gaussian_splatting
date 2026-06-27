@@ -30,6 +30,12 @@ This fork adds the following features to the original NVIDIA sample.
 ### Generative AI Integration
 - **ComfyUI Integration** - Generate 3D Gaussian Splats from text/image prompts via ComfyUI workflows
 
+### Free-Splatter Integration (image-to-3DGS)
+- **Image-to-Gaussians** — Convert 2-4 photos of a scene into a 3DGS `.splat` file via the [free-splatter.cpp](https://github.com/localai-org/free-splatter.cpp) backend. Runs on CPU by default (14s per scene); Vulkan (incl. Intel XPU) is ~60x faster.
+- **File Menu Access** — File > "Generate Splats from Images..." opens a dialog with multi-image picker, progress bar, and auto-load.
+- **Async Job-Queue** — Job submission is non-blocking; the `.splat` loads automatically when ready.
+- **Separate Server** — Requires running `depth_server --mode splat` on a separate port (default 9001).
+
 ### Additional Format Support
 - **SOG Format** - Import support for the [PlayCanvas SOG format](https://developer.playcanvas.com/user-manual/gaussian-splatting/formats/sog/), a highly compressed format (~15–20× smaller than PLY). Convert PLY files to SOG using the [SplatTransform](https://github.com/playcanvas/splat-transform) tool.
 - **GLB/GLTF Format** - Import support for standard GLB/GLTF mesh files, enabling visualization of 3D mesh outputs alongside Gaussian Splats.
