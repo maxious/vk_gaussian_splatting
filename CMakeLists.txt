@@ -260,6 +260,24 @@ endif()
 option(ENABLE_TCP_DEPTH "Enable TCP depth processing server using depth-anything.cpp" OFF)
 option(DA_GGML_CUDA "Enable CUDA backend for depth-anything.cpp GPU inference" OFF)
 
+#####################################################################################
+# Free-Splatter (image-to-3DGS integration)
+#
+# Added before ENABLE_TCP_DEPTH so its ggml submodule is registered first; the
+# depth-anything-cpp ggml add_subdirectory is guarded with if(NOT TARGET ggml)
+# to avoid a duplicate-target conflict when both integrations are enabled.
+option(ENABLE_FREESPLATTER "Enable free-splatter.cpp integration (image-to-3DGS) for depth_server" OFF)
+
+if(ENABLE_FREESPLATTER)
+  message(STATUS "Free-splatter integration enabled")
+  set(FREE_SPLATTER_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+  set(FREE_SPLATTER_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+  set(FREE_SPLATTER_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+  set(FREE_SPLATTER_CUDA OFF CACHE BOOL "" FORCE)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/free-splatter)
+  set_property(TARGET free_splatter PROPERTY FOLDER "ThirdParty")
+endif()
+
 if(ENABLE_TCP_DEPTH)
   message(STATUS "TCP depth processing enabled")
   set(DA_BUILD_CLI OFF CACHE BOOL "" FORCE)
@@ -271,21 +289,6 @@ if(ENABLE_TCP_DEPTH)
   if(CUDAToolkit_FOUND AND DA_GGML_CUDA)
     message(STATUS "CUDA found for depth-anything.cpp backend")
   endif()
-endif()
-
-#####################################################################################
-# Free-Splatter (image-to-3DGS integration)
-#
-option(ENABLE_FREESPLATTER "Enable free-splatter.cpp integration (image-to-3DGS) for depth_server" OFF)
-
-if(ENABLE_FREESPLATTER)
-  message(STATUS "Free-splatter integration enabled")
-  set(FREE_SPLATTER_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
-  set(FREE_SPLATTER_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-  set(FREE_SPLATTER_BUILD_SHARED OFF CACHE BOOL "" FORCE)
-  set(FREE_SPLATTER_CUDA OFF CACHE BOOL "" FORCE)
-  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/free-splatter)
-  set_property(TARGET free_splatter PROPERTY FOLDER "ThirdParty")
 endif()
 
 #####################################################################################

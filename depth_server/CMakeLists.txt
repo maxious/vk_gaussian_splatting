@@ -7,8 +7,6 @@ add_executable(depth_server
     tcp_server.cpp
     worker_pool.cpp
     worker_monitor.cpp
-    splat_worker.cpp
-    splat_worker_pool.cpp
     freesplatter_capi_buffer.cpp
 )
 
