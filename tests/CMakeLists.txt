@@ -10,6 +10,7 @@ add_executable(unit_tests
     test_npz_loader.cpp
     test_lod_loader.cpp
     test_morton_order.cpp
+    test_stochastic_rendering.cpp
 )
 
 # Add source files we need to test

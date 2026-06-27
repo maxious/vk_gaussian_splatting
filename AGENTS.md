@@ -92,6 +92,23 @@ file /tmp/test_render.png  # Should show: PNG image data, 800 x 600
 
 **Note**: Manual testing is still required for UI features and Vulkan rendering.
 
+### Stochastic GS Screenshot Test
+
+To verify the compute stochastic GS pipeline (--pipeline 6) renders correctly:
+
+```bash
+# Run with default Release build
+./tests/run_stochastic_screenshot_test.sh
+
+# Or specify build config
+./tests/run_stochastic_screenshot_test.sh Debug
+```
+
+The script:
+1. Builds the viewer if needed
+2. Runs `vk_viewer --pipeline 6 --stochasticSamplesPerPixel 16 --stochasticUseGps 0` with the default flower scene
+3. Verifies the PNG output exists, is 800x600, and contains non-black pixels
+
 ## Key Subsystems
 
 - **Rendering Core**: `vk_viewer.cpp` (main class), `vk_viewer_render.cpp` (orchestrator)
@@ -103,6 +120,22 @@ file /tmp/test_render.png  # Should show: PNG image data, 800 x 600
 - **Scene Loading**: `splat_loader_async.cpp`, `sog_loader.cpp`, `splat_set.cpp`
 - **Depth Video**: `vk_viewer_video.cpp`, `depth_video_loader.cpp`
 - **Vulkan Video Decoder** (PoC): `vulkan_video_decoder.cpp` - GPU-accelerated H.265 decoding
+- **Compute Stochastic GS**: `vk_viewer_stochasticgs.cpp` - Sorting-free stochastic rasterization (--pipeline 6)
+
+### Compute Stochastic GS Mode
+
+The Compute Stochastic GS mode (--pipeline 6) implements sorting-free stochastic
+rasterization using 64-bit atomicMin on a per-pixel framebuffer SSBO. It supports
+two sub-modes:
+- Stochastic Transparency (ST): per-pixel AABB with stochastic acceptance
+- Gaussian Point Splatting (GPS): Poisson-distributed sample points
+
+Controls:
+- `--stochasticSamplesPerPixel`: samples per pixel (1=interactive, 64=converged)
+- `--stochasticUseGps`: 0=ST mode, 1=GPS mode
+- `--stochasticMaxSamples`: max accumulation frames before auto-reset
+
+Requires: NVIDIA GPU with VK_KHR_shader_atomic_int64 support
 
 ## Python Tools
 
