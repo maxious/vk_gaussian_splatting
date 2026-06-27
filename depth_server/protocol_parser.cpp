@@ -39,6 +39,12 @@ size_t minimumFrameSize(uint32_t message_type)
     case MSG_SHUTDOWN: return sizeof(FrameHeader) + sizeof(ShutdownPayload);
     case MSG_SHUTDOWN_ACK: return sizeof(FrameHeader);
     case MSG_ERROR: return sizeof(FrameHeader) + sizeof(ErrorPayload);
+    case MSG_SPLAT_REQUEST: return sizeof(FrameHeader) + sizeof(SplatRequestPayload) + sizeof(SplatRequestOptions);
+    case MSG_SPLAT_POLL: return sizeof(FrameHeader) + sizeof(SplatPollPayload);
+    case MSG_SPLAT_PROGRESS: return sizeof(FrameHeader) + sizeof(SplatProgressPayload);
+    case MSG_SPLAT_RESPONSE: return sizeof(FrameHeader) + sizeof(SplatResponsePayload);
+    case MSG_SPLAT_CANCEL: return sizeof(FrameHeader) + sizeof(SplatCancelPayload);
+    case MSG_SPLAT_ERROR: return sizeof(FrameHeader) + sizeof(SplatErrorPayload);
     default: return 0;
     }
 }
@@ -292,4 +298,230 @@ std::vector<uint8_t> TcpProtocolSerializer::serializeError(uint32_t error_code, 
     copyTextField(payload.error_msg, sizeof(payload.error_msg), error_msg);
     std::memcpy(frame.data() + sizeof(FrameHeader), &payload, sizeof(payload));
     return frame;
+}
+
+std::vector<uint8_t> TcpProtocolSerializer::serializeSplatRequest(uint32_t n_views,
+                                                                  uint32_t width,
+                                                                  uint32_t height,
+                                                                  const SplatRequestOptions& options,
+                                                                  const uint8_t* const* image_ptrs,
+                                                                  const uint32_t* image_sizes,
+                                                                  uint32_t image_count)
+{
+    if(image_count != n_views || n_views < 2 || n_views > 4)
+    {
+        LOGE("TcpProtocolSerializer: invalid n_views (%u, image_count=%u)\n", n_views, image_count);
+        return {};
+    }
+    if(image_ptrs == nullptr || image_sizes == nullptr)
+    {
+        LOGE("TcpProtocolSerializer: null image_ptrs/image_sizes for splat request\n");
+        return {};
+    }
+
+    size_t image_data_size = 0;
+    for(uint32_t i = 0; i < image_count; ++i)
+    {
+        if(image_sizes[i] > MAX_IMAGE_SIZE)
+        {
+            LOGE("TcpProtocolSerializer: image %u exceeds MAX_IMAGE_SIZE (%u > %u)\n",
+                 i, image_sizes[i], MAX_IMAGE_SIZE);
+            return {};
+        }
+        size_t with_prefix = 0;
+        if(!checkedAdd(sizeof(uint32_t), image_sizes[i], with_prefix))
+        {
+            LOGE("TcpProtocolSerializer: image %u size overflow\n", i);
+            return {};
+        }
+        if(!checkedAdd(image_data_size, with_prefix, image_data_size))
+        {
+            LOGE("TcpProtocolSerializer: total image_data_size overflow\n");
+            return {};
+        }
+    }
+
+    size_t payload_size = 0;
+    if(!checkedAdd(sizeof(SplatRequestPayload), sizeof(SplatRequestOptions), payload_size) ||
+       !checkedAdd(payload_size, image_data_size, payload_size))
+    {
+        LOGE("TcpProtocolSerializer: splat request payload overflow\n");
+        return {};
+    }
+
+    auto frame = makeFrame(MSG_SPLAT_REQUEST, payload_size);
+    if(frame.empty())
+    {
+        return {};
+    }
+
+    SplatRequestPayload payload{};
+    payload.n_views = n_views;
+    payload.width = width;
+    payload.height = height;
+    payload.options_size = sizeof(SplatRequestOptions);
+    payload.image_data_size = static_cast<uint32_t>(image_data_size);
+
+    uint8_t* write_ptr = frame.data() + sizeof(FrameHeader);
+    std::memcpy(write_ptr, &payload, sizeof(payload));
+    write_ptr += sizeof(payload);
+
+    std::memcpy(write_ptr, &options, sizeof(SplatRequestOptions));
+    write_ptr += sizeof(SplatRequestOptions);
+
+    for(uint32_t i = 0; i < image_count; ++i)
+    {
+        uint32_t len = image_sizes[i];
+        std::memcpy(write_ptr, &len, sizeof(len));
+        write_ptr += sizeof(len);
+        if(len != 0)
+        {
+            std::memcpy(write_ptr, image_ptrs[i], len);
+            write_ptr += len;
+        }
+    }
+
+    return frame;
+}
+
+std::vector<uint8_t> TcpProtocolSerializer::serializeSplatPoll(uint32_t job_id)
+{
+    auto frame = makeFrame(MSG_SPLAT_POLL, sizeof(SplatPollPayload));
+    SplatPollPayload payload{};
+    payload.job_id = job_id;
+    std::memcpy(frame.data() + sizeof(FrameHeader), &payload, sizeof(payload));
+    return frame;
+}
+
+std::vector<uint8_t> TcpProtocolSerializer::serializeSplatProgress(uint32_t job_id,
+                                                                   uint8_t stage,
+                                                                   uint8_t percent,
+                                                                   uint32_t eta_ms)
+{
+    auto frame = makeFrame(MSG_SPLAT_PROGRESS, sizeof(SplatProgressPayload));
+    SplatProgressPayload payload{};
+    payload.job_id = job_id;
+    payload.stage = stage;
+    payload.percent = percent;
+    payload.eta_ms = eta_ms;
+    std::memcpy(frame.data() + sizeof(FrameHeader), &payload, sizeof(payload));
+    return frame;
+}
+
+std::vector<uint8_t> TcpProtocolSerializer::serializeSplatResponse(uint32_t job_id,
+                                                                    uint32_t n_gaussians,
+                                                                    const char* path)
+{
+    if(path == nullptr)
+    {
+        LOGE("TcpProtocolSerializer: null path for splat response\n");
+        return {};
+    }
+
+    const size_t path_len = std::strlen(path) + 1;
+    if(path_len > MAX_FRAME_SIZE)
+    {
+        LOGE("TcpProtocolSerializer: splat response path too long (%zu)\n", path_len);
+        return {};
+    }
+
+    size_t payload_size = 0;
+    if(!checkedAdd(sizeof(SplatResponsePayload), path_len, payload_size))
+    {
+        LOGE("TcpProtocolSerializer: splat response payload overflow\n");
+        return {};
+    }
+
+    auto frame = makeFrame(MSG_SPLAT_RESPONSE, payload_size);
+    SplatResponsePayload payload{};
+    payload.job_id = job_id;
+    payload.n_gaussians = n_gaussians;
+    payload.path_length = static_cast<uint32_t>(path_len);
+    std::memcpy(frame.data() + sizeof(FrameHeader), &payload, sizeof(payload));
+    std::memcpy(frame.data() + sizeof(FrameHeader) + sizeof(SplatResponsePayload), path, path_len);
+    return frame;
+}
+
+std::vector<uint8_t> TcpProtocolSerializer::serializeSplatCancel(uint32_t job_id)
+{
+    auto frame = makeFrame(MSG_SPLAT_CANCEL, sizeof(SplatCancelPayload));
+    SplatCancelPayload payload{};
+    payload.job_id = job_id;
+    std::memcpy(frame.data() + sizeof(FrameHeader), &payload, sizeof(payload));
+    return frame;
+}
+
+std::vector<uint8_t> TcpProtocolSerializer::serializeSplatError(uint32_t job_id,
+                                                                uint32_t error_code,
+                                                                const char* error_msg)
+{
+    auto frame = makeFrame(MSG_SPLAT_ERROR, sizeof(SplatErrorPayload));
+    SplatErrorPayload payload{};
+    payload.job_id = job_id;
+    payload.error_code = error_code;
+    copyTextField(payload.error_msg, sizeof(payload.error_msg), error_msg);
+    std::memcpy(frame.data() + sizeof(FrameHeader), &payload, sizeof(payload));
+    return frame;
+}
+
+bool decodeSplatRequest(const uint8_t* message,
+                        size_t message_len,
+                        SplatRequestPayload& payload,
+                        const uint8_t*& options,
+                        const uint8_t*& images,
+                        size_t& images_size)
+{
+    options = nullptr;
+    images = nullptr;
+    images_size = 0;
+
+    if(message == nullptr || message_len < sizeof(FrameHeader) + sizeof(SplatRequestPayload) + sizeof(SplatRequestOptions))
+    {
+        return false;
+    }
+
+    std::memcpy(&payload, message + sizeof(FrameHeader), sizeof(payload));
+
+    if(payload.n_views < 2 || payload.n_views > 4)
+    {
+        return false;
+    }
+    if(payload.options_size != sizeof(SplatRequestOptions))
+    {
+        return false;
+    }
+
+    const size_t header_and_payload = sizeof(FrameHeader) + sizeof(SplatRequestPayload);
+    const size_t expected_size = header_and_payload + sizeof(SplatRequestOptions) + payload.image_data_size;
+    if(expected_size != message_len)
+    {
+        return false;
+    }
+
+    options = message + header_and_payload;
+    images = message + header_and_payload + sizeof(SplatRequestOptions);
+    images_size = payload.image_data_size;
+
+    size_t remaining = images_size;
+    const uint8_t* cursor = images;
+    for(uint32_t i = 0; i < payload.n_views; ++i)
+    {
+        if(remaining < sizeof(uint32_t))
+        {
+            return false;
+        }
+        uint32_t len = 0;
+        std::memcpy(&len, cursor, sizeof(len));
+        remaining -= sizeof(uint32_t);
+        cursor += sizeof(uint32_t);
+
+        if(len > MAX_IMAGE_SIZE || remaining < len)
+        {
+            return false;
+        }
+        remaining -= len;
+        cursor += len;
+    }
+
+    return true;
 }

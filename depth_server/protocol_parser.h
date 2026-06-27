@@ -1,5 +1,7 @@
 #pragma once
 
+#include "protocol.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <vector>
@@ -50,4 +52,36 @@ public:
     static std::vector<uint8_t> serializeShutdownAck();
 
     static std::vector<uint8_t> serializeError(uint32_t error_code, const char* error_msg);
+
+    static std::vector<uint8_t> serializeSplatRequest(uint32_t n_views,
+                                                      uint32_t width,
+                                                      uint32_t height,
+                                                      const SplatRequestOptions& options,
+                                                      const uint8_t* const* image_ptrs,
+                                                      const uint32_t* image_sizes,
+                                                      uint32_t image_count);
+
+    static std::vector<uint8_t> serializeSplatPoll(uint32_t job_id);
+
+    static std::vector<uint8_t> serializeSplatProgress(uint32_t job_id,
+                                                      uint8_t stage,
+                                                      uint8_t percent,
+                                                      uint32_t eta_ms);
+
+    static std::vector<uint8_t> serializeSplatResponse(uint32_t job_id,
+                                                       uint32_t n_gaussians,
+                                                       const char* path);
+
+    static std::vector<uint8_t> serializeSplatCancel(uint32_t job_id);
+
+    static std::vector<uint8_t> serializeSplatError(uint32_t job_id,
+                                                    uint32_t error_code,
+                                                    const char* error_msg);
 };
+
+bool decodeSplatRequest(const uint8_t* message,
+                        size_t message_len,
+                        SplatRequestPayload& payload,
+                        const uint8_t*& options,
+                        const uint8_t*& images,
+                        size_t& images_size);
