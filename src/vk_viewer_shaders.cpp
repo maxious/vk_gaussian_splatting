@@ -131,6 +131,10 @@ bool VkViewer::initShaders(void)
   success &= compileSlangShader("threedgrt_raytrace.rint.slang", m_shaders.rtxRintShader);
   // Post processings
   success &= compileSlangShader("post.comp.slang", m_shaders.postComputeShader);
+  // Stochastic GS compute shaders
+  success &= compileSlangShader("shaders/stochasticgs_clear.comp.slang", m_shaders.stochasticClearShader);
+  success &= compileSlangShader("shaders/stochasticgs_accumulate.comp.slang", m_shaders.stochasticAccumulateShader);
+  success &= compileSlangShader("shaders/stochasticgs_resolve.comp.slang", m_shaders.stochasticResolveShader);
   // VDZ depth mesh
   success &= compileSlangShader("vdz_mesh.vert.slang", m_shaders.vdzMeshVertexShader);
   success &= compileSlangShader("vdz_mesh.frag.slang", m_shaders.vdzMeshFragmentShader);

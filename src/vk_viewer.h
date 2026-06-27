@@ -629,6 +629,10 @@ protected:
     VkShaderModule rtxRintShader{};    // Interrsection
     // Post processings
     VkShaderModule postComputeShader{};
+    // Compute stochastic GS
+    VkShaderModule stochasticAccumulateShader{};
+    VkShaderModule stochasticResolveShader{};
+    VkShaderModule stochasticClearShader{};
     // VDZ depth mesh rendering
     VkShaderModule vdzMeshVertexShader{};
     VkShaderModule vdzMeshFragmentShader{};
