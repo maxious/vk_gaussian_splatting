@@ -735,8 +735,13 @@ void FreeSplatterClient::pollLoop(uint32_t job_id, StatusCallback on_update, Com
     auto it = m_activeJobs.find(job_id);
     if(it != m_activeJobs.end())
     {
-      if(it->second.poll_thread.joinable() && it->second.poll_thread.get_id() != std::this_thread::get_id())
-        it->second.poll_thread.join();
+      if(it->second.poll_thread.joinable())
+      {
+        if(it->second.poll_thread.get_id() != std::this_thread::get_id())
+          it->second.poll_thread.join();
+        else
+          it->second.poll_thread.detach();
+      }
       m_activeJobs.erase(it);
     }
   }

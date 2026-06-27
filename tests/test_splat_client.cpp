@@ -97,18 +97,21 @@ int main(int argc, char** argv)
   {
     std::cerr << "TIMEOUT: job did not complete in " << timeout_ms / 1000 << "s\n";
     client.cancelJob(job_id);
+    client.close();
     return 3;
   }
 
   if(!error_msg.empty())
   {
     std::cerr << "ERROR: " << error_msg << "\n";
+    client.close();
     return 1;
   }
 
   if(result_path.empty())
   {
     std::cerr << "ERROR: no output\n";
+    client.close();
     return 1;
   }
 
@@ -118,8 +121,10 @@ int main(int argc, char** argv)
   if(!dst)
   {
     std::cerr << "ERROR: failed to write " << output_path << "\n";
+    client.close();
     return 1;
   }
   std::cout << "OK: saved " << output_path << "\n";
+  client.close();
   return 0;
 }

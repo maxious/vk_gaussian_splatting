@@ -496,6 +496,9 @@ void TcpServer::update()
                         SplatPollPayload poll{};
                         std::memcpy(&poll, message + sizeof(FrameHeader), sizeof(poll));
 
+                        // Check if job is still in-flight. The main result polling loop
+                        // (lines 680+) delivers results asynchronously — we only report
+                        // progress here, never consume results (avoids race with main loop).
                         auto inflight_it = m_inFlightSplatJobs.find(poll.job_id);
                         if(inflight_it == m_inFlightSplatJobs.end())
                         {
@@ -504,51 +507,14 @@ void TcpServer::update()
                             continue;
                         }
 
-                        SplatJobResult splat_res;
-                        if(m_splatPool->pollResult(splat_res))
+                        uint8_t percent = static_cast<uint8_t>(
+                            std::min(100, m_splatPool->queueDepth() * 10));
+                        auto progress = TcpProtocolSerializer::serializeSplatProgress(poll.job_id, 1, percent, 0);
+                        if(!progress.empty())
                         {
-                            if(splat_res.job_id == poll.job_id)
-                            {
-                                if(splat_res.error.empty())
-                                {
-                                    auto resp = TcpProtocolSerializer::serializeSplatResponse(
-                                        splat_res.job_id, splat_res.n_gaussians, splat_res.output_path.c_str());
-                                    if(!resp.empty())
-                                    {
-                                        sendAll(client.fd, resp.data(), resp.size(), client.bytes_tx);
-                                    }
-                                }
-                                else
-                                {
-                                    sendSplatError(client.fd, splat_res.job_id, 3, splat_res.error.c_str(),
-                                                   client.bytes_tx);
-                                }
-                                m_inFlightSplatJobs.erase(inflight_it);
-                                client.last_activity_ms = nowMs();
-                            }
-                            else
-                            {
-                                uint8_t percent = static_cast<uint8_t>(
-                                    std::min(100, m_splatPool->queueDepth() * 10));
-                                auto progress = TcpProtocolSerializer::serializeSplatProgress(poll.job_id, 1, percent, 0);
-                                if(!progress.empty())
-                                {
-                                    sendAll(client.fd, progress.data(), progress.size(), client.bytes_tx);
-                                }
-                                client.last_activity_ms = nowMs();
-                            }
+                            sendAll(client.fd, progress.data(), progress.size(), client.bytes_tx);
                         }
-                        else
-                        {
-                            uint8_t percent = static_cast<uint8_t>(
-                                std::min(100, m_splatPool->queueDepth() * 10));
-                            auto progress = TcpProtocolSerializer::serializeSplatProgress(poll.job_id, 1, percent, 0);
-                            if(!progress.empty())
-                            {
-                                sendAll(client.fd, progress.data(), progress.size(), client.bytes_tx);
-                            }
-                            client.last_activity_ms = nowMs();
-                        }
+                        client.last_activity_ms = nowMs();
                     }
                     else if(message_type == MSG_SPLAT_CANCEL)
                     {
@@ -587,23 +553,6 @@ void TcpServer::update()
 
         if(close_client)
         {
-            if(m_splatPool != nullptr)
-            {
-                for(auto it = m_inFlightSplatJobs.begin(); it != m_inFlightSplatJobs.end();)
-                {
-                    if(it->second.client_slot == static_cast<int>(client_idx))
-                    {
-                        m_splatPool->cancelJob(it->first);
-                        LOGD("TcpServer: cancelled splat job %u on disconnect of client %zu\n",
-                             it->first, client_idx);
-                        it = m_inFlightSplatJobs.erase(it);
-                    }
-                    else
-                    {
-                        ++it;
-                    }
-                }
-            }
             LOGI("TcpServer: closing client %zu\n", client_idx);
             resetClient(client);
             ++m_clientGenerations[client_idx];

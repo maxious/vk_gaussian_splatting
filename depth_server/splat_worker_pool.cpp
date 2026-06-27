@@ -293,7 +293,40 @@ bool SplatWorkerPool::pollResult(SplatJobResult& out_result)
             continue;
         }
 
+        if(result.error == "__progress__")
+        {
+            LOGD("SplatWorkerPool: job %u progress update consumed\n", result.job_id);
+            continue;
+        }
+
         if(result.error.empty())
+        {
+            w.busy = false;
+            w.current_job_id = 0;
+            for(auto it = m_inFlight.begin(); it != m_inFlight.end(); ++it)
+            {
+                if(it->first == result.job_id)
+                {
+                    m_inFlight.erase(it);
+                    break;
+                }
+            }
+
+            if(!m_pendingQueue.empty())
+            {
+                PendingSplatJob next_job = std::move(m_pendingQueue.front());
+                m_pendingQueue.pop_front();
+                if(!dispatchToWorker(static_cast<int>(worker_idx), next_job))
+                {
+                    m_pendingQueue.push_front(std::move(next_job));
+                }
+                else
+                {
+                    m_inFlight.emplace_back(next_job.job_id, static_cast<uint32_t>(worker_idx));
+                }
+            }
+        }
+        else
         {
             w.busy = false;
             w.current_job_id = 0;
