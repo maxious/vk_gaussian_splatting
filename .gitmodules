@@ -10,3 +10,6 @@
 [submodule "3rdparty/depth-anything-cpp"]
 	path = 3rdparty/depth-anything-cpp
 	url = https://github.com/maxious/depth-anything.cpp
+[submodule "3rdparty/free-splatter"]
+	path = 3rdparty/free-splatter
+	url = https://github.com/localai-org/free-splatter.cpp.git
