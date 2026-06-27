@@ -274,6 +274,21 @@ if(ENABLE_TCP_DEPTH)
 endif()
 
 #####################################################################################
+# Free-Splatter (image-to-3DGS integration)
+#
+option(ENABLE_FREESPLATTER "Enable free-splatter.cpp integration (image-to-3DGS) for depth_server" OFF)
+
+if(ENABLE_FREESPLATTER)
+  message(STATUS "Free-splatter integration enabled")
+  set(FREE_SPLATTER_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+  set(FREE_SPLATTER_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+  set(FREE_SPLATTER_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+  set(FREE_SPLATTER_CUDA OFF CACHE BOOL "" FORCE)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/free-splatter)
+  set_property(TARGET free_splatter PROPERTY FOLDER "ThirdParty")
+endif()
+
+#####################################################################################
 # Source files for this project
 #
 # Note: GLOB is used here, so if you add new files, you must re-run CMake or touch this file.
@@ -297,6 +312,12 @@ if (NOT ENABLE_TCP_DEPTH)
      list(FILTER SOURCE_FILES EXCLUDE REGEX "local_depth_server_manager\\.cpp$")
 else()
      list(APPEND SOURCE_FILES depth_server/protocol_parser.cpp)
+endif()
+
+# Exclude free-splatter client/manager files if disabled
+if (NOT ENABLE_FREESPLATTER)
+     list(FILTER SOURCE_FILES EXCLUDE REGEX "free_splatter_client\\.cpp$")
+     list(FILTER SOURCE_FILES EXCLUDE REGEX "local_splat_server_manager\\.cpp$")
 endif()
 
 # Exclude Video Decoder files if disabled
@@ -378,6 +399,9 @@ if(ENABLE_DEPTH_STREAMING)
 endif()
 if(ENABLE_TCP_DEPTH)
   target_compile_definitions(${PROJECT_NAME} PRIVATE WITH_TCP_DEPTH)
+endif()
+if(ENABLE_FREESPLATTER)
+  target_compile_definitions(${PROJECT_NAME} PRIVATE WITH_FREE_SPLATTER)
 endif()
 target_link_libraries(${PROJECT_NAME} PRIVATE ixwebsocket)
 target_include_directories(${PROJECT_NAME} PRIVATE ${ixwebsocket_SOURCE_DIR})
