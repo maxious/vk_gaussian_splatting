@@ -863,9 +863,11 @@ protected:
     VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
     VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
 
-    // 64-bit atomic framebuffer SSBO
-    nvvk::Buffer framebuffer;
-    VkExtent2D framebufferSize = {0, 0};
+    // 32-bit atomic depth buffer (per-pixel depth for InterlockedMin)
+    nvvk::Buffer depthBuffer;
+
+    // 32-bit index buffer (per-pixel winning gaussian index)
+    nvvk::Buffer indexBuffer;
 
     // Output image (per-pixel color)
     nvvk::Image outputImage;

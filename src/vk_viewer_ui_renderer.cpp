@@ -639,7 +639,7 @@ void VkViewerUI::guiDrawRendererProperties()
       {
         PE::begin("## Stochastic GS Settings");
 
-        PE::Checkbox("Use GPS mode", &prmStochastic.stochasticUseGps, "0=Stochastic Transparency, 1=GPS mode");
+        PE::Checkbox("Use GPS mode", (bool*)&prmStochastic.stochasticUseGps, "0=Stochastic Transparency, 1=GPS mode");
 
         PE::SliderInt("Samples per pixel", (int*)&prmStochastic.stochasticSamplesPerPixel, 1, 64);
 

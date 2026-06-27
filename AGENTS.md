@@ -44,7 +44,7 @@ source /opt/vulkan/1.4.350.1/setup-env.sh
 Build with CMake (Visual Studio or command line):
 ```bash
 # Configure (include TBB_DIR for Intel oneAPI TBB)
-cmake -S . -B build -DTBB_DIR=/opt/intel/oneapi/tbb/2022.3/lib/cmake/tbb
+cmake -S . -B build -DTBB_DIR=/opt/intel/oneapi/tbb/2023.0/lib/cmake/tbb
 
 # Build (Release or Debug)
 cmake --build build --config Release

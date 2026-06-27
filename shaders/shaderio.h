@@ -164,9 +164,11 @@
 #define BINDING_VISIBLE_CHUNK_COUNT_BUFFER 36 // Output: count of visible chunks
 
 // Stochastic (sort-free atomic) GS bindings
-#define BINDING_STOCHASTIC_FRAMEBUFFER_SSBO 40   // uint64_t[] atomic framebuffer
+#define BINDING_STOCHASTIC_FRAMEBUFFER_SSBO 40   // uint64_t[] atomic framebuffer (DEPRECATED - split into depth+index)
 #define BINDING_STOCHASTIC_OUTPUT_IMAGE 41       // RWTexture2D<float4> per-pixel color output
 #define BINDING_STOCHASTIC_ACCUMULATION_IMAGE 42 // RWTexture2D<float4> progressive accumulation
+#define BINDING_STOCHASTIC_DEPTH_BUFFER 43       // uint[] per-pixel depth for atomicMin
+#define BINDING_STOCHASTIC_INDEX_BUFFER 44       // uint[] per-pixel winning gaussian index
 
 // location for vertex attributes
 // (only for vertex shader mode)

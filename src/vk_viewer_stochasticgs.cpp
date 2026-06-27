@@ -42,9 +42,28 @@ void VkViewer::initStochasticPipelines()
     LOGW("Stochastic GS init skipped - invalid viewport size (%u x %u)\n", width, height);
     return;
   }
-
   m_stochastic.descriptorBindings.clear();
-  m_stochastic.descriptorBindings.addBinding(BINDING_STOCHASTIC_FRAMEBUFFER_SSBO, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
+  
+  // Ensure the shared set 0 layout exists. Create it if needed since we depend on
+  // set 0 being present for FrameInfo UBO and splat data bindings.
+  if(m_descriptorSetLayout == VK_NULL_HANDLE)
+  {
+    LOGW("Stochastic GS: shared set 0 layout not ready, will retry next frame\n");
+    return;
+  }
+  
+  // Ensure renderer buffers are initialized (m_frameInfoBuffer is a reliable sentinel)
+  if(m_frameInfoBuffer.buffer == VK_NULL_HANDLE)
+  {
+    LOGW("Stochastic GS: renderer buffers not ready, will retry next frame\n");
+    return;
+  }
+  
+  // Two separate 32-bit buffers instead of one 64-bit buffer.
+  // 64-bit InterlockedMin on RWStructuredBuffer<uint64_t> is broken in Slang/SPIR-V.
+  m_stochastic.descriptorBindings.addBinding(BINDING_STOCHASTIC_DEPTH_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
+                                             VK_SHADER_STAGE_COMPUTE_BIT);
+  m_stochastic.descriptorBindings.addBinding(BINDING_STOCHASTIC_INDEX_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
                                              VK_SHADER_STAGE_COMPUTE_BIT);
   m_stochastic.descriptorBindings.addBinding(BINDING_STOCHASTIC_OUTPUT_IMAGE, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1,
                                              VK_SHADER_STAGE_COMPUTE_BIT);
@@ -86,17 +105,23 @@ void VkViewer::initStochasticPipelines()
   NVVK_CHECK(vkAllocateDescriptorSets(m_device, &allocInfo, &m_stochastic.descriptorSet));
   NVVK_DBG_NAME(m_stochastic.descriptorSet);
 
-  // Framebuffer SSBO: 8 bytes (uint64_t) per pixel for atomic blending
-  const VkDeviceSize framebufferSize = 8ULL * width * height;
-  NVVK_CHECK(m_alloc.createBuffer(m_stochastic.framebuffer, framebufferSize,
+  // Depth buffer: 4 bytes (uint32) per pixel for 32-bit atomicMin
+  const VkDeviceSize pixelStride = 4ULL;
+  const VkDeviceSize bufferSize  = pixelStride * width * height;
+  NVVK_CHECK(m_alloc.createBuffer(m_stochastic.depthBuffer, bufferSize,
                                   VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT,
                                   VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE));
-  NVVK_DBG_NAME(m_stochastic.framebuffer.buffer);
-  m_stochastic.framebufferSize = {width, height};
+  NVVK_DBG_NAME(m_stochastic.depthBuffer.buffer);
 
+  NVVK_CHECK(m_alloc.createBuffer(m_stochastic.indexBuffer, bufferSize,
+                                  VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT,
+                                  VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE));
+  NVVK_DBG_NAME(m_stochastic.indexBuffer.buffer);
+
+  // Output image (matching display color format for blit compatibility)
   VkImageCreateInfo outputInfo{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
   outputInfo.imageType     = VK_IMAGE_TYPE_2D;
-  outputInfo.format        = VK_FORMAT_R16G16B16A16_SFLOAT;
+  outputInfo.format        = m_colorFormat;
   outputInfo.extent        = {width, height, 1};
   outputInfo.mipLevels     = 1;
   outputInfo.arrayLayers   = 1;
@@ -119,7 +144,7 @@ void VkViewer::initStochasticPipelines()
 
   VkImageCreateInfo accumInfo{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
   accumInfo.imageType     = VK_IMAGE_TYPE_2D;
-  accumInfo.format        = VK_FORMAT_R16G16B16A16_SFLOAT;
+  accumInfo.format        = m_colorFormat;
   accumInfo.extent        = {width, height, 1};
   accumInfo.mipLevels     = 1;
   accumInfo.arrayLayers   = 1;
@@ -175,8 +200,11 @@ void VkViewer::initStochasticPipelines()
 
   nvvk::WriteSetContainer writeContainer;
   writeContainer.append(
-      m_stochastic.descriptorBindings.getWriteSet(BINDING_STOCHASTIC_FRAMEBUFFER_SSBO, m_stochastic.descriptorSet),
-      m_stochastic.framebuffer);
+      m_stochastic.descriptorBindings.getWriteSet(BINDING_STOCHASTIC_DEPTH_BUFFER, m_stochastic.descriptorSet),
+      m_stochastic.depthBuffer);
+  writeContainer.append(
+      m_stochastic.descriptorBindings.getWriteSet(BINDING_STOCHASTIC_INDEX_BUFFER, m_stochastic.descriptorSet),
+      m_stochastic.indexBuffer);
   writeContainer.append(
       m_stochastic.descriptorBindings.getWriteSet(BINDING_STOCHASTIC_OUTPUT_IMAGE, m_stochastic.descriptorSet),
       m_stochastic.outputImageView, VK_IMAGE_LAYOUT_GENERAL);
@@ -195,7 +223,8 @@ void VkViewer::initStochasticPipelines()
 void VkViewer::deinitStochasticPipelines()
 {
   if(!m_stochastic.initialized && m_stochastic.pipelineLayout == VK_NULL_HANDLE
-     && m_stochastic.descriptorPool == VK_NULL_HANDLE && m_stochastic.framebuffer.buffer == VK_NULL_HANDLE)
+     && m_stochastic.descriptorPool == VK_NULL_HANDLE && m_stochastic.depthBuffer.buffer == VK_NULL_HANDLE
+     && m_stochastic.indexBuffer.buffer == VK_NULL_HANDLE)
   {
     return;
   }
@@ -237,12 +266,16 @@ void VkViewer::deinitStochasticPipelines()
   }
   m_stochastic.descriptorBindings.clear();
 
-  if(m_stochastic.framebuffer.buffer != VK_NULL_HANDLE)
+  if(m_stochastic.depthBuffer.buffer != VK_NULL_HANDLE)
   {
-    m_alloc.destroyBuffer(m_stochastic.framebuffer);
-    m_stochastic.framebuffer = {};
+    m_alloc.destroyBuffer(m_stochastic.depthBuffer);
+    m_stochastic.depthBuffer = {};
   }
-  m_stochastic.framebufferSize = {0, 0};
+  if(m_stochastic.indexBuffer.buffer != VK_NULL_HANDLE)
+  {
+    m_alloc.destroyBuffer(m_stochastic.indexBuffer);
+    m_stochastic.indexBuffer = {};
+  }
 
   if(m_stochastic.outputImageView != VK_NULL_HANDLE)
   {
@@ -295,7 +328,22 @@ void VkViewer::renderStochasticFrame(VkCommandBuffer cmd, const FrameRenderConte
       return;
   }
 
-  if(m_stochastic.framebufferSize.width == 0 || m_stochastic.framebufferSize.height == 0)
+  // Re-initialize if viewport size changed (e.g., splash→full scene)
+  if(m_stochastic.outputSize.width != uint32_t(m_viewSize.x)
+     || m_stochastic.outputSize.height != uint32_t(m_viewSize.y))
+  {
+    LOGI("Stochastic GS: viewport resized from %ux%u to %ux%u, reinitializing\n",
+         m_stochastic.outputSize.width, m_stochastic.outputSize.height,
+         uint32_t(m_viewSize.x), uint32_t(m_viewSize.y));
+    deinitStochasticPipelines();
+    initStochasticPipelines();
+    if(!m_stochastic.initialized)
+      return;
+  }
+
+  const uint32_t fbWidth  = m_stochastic.outputSize.width;
+  const uint32_t fbHeight = m_stochastic.outputSize.height;
+  if(fbWidth == 0 || fbHeight == 0)
     return;
 
   if(ctx.splatCount == 0)
@@ -303,6 +351,10 @@ void VkViewer::renderStochasticFrame(VkCommandBuffer cmd, const FrameRenderConte
 
   NVVK_DBG_SCOPE(cmd);
   auto timerSection = m_profilerGpuTimer.cmdFrameSection(cmd, "Stochastic GS");
+
+  // Update FrameInfo with camera parameters (view matrix, focal, etc.)
+  // This is normally called by renderSingleView() but we bypass that for stochastic mode.
+  updateAndUploadFrameInfoUBO(cmd, ctx.splatCount);
 
   updateStochasticFrameInfo(cmd);
   prmFrame.splatCount = static_cast<int32_t>(ctx.splatCount);
@@ -313,7 +365,7 @@ void VkViewer::renderStochasticFrame(VkCommandBuffer cmd, const FrameRenderConte
   uboBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
   uboBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
   vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &uboBarrier, 0,
-                        nullptr, 0, nullptr);
+                       nullptr, 0, nullptr);
 
   m_pcRaster.modelMatrix                = m_splatSetVk.transform;
   m_pcRaster.modelMatrixInverse         = m_splatSetVk.transformInverse;
@@ -333,10 +385,10 @@ void VkViewer::renderStochasticFrame(VkCommandBuffer cmd, const FrameRenderConte
     vkCmdPushConstants(cmd, m_stochastic.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(shaderio::PushConstant),
                        &m_pcRaster);
 
-    const uint32_t wgSize    = 8;
-    const uint32_t dispatchX = (m_stochastic.framebufferSize.width + wgSize - 1) / wgSize;
-    const uint32_t dispatchY = (m_stochastic.framebufferSize.height + wgSize - 1) / wgSize;
-    vkCmdDispatch(cmd, dispatchX, dispatchY, 1);
+    // Clear shader uses 1D dispatch: numthreads(256,1,1), linear pixel index
+    const uint32_t totalPixels = fbWidth * fbHeight;
+    const uint32_t dispatchX   = (totalPixels + 255) / 256;
+    vkCmdDispatch(cmd, dispatchX, 1, 1);
 
     prmFrame.stochasticReset = 0;
   }
@@ -364,9 +416,36 @@ void VkViewer::renderStochasticFrame(VkCommandBuffer cmd, const FrameRenderConte
                      &m_pcRaster);
 
   const uint32_t resolveWg     = 8;
-  const uint32_t resolveDispX = (m_stochastic.framebufferSize.width + resolveWg - 1) / resolveWg;
-  const uint32_t resolveDispY = (m_stochastic.framebufferSize.height + resolveWg - 1) / resolveWg;
+  const uint32_t resolveDispX = (fbWidth + resolveWg - 1) / resolveWg;
+  const uint32_t resolveDispY = (fbHeight + resolveWg - 1) / resolveWg;
   vkCmdDispatch(cmd, resolveDispX, resolveDispY, 1);
+
+  // Blit stochastic output to main color buffer for display (via post-process)
+  {
+    nvvk::cmdImageMemoryBarrier(cmd, {m_stochastic.accumulationImage.image, VK_IMAGE_LAYOUT_GENERAL,
+                                      VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                      {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}});
+    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getColorImage(COLOR_MAIN), VK_IMAGE_LAYOUT_GENERAL,
+                                      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                      {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}});
+
+    VkImageBlit blitRegion{};
+    blitRegion.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    blitRegion.srcOffsets[1]  = {static_cast<int32_t>(fbWidth), static_cast<int32_t>(fbHeight), 1};
+    blitRegion.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    blitRegion.dstOffsets[1]  = {static_cast<int32_t>(m_viewSize.x), static_cast<int32_t>(m_viewSize.y), 1};
+
+    vkCmdBlitImage(cmd, m_stochastic.accumulationImage.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                   m_gBuffers.getColorImage(COLOR_MAIN), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blitRegion,
+                   VK_FILTER_LINEAR);
+
+    nvvk::cmdImageMemoryBarrier(cmd, {m_stochastic.accumulationImage.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                      VK_IMAGE_LAYOUT_GENERAL,
+                                      {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}});
+    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getColorImage(COLOR_MAIN), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                      VK_IMAGE_LAYOUT_GENERAL,
+                                      {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}});
+  }
 
   prmFrame.stochasticFrameCounter++;
 

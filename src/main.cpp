@@ -140,13 +140,10 @@ int main(int argc, char** argv)
   VkPhysicalDeviceShaderClockFeaturesKHR clockFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_CLOCK_FEATURES_KHR};
   vkSetup.deviceExtensions.emplace_back(VK_KHR_SHADER_CLOCK_EXTENSION_NAME, &clockFeatures);
 
-  // 64-bit SSBO atomics for stochastic Gaussian splat rendering
-  // Core in Vulkan 1.2 - use core struct type (no KHR suffix)
-  static VkPhysicalDeviceShaderAtomicInt64Features atomicInt64Features = {
-      .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_INT64_FEATURES,
-      .shaderBufferInt64Atomics = VK_TRUE,
-  };
-  vkSetup.deviceExtensions.emplace_back(VK_KHR_SHADER_ATOMIC_INT64_EXTENSION_NAME, &atomicInt64Features, false);
+  // 64-bit SSBO atomics for stochastic Gaussian splat rendering.
+  // Enabled automatically by enableAllFeatures=true (Vulkan 1.2 core feature).
+  // Only require the extension name for the driver to expose it.
+  vkSetup.deviceExtensions.emplace_back(VK_KHR_SHADER_ATOMIC_INT64_EXTENSION_NAME);
 
   VkPhysicalDeviceRayTracingInvocationReorderFeaturesNV serFeatures = {
       .sType                       = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_INVOCATION_REORDER_FEATURES_NV,

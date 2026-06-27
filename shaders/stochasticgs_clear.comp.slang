@@ -18,10 +18,17 @@
  */
 
 #include "stochasticgs.h.slang"
+#include "shaderio.h"
 
 // clang-format off
-[[vk::binding(BINDING_STOCHASTIC_FRAMEBUFFER_SSBO, 1)]] RWStructuredBuffer<uint64_t> framebufferSSBO;
-[[vk::binding(BINDING_FRAME_INFO_UBO, 0)]]             ConstantBuffer<FrameInfo>      frameInfo;
+[[vk::binding(BINDING_STOCHASTIC_DEPTH_BUFFER, 1)]]
+RWStructuredBuffer<uint> depthBuffer;
+
+[[vk::binding(BINDING_STOCHASTIC_INDEX_BUFFER, 1)]]
+RWStructuredBuffer<uint> indexBuffer;
+
+[[vk::binding(BINDING_FRAME_INFO_UBO, 0)]]
+ConstantBuffer<FrameInfo> frameInfo;
 // clang-format on
 
 [numthreads(256, 1, 1)]
@@ -31,5 +38,6 @@ void main(uint3 id : SV_DispatchThreadID)
   uint totalPixels = uint(frameInfo.stochasticWidth) * uint(frameInfo.stochasticHeight);
   if(id.x >= totalPixels)
     return;
-  framebufferSSBO[id.x] = 0xFFFFFFFFFFFFFFFF;
+    depthBuffer[id.x] = 0xFFFFFFFFu;  // max uint = "infinitely far"
+    indexBuffer[id.x] = 0xFFFFFFFFu;  // no valid gaussian
 }

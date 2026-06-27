@@ -155,6 +155,17 @@ void VkViewer::onRender(VkCommandBuffer cmd)
       initStochasticPipelines();
     }
     renderStochasticFrame(cmd, ctx);
+
+    // Post-processing for stochastic mode (blits to swapchain, sRGB conversion, etc.)
+    // Always run postProcess since it copies COLOR_MAIN to the swapchain.
+    if(prmFrame.linearToSrgb != 0 || m_computePipelinePostProcess != VK_NULL_HANDLE)
+    {
+      postProcess(cmd);
+    }
+
+    updateDepthRendering(cmd);
+    readBackIndirectParametersIfNeeded(cmd);
+    updateRenderingMemoryStatistics(cmd, ctx.splatCount);
     return;
   }
 

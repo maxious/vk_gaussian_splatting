@@ -20,11 +20,13 @@
  *
  * One thread per Gaussian. Projects the splat to screen space, performs
  * stochastic acceptance (ST mode) or Gaussian Point Splatting (GPS mode),
- * and writes winning fragments via atomicMin on a 64-bit framebuffer SSBO.
+ * and writes winning fragments via atomicMin on a 32-bit depth buffer.
  *
- * The framebuffer stores (depth_key << 32) | gaussian_idx per pixel, where
- * depth_key is the raw bit pattern of the view-space depth. atomicMin selects
- * the nearest splat at each pixel in a sort-free manner.
+ * The 64-bit atomicMin on RWStructuredBuffer<uint64_t> is broken in
+ * Slang/SPIR-V, so we use two separate 32-bit buffers:
+ *   - depthBuffer: per-pixel depth for InterlockedMin
+ *   - indexBuffer: per-pixel winning gaussian index (TOCTOU race acceptable
+ *     for a stochastic renderer)
  *
  * Ported from the CUDA reference implementation (render.cu) from
  * https://github.com/fhahlbohm/stochastic-gaussian-splatting
@@ -39,9 +41,17 @@
 #include "threedgs_particles_storage.h.slang"
 
 // clang-format off
-[[vk::binding(BINDING_STOCHASTIC_FRAMEBUFFER_SSBO, 1)]] RWStructuredBuffer<uint64_t> framebufferSSBO;
-[[vk::binding(BINDING_FRAME_INFO_UBO, 0)]]             ConstantBuffer<FrameInfo>      frameInfo;
-[[vk::push_constant]]                                   ConstantBuffer<PushConstant>    pcRaster;
+[[vk::binding(BINDING_STOCHASTIC_DEPTH_BUFFER, 1)]]
+RWStructuredBuffer<uint> depthBuffer;
+
+[[vk::binding(BINDING_STOCHASTIC_INDEX_BUFFER, 1)]]
+RWStructuredBuffer<uint> indexBuffer;
+
+[[vk::binding(BINDING_FRAME_INFO_UBO, 0)]]
+ConstantBuffer<FrameInfo>      frameInfo;
+
+[[vk::push_constant]]
+ConstantBuffer<PushConstant>    pcRaster;
 // clang-format on
 
 /*-------------------------------------------------------------------------------------------------
@@ -56,14 +66,15 @@ static const uint STOCHASTIC_GS_N_SEQUENTIAL_THRESHOLD  = 4u;  // from CUDA refe
  *
  * For each pixel in the Gaussian's screen-space AABB, evaluate the Gaussian power,
  * convert to alpha, and perform a stochastic acceptance test. Accepted fragments
- * are written to the framebuffer via atomicMin.
+ * compete via 32-bit atomicMin on the depth buffer; the winner writes its
+ * gaussian index to the index buffer.
  *-----------------------------------------------------------------------------------------------*/
 void accumulateST(StochasticProjectedGaussian proj,
                   uint                          gaussian_idx,
                   uint                          frame,
                   uint                          fb_width,
                   uint                          fb_height,
-                  uint64_t                      packed)
+                  uint                          depth_bits)
 {
     // Clamp the screen-space AABB to the framebuffer bounds
     const int x_min = max(int(proj.screen_bounds.x), 0);
@@ -91,19 +102,27 @@ void accumulateST(StochasticProjectedGaussian proj,
                                        + proj.conic.z * d.y * d.y);
 
             // Skip pixels outside the power threshold (alpha < min_alpha_threshold)
-            if(power < proj.power_threshold)
+            // power = -0.5 * mahalanobis² (always ≤ 0). Skip when |power| > power_threshold
+            if(-power > proj.power_threshold)
                 continue;
 
             // Alpha = opacity * exp(power)
             const float alpha = proj.opacity * exp(power);
 
-            // Stochastic acceptance test: draw a uniform sample in [0, 1)
-            // and accept if sample < alpha.
+            // Stochastic acceptance test
             const float2 rnd = pcg2d(state);
             if(rnd.x < alpha)
             {
+                // Two-pass 32-bit atomic approach
+                // 1. InterlockedMin on 32-bit depth buffer
+                // 2. If we won (our depth was smaller), write our gaussian index to index buffer
                 const uint pixel_id = uint(py) * fb_width + uint(px);
-                InterlockedMin(framebufferSSBO[pixel_id], packed);
+                uint oldDepth;
+                InterlockedMin(depthBuffer[pixel_id], depth_bits, oldDepth);
+                if(oldDepth > depth_bits)
+                {
+                    indexBuffer[pixel_id] = gaussian_idx;
+                }
             }
         }
     }
@@ -114,14 +133,14 @@ void accumulateST(StochasticProjectedGaussian proj,
  *
  * Compute the expected number of fragments from the splat's importance (area * dilog(opacity)),
  * then sample that many points from the 2D Gaussian distribution using an importance-corrected
- * Box-Muller transform. Each sampled point is written to the framebuffer via atomicMin.
+ * Box-Muller transform. Each sampled point competes via 32-bit atomicMin on the depth buffer.
  *-----------------------------------------------------------------------------------------------*/
 void accumulateGPS(StochasticProjectedGaussian proj,
                    uint                          gaussian_idx,
                    uint                          frame,
                    uint                          fb_width,
                    uint                          fb_height,
-                   uint64_t                      packed)
+                   uint                          depth_bits)
 {
     // Importance = expected fragment count = 2*pi*sqrt(det(cov2d)) * dilog(opacity)
     const float det_cov    = max(proj.determinant, 0.0f);
@@ -168,7 +187,13 @@ void accumulateGPS(StochasticProjectedGaussian proj,
             continue;
 
         const uint pixel_id = uint(py) * fb_width + uint(px);
-        InterlockedMin(framebufferSSBO[pixel_id], packed);
+        // Two-pass 32-bit atomic approach:
+        uint oldDepth;
+        InterlockedMin(depthBuffer[pixel_id], depth_bits, oldDepth);
+        if(oldDepth > depth_bits)
+        {
+            indexBuffer[pixel_id] = gaussian_idx;
+        }
     }
 }
 
@@ -189,7 +214,11 @@ void main(uint3 id : SV_DispatchThreadID)
     const float3 raw_scale   = fetchScale(gaussian_idx);
     const float4 raw_rotation = fetchRotation(gaussian_idx);
     const float4 color        = fetchColor(gaussian_idx);
-    const float  raw_opacity  = color.w;
+    // fetchColor stores SIGMOID-activated opacity (applied on CPU during upload).
+    // project_gaussian() expects RAW logit opacity and applies sigmoid internally.
+    // Reverse the activation to avoid double-activation.
+    const float activated_opacity = clamp(color.w, 1e-7f, 1.0f - 1e-7f);
+    const float raw_opacity  = -log(1.0f / activated_opacity - 1.0f);
 
     // ---- Transform splat center to world space via the model matrix ----
     // Row-major convention: vector * matrix (matching threedgs.h.slang)
@@ -223,11 +252,10 @@ void main(uint3 id : SV_DispatchThreadID)
     if(!visible)
         return;
 
-    // ---- Pack the fragment: (depth_bits << 32) | gaussian_idx ----
-    // For positive depths, the raw float bit pattern sorts correctly
-    // under atomicMin (smaller depth = smaller bit pattern).
-    const uint     depth_bits = asuint(proj.depth);
-    const uint64_t packed     = pack_fragment(depth_bits, gaussian_idx);
+    // ---- Depth bits for 32-bit atomicMin ----
+    // For positive view-space depths, the raw float bit pattern sorts correctly
+    // under atomicMin (smaller depth = smaller uint bit pattern).
+    const uint depth_bits = asuint(proj.depth);
 
     const uint fb_width  = uint(frameInfo.stochasticWidth);
     const uint fb_height = uint(frameInfo.stochasticHeight);
@@ -236,10 +264,10 @@ void main(uint3 id : SV_DispatchThreadID)
     // ---- Dispatch to the selected accumulation mode ----
     if(frameInfo.stochasticUseGps != 0)
     {
-        accumulateGPS(proj, gaussian_idx, frame, fb_width, fb_height, packed);
+        accumulateGPS(proj, gaussian_idx, frame, fb_width, fb_height, depth_bits);
     }
     else
     {
-        accumulateST(proj, gaussian_idx, frame, fb_width, fb_height, packed);
+        accumulateST(proj, gaussian_idx, frame, fb_width, fb_height, depth_bits);
     }
 }
