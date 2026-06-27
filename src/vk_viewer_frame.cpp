@@ -274,6 +274,7 @@ void VkViewer::buildContentState(FrameRenderContext& ctx)
   
   // Determine if RTX pipeline
   ctx.useRtxPipeline = (prmSelectedPipeline == PIPELINE_RTX);
+  ctx.useStochasticPipeline = (prmSelectedPipeline == PIPELINE_STOCHASTIC_GS);
   ctx.raytraceMeshDepth = ctx.shadersValid && ctx.hasMeshes && prmSelectedPipeline == PIPELINE_HYBRID_3DGUT;
   
   // Color buffer selection

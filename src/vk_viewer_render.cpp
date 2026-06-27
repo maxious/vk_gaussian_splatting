@@ -147,6 +147,17 @@ void VkViewer::onRender(VkCommandBuffer cmd)
     return;
   }
 
+  // Stochastic GS compute pipeline (sort-free atomic rasterization)
+  if(prmSelectedPipeline == PIPELINE_STOCHASTIC_GS)
+  {
+    if(!m_stochastic.initialized)
+    {
+      initStochasticPipelines();
+    }
+    renderStochasticFrame(cmd, ctx);
+    return;
+  }
+
   // Raster and Hybrid pipelines
   if(prmRtx.temporalSampling && !updateFrameCounter())
     return;

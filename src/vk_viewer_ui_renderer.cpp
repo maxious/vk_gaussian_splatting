@@ -632,6 +632,34 @@ void VkViewerUI::guiDrawRendererProperties()
         ImGui::EndTabItem();
       }
     }
+
+    if(prmSelectedPipeline == PIPELINE_STOCHASTIC_GS)
+    {
+      if(ImGui::BeginTabItem("Stochastic GS settings"))
+      {
+        PE::begin("## Stochastic GS Settings");
+
+        PE::Checkbox("Use GPS mode", &prmStochastic.stochasticUseGps, "0=Stochastic Transparency, 1=GPS mode");
+
+        PE::SliderInt("Samples per pixel", (int*)&prmStochastic.stochasticSamplesPerPixel, 1, 64);
+
+        PE::SliderInt("Max samples", (int*)&prmStochastic.stochasticMaxSamples, 1, 256);
+
+        ImGui::BeginDisabled(true);  // v1: SSAA deferred
+        PE::Combo("Supersampling", (int*)&prmStochastic.stochasticSupersamplingFactor, "1x\0" "2x\0" "4x\0");
+        ImGui::EndDisabled();
+
+        ImGui::BeginDisabled(true);  // v1: DoF deferred
+        PE::Checkbox("Depth of Field", &prmStochastic.stochasticEnableDof);
+        ImGui::EndDisabled();
+
+        PE::Checkbox("Progressive", &prmStochastic.stochasticEnableProgressive);
+
+        PE::end();
+
+        ImGui::EndTabItem();
+      }
+    }
   }
   ImGui::EndTabBar();
 }

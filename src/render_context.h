@@ -91,6 +91,7 @@ struct FrameRenderContext
   // RTX-specific flags
   bool raytraceMeshDepth = false;
   bool useRtxPipeline = false;
+  bool useStochasticPipeline = false;  // When true, use compute stochastic GS pipeline
 
   // Environment depth (XR passthrough)
   glm::mat4 envDepthViewMatrices[2];

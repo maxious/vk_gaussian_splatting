@@ -1748,6 +1748,7 @@ void VkViewer::updateAnimation(float deltaTime)
 #include "vk_viewer_postprocess.cpp"
 #include "vk_viewer_multiview.cpp"
 #include "vk_viewer_chunk_culling.cpp"
+#include "vk_viewer_stochasticgs.cpp"
 
 #include "vk_viewer_dlss_rr.cpp"
 #include "vk_viewer_video.cpp"
