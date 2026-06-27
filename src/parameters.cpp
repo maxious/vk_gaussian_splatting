@@ -18,6 +18,7 @@
  */
 
 #include "parameters.h"
+#include <nvutils/logger.hpp>
 
 namespace vk_viewer {
 
@@ -31,8 +32,9 @@ RtxVramDataParameters prmRtxData{};
 uint32_t            prmSelectedPipeline = PIPELINE_MESH;
 shaderio::FrameInfo prmFrame{};
 RenderParameters    prmRender{};
-RasterParameters    prmRaster{};
-RtxParameters       prmRtx{};
+RasterParameters       prmRaster{};
+RtxParameters          prmRtx{};
+StochasticParameters   prmStochastic{};
 
 // Storage for respective default values
 
@@ -102,7 +104,7 @@ void registerCommandLineParameters(nvutils::ParameterRegistry* parameterRegistry
   parameterRegistry->add({"compressBlas", "1=compress BLAS (default). 0=diabled."}, &prmRtxData.compressBlas);
 
   // Pipelines
-  parameterRegistry->add({"pipeline", "0=3dgs-vert 1=3dgs-mesh(default) 2=3dgrt 3=hybrid-3dgs 4=3dgut 5=hybrid-3dgut"},
+  parameterRegistry->add({"pipeline", "0=3dgs-vert 1=3dgs-mesh(default) 2=3dgrt 3=hybrid-3dgs 4=3dgut 5=hybrid-3dgut 6=stochastic-gs"},
                          &prmSelectedPipeline);
   parameterRegistry->add({"maxShDegree", "max sh degree used for rendering in [0,1,2,3]"}, &prmRender.maxShDegree);
   parameterRegistry->add({"extentProjection", "particle extent projection method [0=Eigen (default),1=Conic]"},
@@ -110,9 +112,29 @@ void registerCommandLineParameters(nvutils::ParameterRegistry* parameterRegistry
   parameterRegistry->add({"kernelDegree", "kernel degree used by 3DGRT, 3DGUT and Hybrid 3DGUT pipelines in [0,1,2(default),3,4,5]"},
                          &prmRtx.kernelDegree);
 
+  // Stochastic GS
+  parameterRegistry->add({"stochasticSamplesPerPixel", "samples per pixel for stochastic GS (1=interactive, 64=converged)"},
+                         &prmStochastic.stochasticSamplesPerPixel);
+  parameterRegistry->add({"stochasticMaxSamples", "max accumulation samples before auto-reset"},
+                         &prmStochastic.stochasticMaxSamples);
+  parameterRegistry->add({"stochasticSupersamplingFactor", "supersampling factor (1, 2, 4)"},
+                         &prmStochastic.stochasticSupersamplingFactor);
+  parameterRegistry->add({"stochasticUseGps", "0=ST, 1=GPS mode"},
+                         &prmStochastic.stochasticUseGps);
+  parameterRegistry->add({"stochasticEnableDof", "0=no DOF, 1=DOF enabled"},
+                         &prmStochastic.stochasticEnableDof);
+
   // Scene loading options
   parameterRegistry->add({"mortonReorder", "1=reorder splats using Morton/Z-order curve for cache coherency (default), 0=disabled"},
                          &prmScene.mortonReorder);
+
+  // Migration guard: if a saved config has pipeline > HYBRID_3DGUT (e.g. stochastic-gs),
+  // reset to mesh until the pipeline is fully wired
+  if (prmSelectedPipeline > PIPELINE_HYBRID_3DGUT)
+  {
+    LOGW("Reset prmSelectedPipeline from %d to PIPELINE_MESH (%d)\n", (int)prmSelectedPipeline, (int)PIPELINE_MESH);
+    prmSelectedPipeline = PIPELINE_MESH;
+  }
 }
 
 }  // namespace vk_viewer

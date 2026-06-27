@@ -26,6 +26,9 @@ VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
 using namespace vk_viewer;
 
+// Static member definition (declared in vk_viewer.h)
+bool VkViewer::s_stochasticGsSupported = false;
+
 // create, setup and run an nvapp::Application
 // with a VkViewer element.
 int main(int argc, char** argv)
@@ -136,6 +139,14 @@ int main(int argc, char** argv)
 
   VkPhysicalDeviceShaderClockFeaturesKHR clockFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_CLOCK_FEATURES_KHR};
   vkSetup.deviceExtensions.emplace_back(VK_KHR_SHADER_CLOCK_EXTENSION_NAME, &clockFeatures);
+
+  // 64-bit SSBO atomics for stochastic Gaussian splat rendering
+  // Core in Vulkan 1.2 - use core struct type (no KHR suffix)
+  static VkPhysicalDeviceShaderAtomicInt64Features atomicInt64Features = {
+      .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_INT64_FEATURES,
+      .shaderBufferInt64Atomics = VK_TRUE,
+  };
+  vkSetup.deviceExtensions.emplace_back(VK_KHR_SHADER_ATOMIC_INT64_EXTENSION_NAME, &atomicInt64Features, false);
 
   VkPhysicalDeviceRayTracingInvocationReorderFeaturesNV serFeatures = {
       .sType                       = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_INVOCATION_REORDER_FEATURES_NV,
@@ -263,6 +274,8 @@ int main(int argc, char** argv)
     LOGE("Error in Vulkan context creation\n");
     return 1;
   }
+
+  VkViewer::s_stochasticGsSupported = (vkContext.getPhysicalDeviceFeatures12().shaderBufferInt64Atomics == VK_TRUE);
 
 #ifdef WITH_VULKAN_VIDEO
   LOGI("Vulkan Video Extensions Status:\n");

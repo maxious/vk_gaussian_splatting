@@ -183,6 +183,16 @@ public:
   // VDZ mesh accessor for hybrid rendering mode switching
   VdzMesh& getVdzMesh() { return m_vdzMesh; }
 
+  // Returns true if stochastic Gaussian splatting is supported
+  // (requires NVIDIA GPU with shaderBufferInt64Atomics)
+  bool isStochasticGsSupported() const
+  {
+    VkPhysicalDeviceProperties props;
+    vkGetPhysicalDeviceProperties(m_app->getPhysicalDevice(), &props);
+    return props.vendorID == 0x10DE && s_stochasticGsSupported;
+  }
+  static bool s_stochasticGsSupported;
+
 protected:
   VkViewer(nvutils::ProfilerManager* profilerManager, nvutils::ParameterRegistry* parameterRegistry);
 
@@ -819,6 +829,61 @@ protected:
   VkDescriptorSetLayout    m_descriptorSetLayoutPostProcess = VK_NULL_HANDLE;
   VkDescriptorSet          m_descriptorSetPostProcess       = VK_NULL_HANDLE;
   VkDescriptorPool         m_descriptorPoolPostProcess      = VK_NULL_HANDLE;
+
+  /////////////////////////
+  // Compute stochastic GS specific
+
+  struct Stochastic
+  {
+    // Shader modules
+    VkShaderModule accumulateShader = VK_NULL_HANDLE;
+    VkShaderModule resolveShader = VK_NULL_HANDLE;
+    VkShaderModule clearShader = VK_NULL_HANDLE;
+    VkShaderModule accumulateMultiviewShader = VK_NULL_HANDLE;
+    VkShaderModule resolveMultiviewShader = VK_NULL_HANDLE;
+
+    // Pipeline layout
+    VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
+    VkPipelineLayout multiviewPipelineLayout = VK_NULL_HANDLE;
+
+    // Compute pipelines (clear, accumulate, resolve)
+    VkPipeline clearPipeline = VK_NULL_HANDLE;
+    VkPipeline accumulatePipeline = VK_NULL_HANDLE;
+    VkPipeline resolvePipeline = VK_NULL_HANDLE;
+    VkPipeline accumulateMultiviewPipeline = VK_NULL_HANDLE;
+    VkPipeline resolveMultiviewPipeline = VK_NULL_HANDLE;
+
+    // Descriptor set (set 1)
+    nvvk::DescriptorBindings descriptorBindings = {};
+    VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
+    VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
+    VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
+
+    // 64-bit atomic framebuffer SSBO
+    nvvk::Buffer framebuffer;
+    VkExtent2D framebufferSize = {0, 0};
+
+    // Output image (per-pixel color)
+    nvvk::Image outputImage;
+    VkImageView outputImageView = VK_NULL_HANDLE;
+    VkExtent2D outputSize = {0, 0};
+
+    // Progressive accumulation image
+    nvvk::Image accumulationImage;
+    VkImageView accumulationImageView = VK_NULL_HANDLE;
+
+    // Multiview output image
+    nvvk::Image multiviewOutputImage;
+    VkImageView multiviewOutputImageView = VK_NULL_HANDLE;
+
+    bool initialized = false;
+  } m_stochastic;
+
+  // Stochastic GS methods
+  void initStochasticPipelines();
+  void deinitStochasticPipelines();
+  void renderStochasticFrame(VkCommandBuffer cmd, const FrameRenderContext& ctx);
+  void updateStochasticFrameInfo(VkCommandBuffer cmd);
 
   // PLY Sequence Animation
   std::shared_ptr<AnimationController> m_animationController;

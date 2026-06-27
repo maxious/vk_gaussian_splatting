@@ -176,6 +176,20 @@ struct RtxParameters
 // Parameters that control Raytracing (RTX)
 extern RtxParameters prmRtx;
 
+// Parameters that control Compute Stochastic GS rendering
+struct StochasticParameters
+{
+  uint32_t stochasticSamplesPerPixel          = 1;      // Samples per pixel (1=interactive, 16+=converged)
+  uint32_t stochasticMaxSamples               = 64;     // Max samples before auto-reset
+  uint32_t stochasticSupersamplingFactor      = 1;      // 1, 2, or 4 (SSAA factor)
+  uint32_t stochasticUseGps                   = 0;      // 0=Stochastic Transparency, 1=GPS
+  bool     stochasticEnableDof                = false;  // Depth of field
+  bool     stochasticEnableProgressive        = true;   // Progressive accumulation
+};
+
+// Parameters that control Compute Stochastic GS
+extern StochasticParameters prmStochastic;
+
 // Invoked by main() to save defaults after command line options are applied at startup
 void storeDefaultParameters();
 

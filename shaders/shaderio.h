@@ -42,6 +42,7 @@
 #define PIPELINE_HYBRID 3        // Hybrid rendering: raster primary rays (3DGS), raytrace secondary rays (3DGRT)
 #define PIPELINE_MESH_3DGUT 4    // 3DGUT (Unscented Transform) rasterization using mesh shaders
 #define PIPELINE_HYBRID_3DGUT 5  // Hybrid rendering: raster primary rays (3DGUT), raytrace secondary rays (3DGRT)
+#define PIPELINE_STOCHASTIC_GS 6  // Stochastic compute GS (sort-free atomic rasterization)
 
 // visualization mode
 #define VISUALIZE_FINAL 0
@@ -161,6 +162,11 @@
 #define BINDING_CHUNK_BOUNDS_BUFFER 34       // Per-chunk AABB bounds
 #define BINDING_VISIBLE_CHUNKS_BUFFER 35     // Output: visible chunk indices
 #define BINDING_VISIBLE_CHUNK_COUNT_BUFFER 36 // Output: count of visible chunks
+
+// Stochastic (sort-free atomic) GS bindings
+#define BINDING_STOCHASTIC_FRAMEBUFFER_SSBO 40   // uint64_t[] atomic framebuffer
+#define BINDING_STOCHASTIC_OUTPUT_IMAGE 41       // RWTexture2D<float4> per-pixel color output
+#define BINDING_STOCHASTIC_ACCUMULATION_IMAGE 42 // RWTexture2D<float4> progressive accumulation
 
 // location for vertex attributes
 // (only for vertex shader mode)
@@ -328,6 +334,16 @@ struct FrameInfo
   int32_t chunkCullingEnabled DEFAULT(0);  // 0 = disabled, 1 = enabled
   int32_t numChunks DEFAULT(0);            // Total number of chunks (ceil(splatCount / CHUNK_SIZE))
   float4 frustumPlanes[6];                 // Frustum planes for GPU culling
+
+  // Stochastic GS (sort-free atomic rasterization) parameters
+  int32_t stochasticSamplesPerPixel        DEFAULT(1);       // per-render-call samples (NOT per-frame)
+  int32_t stochasticFrameCounter           DEFAULT(0);       // monotonic counter, incremented per dispatch
+  int32_t stochasticMaxSamples             DEFAULT(64);      // max accumulation samples before reset
+  int32_t stochasticSupersamplingFactor    DEFAULT(1);       // 1, 2, or 4
+  int32_t stochasticUseGps                 DEFAULT(0);       // 0 = ST, 1 = GPS
+  int32_t stochasticWidth                  DEFAULT(0);       // SSAA-scaled width
+  int32_t stochasticHeight                 DEFAULT(0);       // SSAA-scaled height
+  int32_t stochasticReset                  DEFAULT(1);       // 1 = clear framebuffer, 0 = accumulate
 };
 
 // Push constant for raster
