@@ -1,11 +1,13 @@
 #pragma once
 
 #include "protocol_parser.h"
+#include "splat_worker_pool.h"
 #include "worker_pool.h"
 
 #include <atomic>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <poll.h>
 #include <string>
 #include <unordered_map>
@@ -23,7 +25,7 @@ struct ClientConnection {
 
 class TcpServer {
 public:
-    TcpServer(WorkerPool& pool);
+    TcpServer(WorkerPool& pool, SplatWorkerPool* splatPool = nullptr);
     ~TcpServer();
 
     bool start(int port);
@@ -36,6 +38,9 @@ public:
     int activeConnections() const;
     uint64_t totalFramesProcessed() const;
 
+    // Allow late-binding the splat pool (e.g. when constructed in depth-only mode)
+    void setSplatPool(SplatWorkerPool* pool) { m_splatPool = pool; }
+
 private:
     struct InFlightFrame {
         int client_slot = -1;
@@ -44,6 +49,7 @@ private:
     };
 
     WorkerPool& m_pool;
+    SplatWorkerPool* m_splatPool = nullptr;
     int m_listenFd = -1;
     std::atomic<bool> m_running{false};
     std::vector<ClientConnection> m_clients;
@@ -53,6 +59,7 @@ private:
     uint32_t m_nextFrameIndex = 1;
     std::vector<uint64_t> m_clientGenerations;
     std::unordered_map<uint32_t, InFlightFrame> m_inFlightFrames;
+    std::map<uint32_t, InFlightFrame> m_inFlightSplatJobs;
 
     // Constants
     static constexpr int MAX_CLIENTS = 16;

@@ -16,12 +16,17 @@ std::string getModelCacheDir()
 void printAvailableModels()
 {
     LOGI("Available HuggingFace models (repo:filename):\n");
+    LOGI("Depth models (--mode depth --model):\n");
     LOGI("  ⭐ mudler/depth-anything.cpp-gguf:depth-anything-large-f32.gguf (1.38 GB, depth+pose) — default\n");
     LOGI("  mudler/depth-anything.cpp-gguf:depth-anything-base-q8_0.gguf (~142 MB, fast CPU)\n");
     LOGI("  mudler/depth-anything.cpp-gguf:depth-anything-base-f16.gguf (~233 MB, GPU)\n");
     LOGI("  mudler/depth-anything.cpp-gguf:depth-anything-metric-large-f32.gguf (1.34 GB, metric depth)\n");
     LOGI("  mudler/depth-anything.cpp-gguf:depth-anything-nested-anyview.gguf (4.9 GB, best pose)\n");
     LOGI("  mudler/depth-anything.cpp-gguf:depth-anything-nested-metric.gguf (1.38 GB, best metric)\n");
+    LOGI("Free-splatter models (--mode splat --splat-model):\n");
+    LOGI("  LocalAI-io/free-splatter.cpp:freesplatter-scene-f16.gguf (625 MB, scene variant, f16)\n");
+    LOGI("  LocalAI-io/free-splatter.cpp:freesplatter-scene-f32.gguf (1230 MB, scene variant, f32)\n");
+    LOGI("  LocalAI-io/free-splatter.cpp:freesplatter-object-f16.gguf (625 MB, object variant, f16)\n");
 }
 
 static bool looksLikeHfReference(const std::string& s)

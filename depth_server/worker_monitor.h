@@ -1,5 +1,6 @@
 #pragma once
 
+#include "splat_worker_pool.h"
 #include "worker_pool.h"
 
 #include <atomic>
@@ -11,7 +12,7 @@
 
 class WorkerMonitor {
 public:
-    WorkerMonitor(WorkerPool& pool);
+    WorkerMonitor(WorkerPool& pool, SplatWorkerPool* splat_pool = nullptr);
     ~WorkerMonitor();
 
     bool start(const std::string& model_path, const std::string& backend);
@@ -22,6 +23,7 @@ private:
     void monitorLoop();
 
     WorkerPool& m_pool;
+    SplatWorkerPool* m_splatPool = nullptr;
     std::string m_modelPath;
     std::string m_backend;
     std::thread m_monitorThread;

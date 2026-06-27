@@ -4,6 +4,7 @@
 
 #include <nvutils/logger.hpp>
 
+#include <algorithm>
 #include <arpa/inet.h>
 #include <array>
 #include <cerrno>
@@ -102,9 +103,19 @@ bool decodeFrameRequest(const uint8_t* message,
     return true;
 }
 
+bool sendSplatError(int fd, uint32_t job_id, uint32_t error_code, const char* error_msg, uint64_t& bytes_tx)
+{
+    auto frame = TcpProtocolSerializer::serializeSplatError(job_id, error_code, error_msg);
+    if(frame.empty())
+    {
+        return false;
+    }
+    return sendAll(fd, frame.data(), frame.size(), bytes_tx);
+}
+
 }  // namespace
 
-TcpServer::TcpServer(WorkerPool& pool) : m_pool(pool) {}
+TcpServer::TcpServer(WorkerPool& pool, SplatWorkerPool* splatPool) : m_pool(pool), m_splatPool(splatPool) {}
 
 TcpServer::~TcpServer()
 {
@@ -177,6 +188,7 @@ void TcpServer::stop()
     }
 
     m_inFlightFrames.clear();
+    m_inFlightSplatJobs.clear();
     m_running.store(false);
 }
 
@@ -369,6 +381,196 @@ void TcpServer::update()
                         }
                         close_client = true;
                     }
+                    else if(message_type == MSG_SPLAT_REQUEST)
+                    {
+                        if(m_splatPool == nullptr)
+                        {
+                            sendSplatError(client.fd, 0, 0, "splat server not running", client.bytes_tx);
+                            client.last_activity_ms = nowMs();
+                            continue;
+                        }
+
+                        SplatRequestPayload splat_payload{};
+                        const uint8_t* options_ptr = nullptr;
+                        const uint8_t* images_ptr  = nullptr;
+                        size_t images_size = 0;
+                        if(!decodeSplatRequest(message, message_len, splat_payload, options_ptr, images_ptr, images_size))
+                        {
+                            LOGE("TcpServer: invalid SPLAT_REQUEST from client %zu\n", client_idx);
+                            sendSplatError(client.fd, 0, 2, "invalid splat request", client.bytes_tx);
+                            client.last_activity_ms = nowMs();
+                            continue;
+                        }
+
+                        if(splat_payload.n_views < 2 || splat_payload.n_views > 4)
+                        {
+                            sendSplatError(client.fd, 0, 2, "n_views must be 2-4", client.bytes_tx);
+                            client.last_activity_ms = nowMs();
+                            continue;
+                        }
+
+                        if(images_size > static_cast<size_t>(MAX_IMAGE_SIZE) * splat_payload.n_views)
+                        {
+                            sendSplatError(client.fd, 0, 2, "image too large", client.bytes_tx);
+                            client.last_activity_ms = nowMs();
+                            continue;
+                        }
+
+                        std::vector<std::vector<uint8_t>> image_bytes;
+                        image_bytes.reserve(splat_payload.n_views);
+                        {
+                            const uint8_t* cursor = images_ptr;
+                            size_t remaining = images_size;
+                            bool parse_ok = true;
+                            for(uint32_t i = 0; i < splat_payload.n_views; ++i)
+                            {
+                                if(remaining < sizeof(uint32_t))
+                                {
+                                    parse_ok = false;
+                                    break;
+                                }
+                                uint32_t len = 0;
+                                std::memcpy(&len, cursor, sizeof(len));
+                                cursor += sizeof(uint32_t);
+                                remaining -= sizeof(uint32_t);
+
+                                if(len > MAX_IMAGE_SIZE || remaining < len)
+                                {
+                                    parse_ok = false;
+                                    break;
+                                }
+                                image_bytes.emplace_back(cursor, cursor + len);
+                                cursor += len;
+                                remaining -= len;
+                            }
+                            if(!parse_ok)
+                            {
+                                sendSplatError(client.fd, 0, 2, "malformed image data", client.bytes_tx);
+                                client.last_activity_ms = nowMs();
+                                continue;
+                            }
+                        }
+
+                        SplatRequestOptions opts{};
+                        if(options_ptr != nullptr)
+                        {
+                            std::memcpy(&opts, options_ptr, sizeof(opts));
+                        }
+
+                        const uint32_t job_id = m_splatPool->submitJob(image_bytes, opts);
+                        if(job_id == 0)
+                        {
+                            sendSplatError(client.fd, 0, 1, "queue full", client.bytes_tx);
+                            client.last_activity_ms = nowMs();
+                            continue;
+                        }
+
+                        m_inFlightSplatJobs.emplace(job_id,
+                                                   InFlightFrame{static_cast<int>(client_idx),
+                                                                 m_clientGenerations[client_idx],
+                                                                 0});
+                        LOGD("TcpServer: queued splat job %u from client %zu (%u views)\n",
+                             job_id, client_idx, splat_payload.n_views);
+
+                        auto progress = TcpProtocolSerializer::serializeSplatProgress(job_id, 0, 0, 0);
+                        if(!progress.empty())
+                        {
+                            sendAll(client.fd, progress.data(), progress.size(), client.bytes_tx);
+                            client.last_activity_ms = nowMs();
+                        }
+                    }
+                    else if(message_type == MSG_SPLAT_POLL)
+                    {
+                        if(m_splatPool == nullptr)
+                        {
+                            sendSplatError(client.fd, 0, 0, "splat server not running", client.bytes_tx);
+                            client.last_activity_ms = nowMs();
+                            continue;
+                        }
+
+                        if(message_len < sizeof(FrameHeader) + sizeof(SplatPollPayload))
+                        {
+                            continue;
+                        }
+
+                        SplatPollPayload poll{};
+                        std::memcpy(&poll, message + sizeof(FrameHeader), sizeof(poll));
+
+                        auto inflight_it = m_inFlightSplatJobs.find(poll.job_id);
+                        if(inflight_it == m_inFlightSplatJobs.end())
+                        {
+                            sendSplatError(client.fd, poll.job_id, 0, "unknown job_id", client.bytes_tx);
+                            client.last_activity_ms = nowMs();
+                            continue;
+                        }
+
+                        SplatJobResult splat_res;
+                        if(m_splatPool->pollResult(splat_res))
+                        {
+                            if(splat_res.job_id == poll.job_id)
+                            {
+                                if(splat_res.error.empty())
+                                {
+                                    auto resp = TcpProtocolSerializer::serializeSplatResponse(
+                                        splat_res.job_id, splat_res.n_gaussians, splat_res.output_path.c_str());
+                                    if(!resp.empty())
+                                    {
+                                        sendAll(client.fd, resp.data(), resp.size(), client.bytes_tx);
+                                    }
+                                }
+                                else
+                                {
+                                    sendSplatError(client.fd, splat_res.job_id, 3, splat_res.error.c_str(),
+                                                   client.bytes_tx);
+                                }
+                                m_inFlightSplatJobs.erase(inflight_it);
+                                client.last_activity_ms = nowMs();
+                            }
+                            else
+                            {
+                                uint8_t percent = static_cast<uint8_t>(
+                                    std::min(100, m_splatPool->queueDepth() * 10));
+                                auto progress = TcpProtocolSerializer::serializeSplatProgress(poll.job_id, 1, percent, 0);
+                                if(!progress.empty())
+                                {
+                                    sendAll(client.fd, progress.data(), progress.size(), client.bytes_tx);
+                                }
+                                client.last_activity_ms = nowMs();
+                            }
+                        }
+                        else
+                        {
+                            uint8_t percent = static_cast<uint8_t>(
+                                std::min(100, m_splatPool->queueDepth() * 10));
+                            auto progress = TcpProtocolSerializer::serializeSplatProgress(poll.job_id, 1, percent, 0);
+                            if(!progress.empty())
+                            {
+                                sendAll(client.fd, progress.data(), progress.size(), client.bytes_tx);
+                            }
+                            client.last_activity_ms = nowMs();
+                        }
+                    }
+                    else if(message_type == MSG_SPLAT_CANCEL)
+                    {
+                        if(m_splatPool == nullptr)
+                        {
+                            sendSplatError(client.fd, 0, 0, "splat server not running", client.bytes_tx);
+                            client.last_activity_ms = nowMs();
+                            continue;
+                        }
+
+                        if(message_len < sizeof(FrameHeader) + sizeof(SplatCancelPayload))
+                        {
+                            continue;
+                        }
+
+                        SplatCancelPayload cancel{};
+                        std::memcpy(&cancel, message + sizeof(FrameHeader), sizeof(cancel));
+
+                        m_splatPool->cancelJob(cancel.job_id);
+                        m_inFlightSplatJobs.erase(cancel.job_id);
+                        LOGD("TcpServer: cancelled splat job %u from client %zu\n", cancel.job_id, client_idx);
+                    }
                     else
                     {
                         LOGW("TcpServer: ignoring unsupported message type %s from client %zu\n",
@@ -385,6 +587,23 @@ void TcpServer::update()
 
         if(close_client)
         {
+            if(m_splatPool != nullptr)
+            {
+                for(auto it = m_inFlightSplatJobs.begin(); it != m_inFlightSplatJobs.end();)
+                {
+                    if(it->second.client_slot == static_cast<int>(client_idx))
+                    {
+                        m_splatPool->cancelJob(it->first);
+                        LOGD("TcpServer: cancelled splat job %u on disconnect of client %zu\n",
+                             it->first, client_idx);
+                        it = m_inFlightSplatJobs.erase(it);
+                    }
+                    else
+                    {
+                        ++it;
+                    }
+                }
+            }
             LOGI("TcpServer: closing client %zu\n", client_idx);
             resetClient(client);
             ++m_clientGenerations[client_idx];
@@ -452,6 +671,77 @@ void TcpServer::update()
         client.last_activity_ms = nowMs();
         ++client.frames_processed;
         ++m_totalFramesProcessed;
+    }
+
+    if(m_splatPool != nullptr)
+    {
+        for(;;)
+        {
+            SplatJobResult splat_res;
+            if(!m_splatPool->pollResult(splat_res))
+            {
+                break;
+            }
+
+            auto it = m_inFlightSplatJobs.find(splat_res.job_id);
+            if(it == m_inFlightSplatJobs.end())
+            {
+                LOGW("TcpServer: no in-flight routing entry for splat job %u\n", splat_res.job_id);
+                continue;
+            }
+
+            const InFlightFrame inflight = it->second;
+
+            if(inflight.client_slot < 0 || inflight.client_slot >= static_cast<int>(m_clients.size()))
+            {
+                m_inFlightSplatJobs.erase(it);
+                continue;
+            }
+
+            ClientConnection& client = m_clients[static_cast<size_t>(inflight.client_slot)];
+            if(client.fd < 0 || m_clientGenerations[static_cast<size_t>(inflight.client_slot)] != inflight.client_generation)
+            {
+                LOGW("TcpServer: dropping splat job %u because client %d is no longer active\n",
+                     splat_res.job_id, inflight.client_slot);
+                m_inFlightSplatJobs.erase(it);
+                continue;
+            }
+
+            if(splat_res.error.empty())
+            {
+                auto resp = TcpProtocolSerializer::serializeSplatResponse(
+                    splat_res.job_id, splat_res.n_gaussians, splat_res.output_path.c_str());
+                if(resp.empty() || !sendAll(client.fd, resp.data(), resp.size(), client.bytes_tx))
+                {
+                    LOGE("TcpServer: failed to send SPLAT_RESPONSE for job %u to client %d: %s\n",
+                         splat_res.job_id, inflight.client_slot, std::strerror(errno));
+                    resetClient(client);
+                    ++m_clientGenerations[static_cast<size_t>(inflight.client_slot)];
+                }
+                else
+                {
+                    client.last_activity_ms = nowMs();
+                    LOGD("TcpServer: delivered splat job %u to client %d (%u gaussians)\n",
+                         splat_res.job_id, inflight.client_slot, splat_res.n_gaussians);
+                }
+            }
+            else
+            {
+                if(!sendSplatError(client.fd, splat_res.job_id, 3, splat_res.error.c_str(), client.bytes_tx))
+                {
+                    LOGE("TcpServer: failed to send SPLAT_ERROR for job %u to client %d: %s\n",
+                         splat_res.job_id, inflight.client_slot, std::strerror(errno));
+                    resetClient(client);
+                    ++m_clientGenerations[static_cast<size_t>(inflight.client_slot)];
+                }
+                else
+                {
+                    client.last_activity_ms = nowMs();
+                }
+            }
+
+            m_inFlightSplatJobs.erase(it);
+        }
     }
 
     if(current_time_ms - m_lastCleanupMs >= CLEANUP_INTERVAL_MS)

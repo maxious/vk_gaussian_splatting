@@ -1,6 +1,7 @@
 #include "worker_monitor.h"
 #include "benchmark.h"
 #include "worker_pool.h"
+#include "splat_worker_pool.h"
 #include "tcp_server.h"
 #include "model_downloader.h"
 
@@ -11,6 +12,7 @@
 #include <chrono>
 #include <csignal>
 #include <cstring>
+#include <memory>
 #include <string>
 #include <thread>
 
@@ -31,10 +33,14 @@ void printHelp()
 {
     LOGI("Usage: depth_server [options]\n");
     LOGI("Options:\n");
+    LOGI("  --mode depth|splat   Operating mode (default: depth)\n");
     LOGI("  --port N             TCP listen port (default: 9000)\n");
-    LOGI("  --model PATH         GGUF model path\n");
+    LOGI("  --model PATH         GGUF model path (depth mode)\n");
     LOGI("  --workers N          Number of worker processes (default: auto)\n");
     LOGI("  --backend cpu|cuda   Inference backend (default: cpu)\n");
+    LOGI("  --splat-model PATH   FreeSplatter GGUF model path (splat mode)\n");
+    LOGI("  --splat-backend cpu|vulkan|cuda  Splat inference backend (default: cpu)\n");
+    LOGI("  --splat-workers N    Number of splat worker processes (default: 1)\n");
     LOGI("  --benchmark          Run benchmark mode (no TCP server)\n");
     LOGI("  --benchmark-frames PATH  Directory of .rgb frames for benchmark\n");
     LOGI("  --benchmark-repeat N     Repeat each frame N times (default: 10)\n");
@@ -43,9 +49,11 @@ void printHelp()
     LOGI("  --list-models        Print available HuggingFace models\n");
     LOGI("  --help               Show this help and exit\n");
     LOGI("\n");
-    LOGI("The --model argument accepts either a local file path or a\n");
-    LOGI("HuggingFace reference of the form 'repo_id:filename'. HF references\n");
-    LOGI("are auto-downloaded to ~/.cache/depth_server/ on first use.\n");
+    LOGI("The --model and --splat-model arguments accept either a local file\n");
+    LOGI("path or a HuggingFace reference of the form 'repo_id:filename'. HF\n");
+    LOGI("references are auto-downloaded to ~/.cache/depth_server/ on first use.\n");
+    LOGI("Run two instances (one --mode depth, one --mode splat on a different\n");
+    LOGI("port) to serve both depth and splat requests simultaneously.\n");
 }
 
 }  // namespace
@@ -67,6 +75,10 @@ int main(int argc, char** argv)
     int benchmarkRepeat = 10;
     int benchmarkWarmup = 3;
     std::string benchmarkOutputPath;
+    std::string mode = "depth";       // "depth" or "splat"
+    std::string splatModelPath;
+    std::string splatBackend = "cpu";
+    int numSplatWorkers = 1;
 
     for(int i = 1; i < argc; ++i)
     {
@@ -125,19 +137,70 @@ int main(int argc, char** argv)
             benchmarkOutputPath = argv[++i];
             continue;
         }
+        if(std::strcmp(argv[i], "--mode") == 0 && i + 1 < argc)
+        {
+            mode = argv[++i];
+            if(mode != "depth" && mode != "splat")
+            {
+                LOGE("--mode must be 'depth' or 'splat'\n");
+                return 1;
+            }
+            continue;
+        }
+        if(std::strcmp(argv[i], "--splat-model") == 0 && i + 1 < argc)
+        {
+            splatModelPath = argv[++i];
+            continue;
+        }
+        if(std::strcmp(argv[i], "--splat-backend") == 0 && i + 1 < argc)
+        {
+            splatBackend = argv[++i];
+            continue;
+        }
+        if(std::strcmp(argv[i], "--splat-workers") == 0 && i + 1 < argc)
+        {
+            numSplatWorkers = std::max(1, std::stoi(argv[++i]));
+            continue;
+        }
     }
 
-    if(modelPath.empty())
+    std::string resolvedModel;
+    if(mode == "depth")
     {
-        LOGE("--model PATH is required\n");
-        return 1;
+        if(modelPath.empty())
+        {
+            LOGE("--model PATH is required in --mode depth\n");
+            return 1;
+        }
+        resolvedModel = resolveModelPath(modelPath);
+        if(resolvedModel.empty())
+        {
+            LOGE("Failed to resolve model: %s\n", modelPath.c_str());
+            return 1;
+        }
     }
 
-    std::string resolvedModel = resolveModelPath(modelPath);
-    if(resolvedModel.empty())
+    std::unique_ptr<SplatWorkerPool> splatPool;
+    if(mode == "splat")
     {
-        LOGE("Failed to resolve model: %s\n", modelPath.c_str());
-        return 1;
+        if(splatModelPath.empty())
+        {
+            LOGE("--splat-model PATH is required in --mode splat\n");
+            return 1;
+        }
+        std::string resolvedSplat = resolveModelPath(splatModelPath);
+        if(resolvedSplat.empty())
+        {
+            LOGE("Failed to resolve splat model: %s\n", splatModelPath.c_str());
+            return 1;
+        }
+        splatPool = std::make_unique<SplatWorkerPool>();
+        if(!splatPool->initialize(resolvedSplat, numSplatWorkers, splatBackend))
+        {
+            LOGE("Failed to initialize splat worker pool\n");
+            return 1;
+        }
+        LOGI("Splat mode initialized with %d worker(s), backend=%s\n", numSplatWorkers, splatBackend.c_str());
     }
 
     if(benchmarkMode)
@@ -147,26 +210,33 @@ int main(int argc, char** argv)
     }
 
     WorkerPool pool;
-    if(!pool.initialize(resolvedModel, numWorkers, backend))
+    if(mode == "depth")
     {
-        LOGE("Failed to initialize worker pool\n");
-        return 1;
+        if(!pool.initialize(resolvedModel, numWorkers, backend))
+        {
+            LOGE("Failed to initialize worker pool\n");
+            return 1;
+        }
     }
 
     WorkerMonitor monitor(pool);
-    if(!monitor.start(resolvedModel, backend))
+    if(mode == "depth")
     {
-        LOGE("Failed to start worker monitor\n");
-        pool.shutdown();
-        return 1;
+        if(!monitor.start(resolvedModel, backend))
+        {
+            LOGE("Failed to start worker monitor\n");
+            pool.shutdown();
+            return 1;
+        }
     }
 
-    TcpServer server(pool);
+    TcpServer server(pool, splatPool ? splatPool.get() : nullptr);
     if(!server.start(port))
     {
         LOGE("Failed to start TCP server\n");
         monitor.stop();
         pool.shutdown();
+        if(splatPool) splatPool->shutdown();
         return 1;
     }
 
@@ -180,5 +250,6 @@ int main(int argc, char** argv)
     server.stop();
     monitor.stop();
     pool.shutdown();
+    if(splatPool) splatPool->shutdown();
     return 0;
 }

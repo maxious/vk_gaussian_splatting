@@ -7,6 +7,8 @@ add_executable(depth_server
     tcp_server.cpp
     worker_pool.cpp
     worker_monitor.cpp
+    splat_worker_pool.cpp
+    splat_worker.cpp
     freesplatter_capi_buffer.cpp
 )
 
@@ -28,6 +30,11 @@ if(TARGET free_splatter)
         ${CMAKE_CURRENT_SOURCE_DIR}/../3rdparty/free-splatter/third_party/stb
     )
     target_compile_definitions(depth_server PRIVATE WITH_FREE_SPLATTER)
+    target_sources(depth_server PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/stb_resize_impl.cpp)
+    set_source_files_properties(
+        ${CMAKE_CURRENT_SOURCE_DIR}/stb_resize_impl.cpp
+        PROPERTIES COMPILE_OPTIONS "-w")
 endif()
 
 add_executable(test_da_capi_buffer

@@ -3,6 +3,7 @@
 #include <nvutils/logger.hpp>
 
 #include <sys/wait.h>
+#include <signal.h>
 
 #include <chrono>
 #include <cerrno>
@@ -19,7 +20,8 @@ std::int64_t nowMs()
 
 }  // namespace
 
-WorkerMonitor::WorkerMonitor(WorkerPool& pool) : m_pool(pool) {}
+WorkerMonitor::WorkerMonitor(WorkerPool& pool, SplatWorkerPool* splat_pool)
+    : m_pool(pool), m_splatPool(splat_pool) {}
 
 WorkerMonitor::~WorkerMonitor()
 {
@@ -135,6 +137,32 @@ void WorkerMonitor::monitorLoop()
             {
                 LOGE("Worker %d: restart failed\n", static_cast<int>(i));
                 m_pool.retireWorker(i);
+            }
+        }
+
+        if(m_splatPool)
+        {
+            const size_t n_splat = m_splatPool->workerCount();
+            for(size_t i = 0; i < n_splat && m_running.load(); ++i)
+            {
+                const pid_t pid = m_splatPool->workerPid(i);
+                if(pid <= 0)
+                {
+                    continue;
+                }
+
+                // kill(pid, 0) instead of waitpid: splat workers may be reaped
+                // elsewhere, so a zero-signal probe is the safe cross-process check.
+                if(kill(pid, 0) == 0)
+                {
+                    continue;
+                }
+
+                LOGW("Splat worker %zu (pid %d) died, restarting\n", i, static_cast<int>(pid));
+                if(!m_splatPool->restartWorker(i))
+                {
+                    LOGE("Failed to restart splat worker %zu\n", i);
+                }
             }
         }
 
