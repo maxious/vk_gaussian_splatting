@@ -24,6 +24,19 @@
 #include "shaderio.h"
 #include "threedgs_particles_storage.h.slang"
 
+// Accumulated per-pixel G-buffer data for the TRON PBR deferred pass.
+// alpha_acc tracks accumulated transmittance (1 - accumulated alpha) in
+// front-to-back order; when it drops below 0.5 we are past the median depth.
+struct GBufferData
+{
+    float3  position;
+    float3  normal;
+    float3  basecolor;
+    float   roughness;
+    float   metallic;
+    float   alpha_acc;
+};
+
 // fetch the position, scale and rotation
 void fetchParticlePSR(in FrameInfo frameInfo, in int splatIndex, out float3 particlePosition, out float3 particleScale, out float3x3 particleInvRotation)
 {
@@ -249,6 +262,89 @@ bool particleProcessHitGut(in FrameInfo frameInfo,
   }
 
   return acceptHit;
+}
+
+// Version that alpha-composites per-particle material attributes into a
+// GBufferData accumulator using front-to-back Over blending (matches the
+// compositing order used for SH radiance in particleProcessHit()).
+// Returns false once accumulated transmittance drops below 0.5, signalling
+// the caller that the median depth has been passed and further hits can be
+// skipped.
+bool particleProcessHitGbuffer(in FrameInfo    frameInfo,
+                               in float3       modelRayOrigin,
+                               in float3       modelRayDirection,
+                               in int          splatId,
+                               inout GBufferData gbuf)
+{
+  float3 particlePosition;
+  float3 particleScale;
+  float3x3 particleInvRotation;
+
+  fetchParticlePSR(frameInfo, splatId, particlePosition, particleScale, particleInvRotation);
+
+  float3 particleRayOrigin;
+  float3 particleRayDirection;
+  particleCannonicalRay(modelRayOrigin, modelRayDirection, particlePosition, particleScale, particleInvRotation,
+                        particleRayOrigin, particleRayDirection);
+
+  float4 color           = fetchColor(splatId);
+  float  particleDensity = color.w;
+
+  // Apply Temporal Opacity modulation (same logic as particleProcessHit)
+  float2 timeData = fetchTime(splatId);
+  float  t_scale  = timeData.x;  // JS Order: x = scale
+  float  t_center = timeData.y;  // JS Order: y = center
+  float  dt       = frameInfo.currentTime - t_center;
+
+  if (frameInfo.temporalCulling != 0) {
+    if (t_scale > 1e-5) {
+      float v = dt / t_scale;
+      particleDensity *= exp(-0.5 * v * v);
+    }
+    else {
+      if (abs(dt) > 1e-5) particleDensity = 0.0;
+    }
+  }
+
+  const double  minParticleAlpha         = 1.0f / 255.0f;
+  const int32_t particleKernelDegree     = KERNEL_DEGREE;
+  const float   minParticleKernelDensity = KERNEL_MIN_RESPONSE;
+
+  const float maxResponse = particleRayMaxKernelResponse(particleRayOrigin, particleRayDirection, particleKernelDegree);
+  const float alpha       = min(frameInfo.alphaClamp, maxResponse * particleDensity);
+
+  const bool acceptHit = (particleDensity > frameInfo.alphaCullThreshold) && ((double)alpha > minParticleAlpha)
+                         && (maxResponse > minParticleKernelDensity);
+  if (acceptHit) {
+#if DISABLE_OPACITY_GAUSSIAN
+    const float a = 1.0;
+#else
+    const float a = alpha;
+#endif
+
+    // Per-particle PBR material (TRON).
+    const float3 basecolor = fetchBasecolor(splatId);
+    const float  roughness = fetchRoughness(splatId);
+    const float  metallic  = fetchMetallic(splatId);
+
+    // Geometric normal in world space.
+    // In model space a 2D Gaussian's surface normal is [0,0,1]; rotating by R
+    // maps it to the third column of R, which equals the third row of R^T.
+    // particleInvRotation is R^T, so the third row is the world-space normal.
+    const float3 normal = particleInvRotation[2];
+
+    // Front-to-back Over compositing.
+    const float weight     = a * gbuf.alpha_acc;
+    gbuf.position          = lerp(gbuf.position, particlePosition, weight);
+    gbuf.normal            = normalize(lerp(gbuf.normal, normal, weight));
+    gbuf.basecolor         = lerp(gbuf.basecolor, basecolor, weight);
+    gbuf.roughness         = lerp(gbuf.roughness, roughness, weight);
+    gbuf.metallic          = lerp(gbuf.metallic, metallic, weight);
+    gbuf.alpha_acc        *= (1.0 - a);
+  }
+
+  // Median-depth cutoff: stop accumulating once transmittance falls below 0.5.
+  return acceptHit && (gbuf.alpha_acc >= 0.5);
 }
 
 #endif
