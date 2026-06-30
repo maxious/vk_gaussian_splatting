@@ -583,10 +583,18 @@ bool SplatLoaderAsync::innerLoad(std::filesystem::path filename, SplatSet& outpu
     for(size_t i = 0; i < n_gaussians; ++i)
     {
       const uint8_t* p = data.data() + i * 32;
-      // position (3xf32 little-endian)
+      // position (3xf32 little-endian) - .splat uses RDF (Right-Down-Forward)
+      // viewer expects RUB (Right-Up-Back), so negate Y and Z
       std::memcpy(&output.positions[i * 3], p, 12);
-      // scale (3xf32 little-endian)
-      std::memcpy(&output.scale[i * 3], p + 12, 12);
+      output.positions[i * 3 + 1] = -output.positions[i * 3 + 1];
+      output.positions[i * 3 + 2] = -output.positions[i * 3 + 2];
+      // scale (3xf32 little-endian) - .splat stores linear scales (exp(log_scale))
+      // but SplatSet expects log-space scales (renderer applies exp() in all pipelines)
+      float rawScale[3];
+      std::memcpy(rawScale, p + 12, 12);
+      output.scale[i * 3 + 0] = std::log(std::max(rawScale[0], 1e-7f));
+      output.scale[i * 3 + 1] = std::log(std::max(rawScale[1], 1e-7f));
+      output.scale[i * 3 + 2] = std::log(std::max(rawScale[2], 1e-7f));
       // color (4 xu8: r,g,b,a) → f_dc SH DC coefficients
       const float r = p[24] / 255.0f;
       const float g = p[25] / 255.0f;
@@ -595,8 +603,11 @@ bool SplatLoaderAsync::innerLoad(std::filesystem::path filename, SplatSet& outpu
       output.f_dc[i * 3 + 0] = (r - 0.5f) / SH_C0;
       output.f_dc[i * 3 + 1] = (g - 0.5f) / SH_C0;
       output.f_dc[i * 3 + 2] = (b - 0.5f) / SH_C0;
-      // opacity = alpha
-      output.opacity[i] = a;
+      // opacity - .splat stores sigmoid(alpha) ∈ [0,1]
+      // but SplatSet expects logit-space (renderer applies sigmoid in all pipelines)
+      // convert: logit(x) = log(x/(1-x))
+      float clampedA = std::max(std::min(a, 1.0f - 1e-6f), 1e-6f);
+      output.opacity[i] = std::log(clampedA / (1.0f - clampedA));
       // rotation (4 xu8, 128-centered, -1..1) quaternion w,x,y,z
       for(int c = 0; c < 4; c++)
       {

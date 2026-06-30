@@ -142,8 +142,9 @@
 // PBR G-buffer outputs (written by raygen for deferred PBR compositing)
 // These are separate from the DLSS-RR G-buffer slots (6-11) to avoid conflicts
 #define RTX_BINDING_GBUFFER_ALBEDO 13   // RGBA16F: basecolor RGB + unused
-#define RTX_BINDING_GBUFFER_NORMAL 14   // RGBA16F: world normal XYZ + unused  
+#define RTX_BINDING_GBUFFER_NORMAL 14   // RGBA16F: world normal XYZ + unused
 #define RTX_BINDING_GBUFFER_PBR 15      // RGBA16F: roughness, metallic, unused, unused
+#define RTX_BINDING_GBUFFER_IRRADIANCE 16  // RGBA16F: irradiance RGB + unused
 
 // Temporal sampling mode
 #define TEMPORAL_SAMPLING_AUTO 0  // Detects automatically if TS is needed for best visual results (e.g. if DoF is on)
@@ -188,6 +189,13 @@
 #define BINDING_PBR_ENVMAP 45         // HDR envmap (combined image sampler, cubemap)
 #define BINDING_PBR_PREFILTERED 46    // prefiltered envmap (combined image sampler, cubemap)
 #define BINDING_PBR_BRDF_LUT 47       // BRDF LUT (combined image sampler, 2D)
+
+// Separate SamplerState bindings for the PBR IBL textures.
+// evaluatePBR() takes a TextureCube/Texture2D + SamplerState pair, so we need
+// distinct sampler descriptors in addition to the combined image-samplers above.
+#define BINDING_PBR_ENVMAP_SAMPLER 48     // Sampler for the prefiltered envmap
+#define BINDING_PBR_BRDF_LUT_SAMPLER 49   // Sampler for the BRDF LUT
+#define BINDING_PBR_ENVMAP_ACCEL 50       // StructuredBuffer<EnvAccel> HdrIbl alias table for MIS
 
 // location for vertex attributes
 // (only for vertex shader mode)

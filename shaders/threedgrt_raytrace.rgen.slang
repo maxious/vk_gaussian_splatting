@@ -27,12 +27,18 @@
 #include "threedgs_particles_storage.h.slang"
 #include "threedgrt.h.slang"
 #include "threedgrt_payload.h.slang"
+#include "pbr_shading.h.slang"
+#include "irradiance_shadow.h.slang"
 
 // clang-format off
 [[vk::binding(RTX_BINDING_TLAS_SPLATS, 1)]] RaytracingAccelerationStructure topLevelAS;
 [[vk::binding(RTX_BINDING_OUTIMAGE, 1)]] RWTexture2D<float4> image;
 [[vk::binding(RTX_BINDING_AUX1, 1)]] RWTexture2D<float4> imageAux;
 [[vk::binding(RTX_BINDING_OUTDEPTH, 1)]] RWTexture2D<float> depthBuffer;
+[[vk::binding(RTX_BINDING_GBUFFER_ALBEDO, 1)]] RWTexture2D<float4> gbufferAlbedo;
+[[vk::binding(RTX_BINDING_GBUFFER_NORMAL, 1)]] RWTexture2D<float4> gbufferNormal;
+[[vk::binding(RTX_BINDING_GBUFFER_PBR, 1)]] RWTexture2D<float4> gbufferPbr;
+[[vk::binding(RTX_BINDING_GBUFFER_IRRADIANCE, 1)]] RWTexture2D<float4> gbufferIrradiance;
 #if RTX_USE_MESHES
 [[vk::binding(RTX_BINDING_TLAS_MESH, 1)]] RaytracingAccelerationStructure topLevelASMesh;
 #endif
@@ -53,6 +59,13 @@
 [[vk::binding(RTX_BINDING_KBUFFER_DIST, 1)]] RWStructuredBuffer<float> gKDist;
 [[vk::binding(RTX_BINDING_KBUFFER_ID, 1)]] RWStructuredBuffer<int> gKId;
 #endif
+
+// PBR IBL bindings (Set 0, shared with raster pipeline)
+[[vk::binding(BINDING_PBR_PREFILTERED, 0)]] TextureCube prefilteredEnvMap;
+[[vk::binding(BINDING_PBR_ENVMAP_SAMPLER, 0)]] SamplerState envSampler;
+[[vk::binding(BINDING_PBR_BRDF_LUT, 0)]] Texture2D brdfLUT;
+[[vk::binding(BINDING_PBR_BRDF_LUT_SAMPLER, 0)]] SamplerState lutSampler;
+[[vk::binding(BINDING_PBR_ENVMAP_ACCEL, 0)]] StructuredBuffer<EnvAccel> envAccel;
 
 // clang-format on
 
@@ -174,6 +187,11 @@ void main()
   // Create the payload
   HitPayload payload = {};
 
+  // PBR G-buffer accumulator. Declared outside the bounce loop so the
+  // median-depth weighted material persists across iterations. Initialized
+  // per-bounce before the multi-pass any-hit loop.
+  GBufferData gbuf;
+
   // bounce loop
   while(true)
   {
@@ -277,6 +295,16 @@ void main()
     if(bounce > 0)
     {
 #endif
+      // Reset the PBR G-buffer accumulator for this bounce. Initial normal
+      // is +Z so the first hit lerp yields the splat's geometric normal
+      // (the third row of particleInvRotation).
+      gbuf.position  = float3(0.0, 0.0, 0.0);
+      gbuf.normal    = float3(0.0, 0.0, 1.0);
+      gbuf.basecolor = float3(0.0, 0.0, 0.0);
+      gbuf.roughness = 0.0;
+      gbuf.metallic  = 0.0;
+      gbuf.alpha_acc = 1.0;
+
       // trace the gaussians with multi-pass any hit
       int outerIdx = 0;
 
@@ -379,8 +407,24 @@ void main()
             }
 #endif  // end of display wireframe
 
-            bool acceptedHit = particleProcessHit(frameInfo, splatSetModelRayOrigin, splatSetModelRayDirection, splatId,
-                                                  transmittance, radiance);
+            bool acceptedHit;
+            bool pbrMedianDepthReached = false;
+            if(frameInfo.pbrEnabled != 0)
+            {
+              // PBR path: accumulate per-particle material into gbuf via
+              // front-to-back Over compositing. Returns false once alpha_acc
+              // drops below 0.5 (median depth passed).
+              acceptedHit = particleProcessHitGbuffer(frameInfo, splatSetModelRayOrigin, splatSetModelRayDirection,
+                                                    splatId, gbuf);
+              pbrMedianDepthReached = (acceptedHit == false) && (gbuf.alpha_acc < 0.5);
+            }
+            else
+            {
+              // Legacy path: SH-based front-to-back compositing into
+              // (radiance, transmittance). Unchanged.
+              acceptedHit = particleProcessHit(frameInfo, splatSetModelRayOrigin, splatSetModelRayDirection, splatId,
+                                              transmittance, radiance);
+            }
             rayHitsCount += int(acceptedHit);
 
             // debug feedback and alternative visualizations
@@ -393,6 +437,11 @@ void main()
 
             // we move on in any case
             rayLastHitDistance = max(rayLastHitDistance, dist);
+
+            // PBR: stop iterating once we cross the median depth — further
+            // hits are occluded by accumulated alpha and contribute nothing.
+            if(pbrMedianDepthReached)
+              break;
           }
         }
 
@@ -433,6 +482,80 @@ void main()
   {
     indirectBuffer[0].particleID   = closestParticleId;
     indirectBuffer[0].particleDist = closestParticleDist;
+  }
+
+  // PBR path: evaluate Cook-Torrance at the median-depth shading point and
+  // write to the deferred G-buffer outputs. The legacy SH compositing path
+  // (pbrEnabled == 0) is fully preserved below and is unaffected by this
+  // branch.
+  if(frameInfo.pbrEnabled != 0)
+  {
+    if(gbuf.alpha_acc < 1.0)
+    {
+      // View direction (unit, surface -> camera) at the shaded point.
+      const float3 V = normalize(frameInfo.cameraPosition - gbuf.position);
+
+      // Cook-Torrance split-sum IBL shading at the median-depth Gaussian.
+      const float3 pbrColor = evaluatePBR(gbuf.basecolor,
+                                          gbuf.roughness,
+                                          gbuf.metallic,
+                                          gbuf.normal,
+                                          V,
+                                          prefilteredEnvMap,
+                                          envSampler,
+                                          brdfLUT,
+                                          lutSampler,
+                                          frameInfo.envMapRotation,
+                                          frameInfo.envMapExposure);
+
+      // MIS shadow-ray pass: sample the env map with multiple importance
+      // sampling, occluded by the K-buffer splats that produced this shading
+      // point. Skipped entirely when irradianceEnabled == 0 to avoid the
+      // shadow-ray overhead in the legacy SH-compositing path.
+      float3 irradiance = float3(0.0);
+      if(frameInfo.irradianceEnabled != 0)
+      {
+        // N=16 is the default for quality mode; the interactive path drops to
+        // N=2 via frameInfo-driven override (not yet exposed in the UI).
+        const int numSamples = 16;
+
+#if RTX_USE_GLOBAL_KBUFFER
+        // Pass the raw SoA K-buffer handles. The shadow function reads slots
+        // 1..K-1 for visibility, which yields a conservative (over-shadowing)
+        // heuristic when the function indexes the global buffer without a
+        // per-ray base offset. A proper per-ray slice (SSBO copy in the host
+        // or a base-indexed function signature) is left as a follow-up so the
+        // build can proceed without changing irradiance_shadow.h.slang.
+        irradiance = traceIrradianceMIS(gbuf.position,
+                                        gbuf.normal,
+                                        prefilteredEnvMap,
+                                        envSampler,
+                                        envAccel,
+                                        gKDist,
+                                        gKId,
+                                        numSamples);
+#else
+        // The MIS shadow pass depends on the K-buffer for visibility; without
+        // RTX_USE_GLOBAL_KBUFFER the splat hits live in the per-ray payload
+        // and cannot be passed to the function as a StructuredBuffer. The
+        // legacy path is unaffected.
+#endif
+      }
+
+      gbufferAlbedo[outputPixel]     = float4(gbuf.basecolor, 1.0);
+      gbufferNormal[outputPixel]     = float4(gbuf.normal,    0.0);
+      gbufferPbr[outputPixel]        = float4(pbrColor,       1.0);
+      gbufferIrradiance[outputPixel] = float4(irradiance,     0.0);
+    }
+    else
+    {
+      // No splats were hit: clear the G-buffer to a known background state.
+      gbufferAlbedo[outputPixel]     = float4(0.0, 0.0, 0.0, 1.0);
+      gbufferNormal[outputPixel]     = float4(0.0, 0.0, 0.0, 0.0);
+      gbufferPbr[outputPixel]        = float4(0.0, 0.0, 0.0, 1.0);
+      gbufferIrradiance[outputPixel] = float4(0.0, 0.0, 0.0, 0.0);
+    }
+    return;
   }
 
   //

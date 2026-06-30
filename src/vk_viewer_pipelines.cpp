@@ -86,6 +86,15 @@ void VkViewer::initPipelines()
   bindings.addBinding(BINDING_PBR_PREFILTERED, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT);
   bindings.addBinding(BINDING_PBR_BRDF_LUT, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT);
 
+  // Separate SamplerState bindings for PBR IBL. evaluatePBR() takes a
+  // (Texture, SamplerState) pair, so the raygen shader needs explicit
+  // samplers in addition to the combined image-samplers above. Stages cover
+  // raster (FRAGMENT_BIT) and raytracing (RAYGEN_BIT_KHR).
+  bindings.addBinding(BINDING_PBR_ENVMAP_SAMPLER, VK_DESCRIPTOR_TYPE_SAMPLER, 1,
+                      VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_RAYGEN_BIT_KHR);
+  bindings.addBinding(BINDING_PBR_BRDF_LUT_SAMPLER, VK_DESCRIPTOR_TYPE_SAMPLER, 1,
+                      VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_RAYGEN_BIT_KHR);
+
   //
   const VkPushConstantRange pcRanges = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT
                                             | VK_SHADER_STAGE_MESH_BIT_EXT | VK_SHADER_STAGE_COMPUTE_BIT,
@@ -267,6 +276,13 @@ void VkViewer::initPipelines()
   writeContainer.append(bindings.getWriteSet(BINDING_PBR_ENVMAP, m_descriptorSet), &dummyInfo);
   writeContainer.append(bindings.getWriteSet(BINDING_PBR_PREFILTERED, m_descriptorSet), &dummyInfo);
   writeContainer.append(bindings.getWriteSet(BINDING_PBR_BRDF_LUT, m_descriptorSet), &dummyInfo);
+
+  // Separate SamplerState writes for PBR IBL. Reuse the same clamp+linear
+  // sampler used for the combined image-samplers above.
+  writeContainer.append(bindings.getWriteSet(BINDING_PBR_ENVMAP_SAMPLER, m_descriptorSet),
+                        VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED, m_sampler);
+  writeContainer.append(bindings.getWriteSet(BINDING_PBR_BRDF_LUT_SAMPLER, m_descriptorSet),
+                        VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED, m_sampler);
 
   // write
   vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writeContainer.size()), writeContainer.data(), 0, nullptr);

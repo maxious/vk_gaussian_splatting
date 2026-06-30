@@ -119,8 +119,12 @@ void sampleEnvMap(TextureCube envMap,
  * (out of scope for the initial implementation; the heuristic is intentionally
  * conservative so the diffuse term reads slightly darker in heavily-occluded
  * regions, matching what ray tracing the full scene would produce).
+ *
+ * Takes RWStructuredBuffer so the function can be called from the raygen
+ * (which holds the global SoA K-buffer as RW for the per-frame init writes)
+ * without a separate read-only descriptor. The function itself only reads.
  *-----------------------------------------------------------------------------------------------*/
-bool shadowedByKBuffer(StructuredBuffer<float> kBufferDist, StructuredBuffer<int> kBufferId)
+bool shadowedByKBuffer(RWStructuredBuffer<float> kBufferDist, RWStructuredBuffer<int> kBufferId)
 {
     [[unroll]]
     for(int k = 1; k < IRRADIANCE_KBUFFER_SIZE; ++k)
@@ -156,8 +160,12 @@ bool shadowedByKBuffer(StructuredBuffer<float> kBufferDist, StructuredBuffer<int
  *   envAccel          : alias-method table from HdrIbl (see hdr_io.h.slang).
  *                       Reserved for the equirect variant; uniform sphere
  *                       sampling is used for the cubemap path.
- *   kBufferDist       : K-buffer slot distances (slot 0 = closest hit)
- *   kBufferId         : K-buffer slot splat IDs (-1 = empty)
+ *   kBufferDist       : K-buffer slot distances (slot 0 = closest hit).
+ *                       Declared as RWStructuredBuffer so the function can be
+ *                       called from the raygen (which holds the global SoA
+ *                       K-buffer as RW for the per-frame init writes); the
+ *                       function itself only reads.
+ *   kBufferId         : K-buffer slot splat IDs (-1 = empty). See kBufferDist.
  *   numSamples        : sample count. N=2 is fast/noisy, N=64 is smooth.
  *
  * Returns:
@@ -168,8 +176,8 @@ float3 traceIrradianceMIS(float3 shadingPoint,
                           TextureCube envMap,
                           SamplerState envSampler,
                           StructuredBuffer<EnvAccel> envAccel,
-                          StructuredBuffer<float> kBufferDist,
-                          StructuredBuffer<int> kBufferId,
+                          RWStructuredBuffer<float> kBufferDist,
+                          RWStructuredBuffer<int> kBufferId,
                           int numSamples)
 {
     // Deterministic per-pixel seed from the shading point's position. The host

@@ -17,7 +17,11 @@
 
 // --- Constants ---
 // Match the value used in nvpro_core2 nvshaders/functions.h.slang
-static const float M_PI = 3.14159265358979323846f;
+// Use preprocessor define so the #ifndef guard works when this header is
+// included alongside nvpro_core2's constants.h.slang (which also defines M_PI).
+#ifndef M_PI
+#define M_PI 3.14159265358979323846f
+#endif
 
 // Default mip count for a 256x256x6 cubemap: floor(log2(256)) = 8 levels (0..7).
 // Pre-filtered mip chain typically goes one level higher, so MAX_MIP_LEVEL = 9.0F covers
