@@ -676,6 +676,15 @@ void VkViewer::deinitPipelines()
   m_alloc.destroyBuffer(m_rtSBTBuffer);
   m_rtShaderGroups.clear();
 
+  // PBR G-buffer image cleanup
+  if(m_rtGbuffer.albedoView != VK_NULL_HANDLE) { vkDestroyImageView(m_device, m_rtGbuffer.albedoView, nullptr); m_rtGbuffer.albedoView = VK_NULL_HANDLE; }
+  if(m_rtGbuffer.normalView != VK_NULL_HANDLE) { vkDestroyImageView(m_device, m_rtGbuffer.normalView, nullptr); m_rtGbuffer.normalView = VK_NULL_HANDLE; }
+  if(m_rtGbuffer.pbrView != VK_NULL_HANDLE)    { vkDestroyImageView(m_device, m_rtGbuffer.pbrView, nullptr);    m_rtGbuffer.pbrView = VK_NULL_HANDLE; }
+  if(m_rtGbuffer.albedo.image != VK_NULL_HANDLE) { m_alloc.destroyImage(m_rtGbuffer.albedo); m_rtGbuffer.albedo = {}; }
+  if(m_rtGbuffer.normal.image != VK_NULL_HANDLE) { m_alloc.destroyImage(m_rtGbuffer.normal); m_rtGbuffer.normal = {}; }
+  if(m_rtGbuffer.pbr.image != VK_NULL_HANDLE)    { m_alloc.destroyImage(m_rtGbuffer.pbr);    m_rtGbuffer.pbr = {}; }
+  m_rtGbuffer.size = {0, 0};
+
   // Post process
   TEST_DESTROY_AND_RESET(m_computePipelinePostProcess, vkDestroyPipeline(m_device, m_computePipelinePostProcess, nullptr));
 

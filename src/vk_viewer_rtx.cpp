@@ -66,6 +66,11 @@ void VkViewer::initRtDescriptorSet()
   m_rtDescriptorBindings.addBinding(RTX_BINDING_DLSS_MOTION, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_RAYGEN_BIT_KHR);
 #endif
 
+  // PBR G-buffer output images (Set 1, slots 13-15) - separate from DLSS-RR slots 6-11
+  m_rtDescriptorBindings.addBinding(RTX_BINDING_GBUFFER_ALBEDO, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_RAYGEN_BIT_KHR);
+  m_rtDescriptorBindings.addBinding(RTX_BINDING_GBUFFER_NORMAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_RAYGEN_BIT_KHR);
+  m_rtDescriptorBindings.addBinding(RTX_BINDING_GBUFFER_PBR, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_RAYGEN_BIT_KHR);
+
   NVVK_CHECK(m_rtDescriptorBindings.createDescriptorSetLayout(m_device, 0, &m_rtDescriptorSetLayout));
   NVVK_DBG_NAME(m_rtDescriptorSetLayout);
 
@@ -89,6 +94,74 @@ void VkViewer::initRtDescriptorSet()
   };
   NVVK_CHECK(vkAllocateDescriptorSets(m_device, &allocInfo, &m_rtDescriptorSet));
   NVVK_DBG_NAME(m_rtDescriptorSet);
+
+  //////////////////////
+  // G-buffer image creation
+
+  // Destroy any previous G-buffer allocations (from prior scene loads)
+  if(m_rtGbuffer.albedoView != VK_NULL_HANDLE) { vkDestroyImageView(m_device, m_rtGbuffer.albedoView, nullptr); m_rtGbuffer.albedoView = VK_NULL_HANDLE; }
+  if(m_rtGbuffer.normalView != VK_NULL_HANDLE) { vkDestroyImageView(m_device, m_rtGbuffer.normalView, nullptr); m_rtGbuffer.normalView = VK_NULL_HANDLE; }
+  if(m_rtGbuffer.pbrView != VK_NULL_HANDLE)    { vkDestroyImageView(m_device, m_rtGbuffer.pbrView, nullptr);    m_rtGbuffer.pbrView = VK_NULL_HANDLE; }
+  if(m_rtGbuffer.albedo.image != VK_NULL_HANDLE) { m_alloc.destroyImage(m_rtGbuffer.albedo); m_rtGbuffer.albedo = {}; }
+  if(m_rtGbuffer.normal.image != VK_NULL_HANDLE) { m_alloc.destroyImage(m_rtGbuffer.normal); m_rtGbuffer.normal = {}; }
+  if(m_rtGbuffer.pbr.image != VK_NULL_HANDLE)    { m_alloc.destroyImage(m_rtGbuffer.pbr);    m_rtGbuffer.pbr = {}; }
+
+  const uint32_t gbufferWidth  = static_cast<uint32_t>(m_viewSize.x);
+  const uint32_t gbufferHeight = static_cast<uint32_t>(m_viewSize.y);
+
+  {
+    VkImageCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    info.imageType     = VK_IMAGE_TYPE_2D;
+    info.format        = VK_FORMAT_R16G16B16A16_SFLOAT;
+    info.extent        = {gbufferWidth, gbufferHeight, 1};
+    info.mipLevels     = 1;
+    info.arrayLayers   = 1;
+    info.samples       = VK_SAMPLE_COUNT_1_BIT;
+    info.tiling        = VK_IMAGE_TILING_OPTIMAL;
+    info.usage         = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    info.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
+    info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    NVVK_CHECK(m_alloc.createImage(m_rtGbuffer.albedo, info));
+    NVVK_DBG_NAME(m_rtGbuffer.albedo.image);
+    NVVK_CHECK(m_alloc.createImage(m_rtGbuffer.normal, info));
+    NVVK_DBG_NAME(m_rtGbuffer.normal.image);
+    NVVK_CHECK(m_alloc.createImage(m_rtGbuffer.pbr, info));
+    NVVK_DBG_NAME(m_rtGbuffer.pbr.image);
+  }
+
+  {
+    VkImageViewCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    info.viewType         = VK_IMAGE_VIEW_TYPE_2D;
+    info.format           = VK_FORMAT_R16G16B16A16_SFLOAT;
+    info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+
+    info.image = m_rtGbuffer.albedo.image;
+    NVVK_CHECK(vkCreateImageView(m_device, &info, nullptr, &m_rtGbuffer.albedoView));
+    NVVK_DBG_NAME(m_rtGbuffer.albedoView);
+
+    info.image = m_rtGbuffer.normal.image;
+    NVVK_CHECK(vkCreateImageView(m_device, &info, nullptr, &m_rtGbuffer.normalView));
+    NVVK_DBG_NAME(m_rtGbuffer.normalView);
+
+    info.image = m_rtGbuffer.pbr.image;
+    NVVK_CHECK(vkCreateImageView(m_device, &info, nullptr, &m_rtGbuffer.pbrView));
+    NVVK_DBG_NAME(m_rtGbuffer.pbrView);
+  }
+
+  m_rtGbuffer.size = {gbufferWidth, gbufferHeight};
+
+  // Transition G-buffer images to GENERAL layout for shader writes
+  {
+    VkCommandBuffer cmd = m_app->createTempCmdBuffer();
+    nvvk::cmdImageMemoryBarrier(cmd, {m_rtGbuffer.albedo.image, VK_IMAGE_LAYOUT_UNDEFINED,
+                                       VK_IMAGE_LAYOUT_GENERAL, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}});
+    nvvk::cmdImageMemoryBarrier(cmd, {m_rtGbuffer.normal.image, VK_IMAGE_LAYOUT_UNDEFINED,
+                                       VK_IMAGE_LAYOUT_GENERAL, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}});
+    nvvk::cmdImageMemoryBarrier(cmd, {m_rtGbuffer.pbr.image, VK_IMAGE_LAYOUT_UNDEFINED,
+                                       VK_IMAGE_LAYOUT_GENERAL, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}});
+    m_app->submitAndWaitTempCmdBuffer(cmd);
+  }
 
   //////////////////////
   // Writes
@@ -145,6 +218,14 @@ void VkViewer::initRtDescriptorSet()
                         m_gBuffers.getColorImageView(COLOR_MOTION), VK_IMAGE_LAYOUT_GENERAL);
 #endif
 
+  // PBR G-buffer output images (Set 1, slots 13-15)
+  writeContainer.append(m_rtDescriptorBindings.getWriteSet(RTX_BINDING_GBUFFER_ALBEDO, m_rtDescriptorSet),
+                        m_rtGbuffer.albedoView, VK_IMAGE_LAYOUT_GENERAL);
+  writeContainer.append(m_rtDescriptorBindings.getWriteSet(RTX_BINDING_GBUFFER_NORMAL, m_rtDescriptorSet),
+                        m_rtGbuffer.normalView, VK_IMAGE_LAYOUT_GENERAL);
+  writeContainer.append(m_rtDescriptorBindings.getWriteSet(RTX_BINDING_GBUFFER_PBR, m_rtDescriptorSet),
+                        m_rtGbuffer.pbrView, VK_IMAGE_LAYOUT_GENERAL);
+
   // actually write
   if (writeContainer.size() > 0) {
 
@@ -163,6 +244,67 @@ void VkViewer::updateRtDescriptorSet()
   // update only if the descriptor set is already initialized
   if(m_rtDescriptorSet != VK_NULL_HANDLE)
   {
+    // Recreate G-buffer images if resolution changed
+    const uint32_t curWidth  = static_cast<uint32_t>(m_viewSize.x);
+    const uint32_t curHeight = static_cast<uint32_t>(m_viewSize.y);
+    if(m_rtGbuffer.size.width != curWidth || m_rtGbuffer.size.height != curHeight)
+    {
+      vkDeviceWaitIdle(m_device);
+
+      if(m_rtGbuffer.albedoView != VK_NULL_HANDLE) { vkDestroyImageView(m_device, m_rtGbuffer.albedoView, nullptr); m_rtGbuffer.albedoView = VK_NULL_HANDLE; }
+      if(m_rtGbuffer.normalView != VK_NULL_HANDLE) { vkDestroyImageView(m_device, m_rtGbuffer.normalView, nullptr); m_rtGbuffer.normalView = VK_NULL_HANDLE; }
+      if(m_rtGbuffer.pbrView != VK_NULL_HANDLE)    { vkDestroyImageView(m_device, m_rtGbuffer.pbrView, nullptr);    m_rtGbuffer.pbrView = VK_NULL_HANDLE; }
+      if(m_rtGbuffer.albedo.image != VK_NULL_HANDLE) { m_alloc.destroyImage(m_rtGbuffer.albedo); m_rtGbuffer.albedo = {}; }
+      if(m_rtGbuffer.normal.image != VK_NULL_HANDLE) { m_alloc.destroyImage(m_rtGbuffer.normal); m_rtGbuffer.normal = {}; }
+      if(m_rtGbuffer.pbr.image != VK_NULL_HANDLE)    { m_alloc.destroyImage(m_rtGbuffer.pbr);    m_rtGbuffer.pbr = {}; }
+
+      VkImageCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+      info.imageType     = VK_IMAGE_TYPE_2D;
+      info.format        = VK_FORMAT_R16G16B16A16_SFLOAT;
+      info.extent        = {curWidth, curHeight, 1};
+      info.mipLevels     = 1;
+      info.arrayLayers   = 1;
+      info.samples       = VK_SAMPLE_COUNT_1_BIT;
+      info.tiling        = VK_IMAGE_TILING_OPTIMAL;
+      info.usage         = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+      info.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
+      info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+      NVVK_CHECK(m_alloc.createImage(m_rtGbuffer.albedo, info));
+      NVVK_DBG_NAME(m_rtGbuffer.albedo.image);
+      NVVK_CHECK(m_alloc.createImage(m_rtGbuffer.normal, info));
+      NVVK_DBG_NAME(m_rtGbuffer.normal.image);
+      NVVK_CHECK(m_alloc.createImage(m_rtGbuffer.pbr, info));
+      NVVK_DBG_NAME(m_rtGbuffer.pbr.image);
+
+      VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+      viewInfo.viewType         = VK_IMAGE_VIEW_TYPE_2D;
+      viewInfo.format           = VK_FORMAT_R16G16B16A16_SFLOAT;
+      viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+
+      viewInfo.image = m_rtGbuffer.albedo.image;
+      NVVK_CHECK(vkCreateImageView(m_device, &viewInfo, nullptr, &m_rtGbuffer.albedoView));
+      NVVK_DBG_NAME(m_rtGbuffer.albedoView);
+
+      viewInfo.image = m_rtGbuffer.normal.image;
+      NVVK_CHECK(vkCreateImageView(m_device, &viewInfo, nullptr, &m_rtGbuffer.normalView));
+      NVVK_DBG_NAME(m_rtGbuffer.normalView);
+
+      viewInfo.image = m_rtGbuffer.pbr.image;
+      NVVK_CHECK(vkCreateImageView(m_device, &viewInfo, nullptr, &m_rtGbuffer.pbrView));
+      NVVK_DBG_NAME(m_rtGbuffer.pbrView);
+
+      m_rtGbuffer.size = {curWidth, curHeight};
+
+      VkCommandBuffer cmd = m_app->createTempCmdBuffer();
+      nvvk::cmdImageMemoryBarrier(cmd, {m_rtGbuffer.albedo.image, VK_IMAGE_LAYOUT_UNDEFINED,
+                                         VK_IMAGE_LAYOUT_GENERAL, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}});
+      nvvk::cmdImageMemoryBarrier(cmd, {m_rtGbuffer.normal.image, VK_IMAGE_LAYOUT_UNDEFINED,
+                                         VK_IMAGE_LAYOUT_GENERAL, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}});
+      nvvk::cmdImageMemoryBarrier(cmd, {m_rtGbuffer.pbr.image, VK_IMAGE_LAYOUT_UNDEFINED,
+                                         VK_IMAGE_LAYOUT_GENERAL, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}});
+      m_app->submitAndWaitTempCmdBuffer(cmd);
+    }
     nvvk::WriteSetContainer writeContainer;
 
   // Output image buffer
@@ -194,6 +336,14 @@ void VkViewer::updateRtDescriptorSet()
     writeContainer.append(m_rtDescriptorBindings.getWriteSet(RTX_BINDING_DLSS_MOTION, m_rtDescriptorSet),
                           m_gBuffers.getColorImageView(COLOR_MOTION), VK_IMAGE_LAYOUT_GENERAL);
 #endif
+
+    // PBR G-buffer output images (Set 1, slots 13-15)
+    writeContainer.append(m_rtDescriptorBindings.getWriteSet(RTX_BINDING_GBUFFER_ALBEDO, m_rtDescriptorSet),
+                          m_rtGbuffer.albedoView, VK_IMAGE_LAYOUT_GENERAL);
+    writeContainer.append(m_rtDescriptorBindings.getWriteSet(RTX_BINDING_GBUFFER_NORMAL, m_rtDescriptorSet),
+                          m_rtGbuffer.normalView, VK_IMAGE_LAYOUT_GENERAL);
+    writeContainer.append(m_rtDescriptorBindings.getWriteSet(RTX_BINDING_GBUFFER_PBR, m_rtDescriptorSet),
+                          m_rtGbuffer.pbrView, VK_IMAGE_LAYOUT_GENERAL);
 
     // GRTX optimization: K-buffer bindings (resized with viewport)
     if(prmRtx.useGlobalKBuffer && m_kBufferDist.buffer != VK_NULL_HANDLE)

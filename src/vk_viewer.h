@@ -754,6 +754,19 @@ protected:
   nvvk::Buffer m_kBufferId;    // int[PAYLOAD_ARRAY_SIZE * width * height]
   glm::uvec2   m_kBufferSize{0, 0};  // Current K-buffer dimensions
 
+  // PBR G-buffer images (RGBA16F render targets written by raygen)
+  // Created and bound in RTX descriptor Set 1, slots 13-15
+  struct GbufferImages
+  {
+    nvvk::Image albedo;    // basecolor RGB + unused A
+    nvvk::Image normal;    // world normal XYZ + unused A
+    nvvk::Image pbr;       // roughness R, metallic G, unused B, unused A
+    VkImageView albedoView  = VK_NULL_HANDLE;
+    VkImageView normalView  = VK_NULL_HANDLE;
+    VkImageView pbrView     = VK_NULL_HANDLE;
+    VkExtent2D  size        = {0, 0};
+  } m_rtGbuffer;
+
   nvvk::Buffer m_rtSBTBuffer;  // common to GS and Mesh
   // The 4 SBT regions (raygen, miss, chit, call in this order)
   nvvk::SBTGenerator::Regions m_sbtRegions{};  // common to GS and Mesh

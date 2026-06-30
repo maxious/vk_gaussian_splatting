@@ -139,6 +139,12 @@
 #define RTX_BINDING_DLSS_LINEAR_DEPTH 10    // R linear depth
 #define RTX_BINDING_DLSS_SPEC_HIT_DIST 11   // R specular hit distance
 
+// PBR G-buffer outputs (written by raygen for deferred PBR compositing)
+// These are separate from the DLSS-RR G-buffer slots (6-11) to avoid conflicts
+#define RTX_BINDING_GBUFFER_ALBEDO 13   // RGBA16F: basecolor RGB + unused
+#define RTX_BINDING_GBUFFER_NORMAL 14   // RGBA16F: world normal XYZ + unused  
+#define RTX_BINDING_GBUFFER_PBR 15      // RGBA16F: roughness, metallic, unused, unused
+
 // Temporal sampling mode
 #define TEMPORAL_SAMPLING_AUTO 0  // Detects automatically if TS is needed for best visual results (e.g. if DoF is on)
 #define TEMPORAL_SAMPLING_ENABLED 1   // Force enabled
