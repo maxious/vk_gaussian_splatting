@@ -54,6 +54,9 @@ struct PropertyLayout
   size_t motionOffset[3] = {static_cast<size_t>(-1), static_cast<size_t>(-1), static_cast<size_t>(-1)};
   size_t timeOffset      = static_cast<size_t>(-1);
   size_t timeScaleOffset = static_cast<size_t>(-1);
+  size_t basecolorOffset[3] = {static_cast<size_t>(-1), static_cast<size_t>(-1), static_cast<size_t>(-1)};
+  size_t roughnessOffset = static_cast<size_t>(-1);
+  size_t metallicOffset  = static_cast<size_t>(-1);
 
   PropertyLayout()
   {
@@ -166,6 +169,14 @@ static bool parseHeader(const char* data, size_t size, size_t& headerSize, Prope
       }
       else if(name == "t") layout.timeOffset = layout.vertexStride;
       else if(name == "t_scale") layout.timeScaleOffset = layout.vertexStride;
+      else if(name.starts_with("basecolor_"))
+      {
+        int idx = 0;
+        std::from_chars(name.data() + 10, name.data() + name.size(), idx);
+        if(idx >= 0 && idx < 3) layout.basecolorOffset[idx] = layout.vertexStride;
+      }
+      else if(name == "roughness") layout.roughnessOffset = layout.vertexStride;
+      else if(name == "metallic") layout.metallicOffset = layout.vertexStride;
       layout.vertexStride += 4;
     }
     
@@ -212,8 +223,16 @@ bool SplatLoaderFast::load(const std::filesystem::path& filename, SplatSet& outp
   
   int totalExtractions = 3 + 1 + 3 + 3 + 4 + layout.restCount;
   if(layout.timeOffset != static_cast<size_t>(-1)) totalExtractions += 5;
-  LOGI("PLY: %d extractions, %d SH coeffs%s\n", totalExtractions, layout.restCount,
-       layout.timeOffset != static_cast<size_t>(-1) ? ", temporal data" : "");
+  bool hasMaterialData = (layout.basecolorOffset[0] != static_cast<size_t>(-1)) ||
+                         (layout.roughnessOffset != static_cast<size_t>(-1)) ||
+                         (layout.metallicOffset != static_cast<size_t>(-1));
+  if(hasMaterialData)
+  {
+    totalExtractions += 5;
+  }
+  LOGI("PLY: %d extractions, %d SH coeffs%s%s\n", totalExtractions, layout.restCount,
+       layout.timeOffset != static_cast<size_t>(-1) ? ", temporal data" : "",
+       hasMaterialData ? ", material data" : "");
   
   if(actualDataSize < expectedDataSize)
   {
@@ -329,6 +348,60 @@ bool SplatLoaderFast::load(const std::filesystem::path& filename, SplatSet& outp
     for(size_t i = 0; i < count; ++i)
     {
       output.time_scale[i] = std::exp(output.time_scale[i]);
+    }
+  }
+
+  if(hasMaterialData)
+  {
+    output.has_material_data = true;
+
+    output.basecolor.resize(count * 3);
+    output.roughness.resize(count);
+    output.metallic.resize(count);
+
+    if(layout.basecolorOffset[0] != static_cast<size_t>(-1))
+    {
+      extract_float(layout.basecolorOffset[0], output.basecolor.data() + 0, 3);
+    }
+    else
+    {
+      // Default basecolor = SH DC color
+      for(size_t i = 0; i < count; i++)
+      {
+        output.basecolor[i * 3 + 0] = output.f_dc[i * 3 + 0];
+        output.basecolor[i * 3 + 1] = output.f_dc[i * 3 + 1];
+        output.basecolor[i * 3 + 2] = output.f_dc[i * 3 + 2];
+      }
+    }
+    reportProgress();
+
+    if(layout.basecolorOffset[1] != static_cast<size_t>(-1))
+      extract_float(layout.basecolorOffset[1], output.basecolor.data() + 1, 3);
+    reportProgress();
+
+    if(layout.basecolorOffset[2] != static_cast<size_t>(-1))
+      extract_float(layout.basecolorOffset[2], output.basecolor.data() + 2, 3);
+    reportProgress();
+
+    if(layout.roughnessOffset != static_cast<size_t>(-1))
+      extract_float(layout.roughnessOffset, output.roughness.data(), 1);
+    else
+      std::fill(output.roughness.begin(), output.roughness.end(), 0.5f);
+    reportProgress();
+
+    if(layout.metallicOffset != static_cast<size_t>(-1))
+      extract_float(layout.metallicOffset, output.metallic.data(), 1);
+    else
+      std::fill(output.metallic.begin(), output.metallic.end(), 0.0f);
+    reportProgress();
+
+    // Warning on partial data
+    bool partial = (layout.basecolorOffset[0] == static_cast<size_t>(-1)) ||
+                   (layout.roughnessOffset == static_cast<size_t>(-1)) ||
+                   (layout.metallicOffset == static_cast<size_t>(-1));
+    if(partial)
+    {
+      LOGW("PLY has partial material data - using defaults for missing properties\n");
     }
   }
 
