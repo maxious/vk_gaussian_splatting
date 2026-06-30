@@ -12,6 +12,7 @@ add_executable(unit_tests
     test_morton_order.cpp
     test_stochastic_rendering.cpp
     test_pbr_helpers.cpp
+    test_ply_material.cpp
 )
 
 # Add source files we need to test
