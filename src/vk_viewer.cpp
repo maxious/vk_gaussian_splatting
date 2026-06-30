@@ -97,6 +97,11 @@ void VkViewer::onAttach(nvapp::Application* app)
   NVVK_CHECK(m_samplerPool.acquireSampler(m_sampler));
   NVVK_DBG_NAME(m_sampler);
 
+  // TRON PBR: IBL pipeline. HdrEnvDome needs queueInfo for single-time command
+  // submission used by its prefilter / BRDF LUT compute pipelines.
+  m_hdrIbl.init(&m_alloc, &m_samplerPool);
+  m_hdrEnvDome.init(&m_alloc, &m_samplerPool, m_app->getQueue(0));
+
   // GBuffer
   m_depthFormat = nvvk::findDepthFormat(app->getPhysicalDevice());
 
@@ -240,6 +245,11 @@ void VkViewer::onDetach()
   m_meshSetVk.deinit();
   m_vdzMesh.cleanup();
 
+  // TRON PBR: HdrEnvDome owns cubemap images created via m_alloc; release it
+  // before HdrIbl releases the HDR image and alias-method buffer.
+  m_hdrEnvDome.deinit();
+  m_hdrIbl.deinit();
+
 #ifdef WITH_TCP_DEPTH
   if(m_tcpServerManager)
   {
@@ -262,6 +272,53 @@ void VkViewer::onDetach()
     m_backendManager->stop();
   }
    m_backendManager.reset();
+}
+
+bool VkViewer::loadEnvironment(const std::string& path)
+{
+  namespace fs = std::filesystem;
+  fs::path hdrPath = path;
+  if(!fs::exists(hdrPath))
+  {
+    LOGE("HDR environment file not found: %s\n", path.c_str());
+    return false;
+  }
+
+  std::array<std::string_view, 4> shaderFiles = {"hdr_prefilter_diffuse.slang", "hdr_prefilter_glossy.slang",
+                                                  "hdr_integrate_brdf.slang", "hdr_dome.slang"};
+  std::array<std::span<const uint32_t>, 4> spirvModules{};
+  for(size_t i = 0; i < shaderFiles.size(); ++i)
+  {
+    if(!m_slangCompiler.compileFile(std::string(shaderFiles[i])))
+    {
+      LOGE("Failed to compile %s: %s\n", shaderFiles[i].data(), m_slangCompiler.getLastDiagnosticMessage().c_str());
+      return false;
+    }
+    const uint32_t* code = m_slangCompiler.getSpirv();
+    size_t         size = m_slangCompiler.getSpirvSize();
+    if(code == nullptr || size == 0)
+    {
+      LOGE("Empty SPIR-V from %s\n", shaderFiles[i].data());
+      return false;
+    }
+    spirvModules[i] = std::span<const uint32_t>(code, size / sizeof(uint32_t));
+  }
+
+  if(m_hdrIbl.isValid())
+  {
+    m_hdrIbl.destroyEnvironment();
+  }
+
+  VkCommandBuffer cmd = m_app->createTempCmdBuffer();
+  m_hdrIbl.loadEnvironment(cmd, m_uploader, hdrPath);
+  m_app->submitAndWaitTempCmdBuffer(cmd);
+
+  m_hdrEnvDome.create(m_hdrIbl.getDescriptorSet(), m_hdrIbl.getDescriptorSetLayout(), spirvModules[0],
+                      spirvModules[1], spirvModules[2], spirvModules[3]);
+
+  LOGI("HDR environment loaded: %s (%.0fx%.0f)\n", path.c_str(),
+       static_cast<float>(m_hdrIbl.getHdrImageSize().width), static_cast<float>(m_hdrIbl.getHdrImageSize().height));
+  return true;
 }
 
 void VkViewer::enableDepthRendering(const std::string& host, int port, const std::string& videoPath)

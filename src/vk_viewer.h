@@ -79,6 +79,8 @@
 #include <nvvk/acceleration_structures.hpp>
 #include <nvvk/descriptors.hpp>
 #include <nvvk/sbt_generator.hpp>
+#include <nvvk/hdr_ibl.hpp>
+#include <nvshaders_host/hdr_env_dome.hpp>
 
 #include <nvvkglsl/glsl.hpp>
 #include <nvslang/slang.hpp>
@@ -677,6 +679,18 @@ protected:
   VkDescriptorPool      m_descriptorPool      = VK_NULL_HANDLE;  // Raster Descriptor pool
 
   nvvk::Buffer m_frameInfoBuffer;  // uniform buffer to store frame parameters defined by global variable prmFrame
+
+  // TRON PBR: HdrIbl loads the equirect HDR + builds importance sampling acceleration;
+  // HdrEnvDome consumes that descriptor set, runs the 4 compute shaders (BRDF LUT,
+  // prefilter diffuse, prefilter glossy, dome draw), and exposes the IBL descriptor
+  // set + textures for the PBR descriptor bindings.
+  nvvk::HdrIbl         m_hdrIbl;
+  nvshaders::HdrEnvDome m_hdrEnvDome;
+
+  // Deferred-load helper: compiles the 4 nvshaders_host SPIR-Vs via m_slangCompiler
+  // and wires them into HdrEnvDome. Returns false if the file is missing or shader
+  // compilation fails.
+  bool loadEnvironment(const std::string& path);
 
   // Rendering (sorting and splatting) related memory usage statistics
   struct RenderMemoryStats
