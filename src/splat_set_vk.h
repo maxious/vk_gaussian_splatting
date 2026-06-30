@@ -155,6 +155,10 @@ public:
   nvvk::Image motionMap;
   nvvk::Image timeMap;
 
+  nvvk::Image basecolorMap;
+  nvvk::Image roughnessMap;
+  nvvk::Image metallicMap;
+
   // Data buffers
 
   nvvk::Buffer centersBuffer;
@@ -166,6 +170,10 @@ public:
   
   nvvk::Buffer motionBuffer;
   nvvk::Buffer timeBuffer;
+
+  nvvk::Buffer basecolorBuffer;
+  nvvk::Buffer roughnessBuffer;
+  nvvk::Buffer metallicBuffer;
 
   // LCC packed buffer (for STORAGE_LCC_PACKED mode)
   nvvk::Buffer lccPackedBuffer;    // Raw 32-byte packed LCC splat data

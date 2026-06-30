@@ -340,6 +340,70 @@ void SplatSetVk::initDataBuffers(SplatSet& splatSet)
     buffersToDestroy.push_back(hostBufferTime);
   }
 
+  // TRON PBR material attributes
+  {
+    const bool    hasMaterial        = splatSet.has_material_data;
+    const uint32_t count             = hasMaterial ? splatCount : 1;
+    const uint32_t bufferSizeBasecolor = count * 3 * sizeof(float);
+    const uint32_t bufferSizeRoughness = count * 1 * sizeof(float);
+    const uint32_t bufferSizeMetallic  = count * 1 * sizeof(float);
+
+    nvvk::Buffer hostBufferBasecolor;
+    m_alloc->createBuffer(hostBufferBasecolor, bufferSizeBasecolor, hostBufferUsageFlags, hostMemoryUsageFlags, hostAllocCreateFlags);
+    NVVK_DBG_NAME(hostBufferBasecolor.buffer);
+
+    nvvk::Buffer hostBufferRoughness;
+    m_alloc->createBuffer(hostBufferRoughness, bufferSizeRoughness, hostBufferUsageFlags, hostMemoryUsageFlags, hostAllocCreateFlags);
+    NVVK_DBG_NAME(hostBufferRoughness.buffer);
+
+    nvvk::Buffer hostBufferMetallic;
+    m_alloc->createBuffer(hostBufferMetallic, bufferSizeMetallic, hostBufferUsageFlags, hostMemoryUsageFlags, hostAllocCreateFlags);
+    NVVK_DBG_NAME(hostBufferMetallic.buffer);
+
+    m_alloc->createBuffer(basecolorBuffer, bufferSizeBasecolor, deviceBufferUsageFlags, deviceMemoryUsageFlags);
+    NVVK_DBG_NAME(basecolorBuffer.buffer);
+
+    m_alloc->createBuffer(roughnessBuffer, bufferSizeRoughness, deviceBufferUsageFlags, deviceMemoryUsageFlags);
+    NVVK_DBG_NAME(roughnessBuffer.buffer);
+
+    m_alloc->createBuffer(metallicBuffer, bufferSizeMetallic, deviceBufferUsageFlags, deviceMemoryUsageFlags);
+    NVVK_DBG_NAME(metallicBuffer.buffer);
+
+    if(hasMaterial)
+    {
+      memcpy(hostBufferBasecolor.mapping, splatSet.basecolor.data(), bufferSizeBasecolor);
+      memcpy(hostBufferRoughness.mapping, splatSet.roughness.data(), bufferSizeRoughness);
+      memcpy(hostBufferMetallic.mapping, splatSet.metallic.data(), bufferSizeMetallic);
+    }
+    else
+    {
+      float* basecolorMapped = (float*)hostBufferBasecolor.mapping;
+      float* roughnessMapped = (float*)hostBufferRoughness.mapping;
+      float* metallicMapped  = (float*)hostBufferMetallic.mapping;
+      for(uint32_t i = 0; i < count; ++i)
+      {
+        basecolorMapped[i * 3 + 0] = 1.0f;
+        basecolorMapped[i * 3 + 1] = 1.0f;
+        basecolorMapped[i * 3 + 2] = 1.0f;
+        roughnessMapped[i]          = 0.5f;
+        metallicMapped[i]           = 0.0f;
+      }
+    }
+
+    VkBufferCopy bcBasecolor{.srcOffset = 0, .dstOffset = 0, .size = bufferSizeBasecolor};
+    vkCmdCopyBuffer(cmd, hostBufferBasecolor.buffer, basecolorBuffer.buffer, 1, &bcBasecolor);
+
+    VkBufferCopy bcRoughness{.srcOffset = 0, .dstOffset = 0, .size = bufferSizeRoughness};
+    vkCmdCopyBuffer(cmd, hostBufferRoughness.buffer, roughnessBuffer.buffer, 1, &bcRoughness);
+
+    VkBufferCopy bcMetallic{.srcOffset = 0, .dstOffset = 0, .size = bufferSizeMetallic};
+    vkCmdCopyBuffer(cmd, hostBufferMetallic.buffer, metallicBuffer.buffer, 1, &bcMetallic);
+
+    buffersToDestroy.push_back(hostBufferBasecolor);
+    buffersToDestroy.push_back(hostBufferRoughness);
+    buffersToDestroy.push_back(hostBufferMetallic);
+  }
+
   // covariances (for raster only)
   {
     const uint32_t bufferSize = splatCount * 2 * 3 * sizeof(float);
@@ -584,6 +648,10 @@ void SplatSetVk::deinitDataBuffers()
   
   m_alloc->destroyBuffer(motionBuffer);
   m_alloc->destroyBuffer(timeBuffer);
+
+  m_alloc->destroyBuffer(basecolorBuffer);
+  m_alloc->destroyBuffer(roughnessBuffer);
+  m_alloc->destroyBuffer(metallicBuffer);
 }
 
 ///////////////////
@@ -667,6 +735,51 @@ void SplatSetVk::initDataTextures(SplatSet& splatSet)
                 
     initTexture(timeMapSize.x, timeMapSize.y, (uint32_t)timeData.size() * sizeof(float), (void*)timeData.data(),
                 VK_FORMAT_R32G32_SFLOAT, *m_sampler, timeMap);
+  }
+
+  // TRON PBR material attributes
+  {
+    const bool hasMaterial = splatSet.has_material_data;
+
+    glm::ivec2 basecolorMapSize = hasMaterial ? computeDataTextureSize(3, 3, splatCount) : glm::ivec2(1, 1);
+    std::vector<float> basecolor(basecolorMapSize.x * basecolorMapSize.y * 4, 0.0f);
+
+    glm::ivec2 roughnessMapSize = hasMaterial ? computeDataTextureSize(1, 1, splatCount) : glm::ivec2(1, 1);
+    std::vector<float> roughness(roughnessMapSize.x * roughnessMapSize.y * 1, 0.0f);
+
+    glm::ivec2 metallicMapSize = hasMaterial ? computeDataTextureSize(1, 1, splatCount) : glm::ivec2(1, 1);
+    std::vector<float> metallicData(metallicMapSize.x * metallicMapSize.y * 1, 0.0f);
+
+    if(hasMaterial)
+    {
+      START_PAR_LOOP(splatCount, i)
+      {
+        basecolor[i * 4 + 0] = splatSet.basecolor[i * 3 + 0];
+        basecolor[i * 4 + 1] = splatSet.basecolor[i * 3 + 1];
+        basecolor[i * 4 + 2] = splatSet.basecolor[i * 3 + 2];
+
+        roughness[i]     = splatSet.roughness[i];
+        metallicData[i]  = splatSet.metallic[i];
+      }
+      END_PAR_LOOP()
+    }
+    else
+    {
+      basecolor[0] = 1.0f;
+      basecolor[1] = 1.0f;
+      basecolor[2] = 1.0f;
+      roughness[0] = 0.5f;
+      metallicData[0] = 0.0f;
+    }
+
+    initTexture(basecolorMapSize.x, basecolorMapSize.y, (uint32_t)basecolor.size() * sizeof(float), (void*)basecolor.data(),
+                VK_FORMAT_R32G32B32A32_SFLOAT, *m_sampler, basecolorMap);
+
+    initTexture(roughnessMapSize.x, roughnessMapSize.y, (uint32_t)roughness.size() * sizeof(float), (void*)roughness.data(),
+                VK_FORMAT_R32_SFLOAT, *m_sampler, roughnessMap);
+
+    initTexture(metallicMapSize.x, metallicMapSize.y, (uint32_t)metallicData.size() * sizeof(float), (void*)metallicData.data(),
+                VK_FORMAT_R32_SFLOAT, *m_sampler, metallicMap);
   }
 
   // covariances
@@ -861,6 +974,10 @@ void SplatSetVk::deinitDataTextures()
   
   deinitTexture(motionMap);
   deinitTexture(timeMap);
+
+  deinitTexture(basecolorMap);
+  deinitTexture(roughnessMap);
+  deinitTexture(metallicMap);
 }
 
 void SplatSetVk::initTexture(uint32_t width, uint32_t height, uint32_t bufsize, void* data, VkFormat format, const VkSampler& sampler, nvvk::Image& texture)
