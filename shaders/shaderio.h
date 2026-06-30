@@ -178,6 +178,11 @@
 #define BINDING_STOCHASTIC_DEPTH_BUFFER 43       // uint[] per-pixel depth for atomicMin
 #define BINDING_STOCHASTIC_INDEX_BUFFER 44       // uint[] per-pixel winning gaussian index
 
+// PBR IBL (Image-Based Lighting) bindings for environment map textures
+#define BINDING_PBR_ENVMAP 45         // HDR envmap (combined image sampler, cubemap)
+#define BINDING_PBR_PREFILTERED 46    // prefiltered envmap (combined image sampler, cubemap)
+#define BINDING_PBR_BRDF_LUT 47       // BRDF LUT (combined image sampler, 2D)
+
 // location for vertex attributes
 // (only for vertex shader mode)
 #define ATTRIBUTE_LOC_POSITION 0
@@ -354,6 +359,13 @@ struct FrameInfo
   int32_t stochasticWidth                  DEFAULT(0);       // SSAA-scaled width
   int32_t stochasticHeight                 DEFAULT(0);       // SSAA-scaled height
   int32_t stochasticReset                  DEFAULT(1);       // 1 = clear framebuffer, 0 = accumulate
+
+  // PBR / IBL parameters
+  float   envMapRotation     DEFAULT(0.0f);
+  float   envMapExposure     DEFAULT(1.0f);
+  int32_t pbrEnabled         DEFAULT(0);
+  int32_t irradianceEnabled  DEFAULT(0);
+  int32_t toneMapEnabled     DEFAULT(0);
 };
 
 // Push constant for raster

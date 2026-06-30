@@ -692,6 +692,9 @@ protected:
   // compilation fails.
   bool loadEnvironment(const std::string& path);
 
+  // Wire HdrEnvDome IBL textures into Set 0 descriptor set after envmap loaded.
+  void updateIblDescriptors();
+
   // Rendering (sorting and splatting) related memory usage statistics
   struct RenderMemoryStats
   {

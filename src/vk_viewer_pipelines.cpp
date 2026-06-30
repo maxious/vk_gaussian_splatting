@@ -81,6 +81,11 @@ void VkViewer::initPipelines()
   bindings.addBinding(BINDING_VISIBLE_CHUNKS_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT);
   bindings.addBinding(BINDING_VISIBLE_CHUNK_COUNT_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT);
 
+  // PBR IBL textures (environment map for image-based lighting)
+  bindings.addBinding(BINDING_PBR_ENVMAP, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT);
+  bindings.addBinding(BINDING_PBR_PREFILTERED, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT);
+  bindings.addBinding(BINDING_PBR_BRDF_LUT, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT);
+
   //
   const VkPushConstantRange pcRanges = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT
                                             | VK_SHADER_STAGE_MESH_BIT_EXT | VK_SHADER_STAGE_COMPUTE_BIT,
@@ -257,6 +262,11 @@ void VkViewer::initPipelines()
     writeContainer.append(bindings.getWriteSet(BINDING_VISIBLE_CHUNKS_BUFFER, m_descriptorSet), m_visibleChunksBuffer);
     writeContainer.append(bindings.getWriteSet(BINDING_VISIBLE_CHUNK_COUNT_BUFFER, m_descriptorSet), m_visibleChunkCountBuffer);
   }
+
+  // PBR IBL textures - initialize with dummy until envmap loaded
+  writeContainer.append(bindings.getWriteSet(BINDING_PBR_ENVMAP, m_descriptorSet), &dummyInfo);
+  writeContainer.append(bindings.getWriteSet(BINDING_PBR_PREFILTERED, m_descriptorSet), &dummyInfo);
+  writeContainer.append(bindings.getWriteSet(BINDING_PBR_BRDF_LUT, m_descriptorSet), &dummyInfo);
 
   // write
   vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writeContainer.size()), writeContainer.data(), 0, nullptr);

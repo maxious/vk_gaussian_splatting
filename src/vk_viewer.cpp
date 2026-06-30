@@ -316,9 +316,60 @@ bool VkViewer::loadEnvironment(const std::string& path)
   m_hdrEnvDome.create(m_hdrIbl.getDescriptorSet(), m_hdrIbl.getDescriptorSetLayout(), spirvModules[0],
                       spirvModules[1], spirvModules[2], spirvModules[3]);
 
+  // Wire IBL textures into Set 0 descriptor set
+  updateIblDescriptors();
+
   LOGI("HDR environment loaded: %s (%.0fx%.0f)\n", path.c_str(),
        static_cast<float>(m_hdrIbl.getHdrImageSize().width), static_cast<float>(m_hdrIbl.getHdrImageSize().height));
   return true;
+}
+
+void VkViewer::updateIblDescriptors()
+{
+  if(m_descriptorSet == VK_NULL_HANDLE)
+  {
+    LOGW("Cannot update IBL descriptors: descriptor set not created yet\n");
+    return;
+  }
+
+  const auto& textures = m_hdrEnvDome.getTextures();
+  if(textures.size() < 3)
+  {
+    LOGW("Cannot update IBL descriptors: HdrEnvDome textures not available\n");
+    return;
+  }
+
+  VkDescriptorImageInfo envMapInfo = textures[0].descriptor;
+  VkDescriptorImageInfo prefilteredInfo = textures[1].descriptor;
+  VkDescriptorImageInfo brdfLutInfo = textures[2].descriptor;
+
+  VkWriteDescriptorSet writes[3] = {};
+
+  writes[0] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+  writes[0].dstSet = m_descriptorSet;
+  writes[0].dstBinding = BINDING_PBR_ENVMAP;
+  writes[0].descriptorCount = 1;
+  writes[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  writes[0].pImageInfo = &envMapInfo;
+
+  writes[1] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+  writes[1].dstSet = m_descriptorSet;
+  writes[1].dstBinding = BINDING_PBR_PREFILTERED;
+  writes[1].descriptorCount = 1;
+  writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  writes[1].pImageInfo = &prefilteredInfo;
+
+  writes[2] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+  writes[2].dstSet = m_descriptorSet;
+  writes[2].dstBinding = BINDING_PBR_BRDF_LUT;
+  writes[2].descriptorCount = 1;
+  writes[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  writes[2].pImageInfo = &brdfLutInfo;
+
+  vkUpdateDescriptorSets(m_device, 3, writes, 0, nullptr);
+
+  LOGI("IBL descriptors bound to Set 0 (bindings %d, %d, %d)\n",
+       BINDING_PBR_ENVMAP, BINDING_PBR_PREFILTERED, BINDING_PBR_BRDF_LUT);
 }
 
 void VkViewer::enableDepthRendering(const std::string& host, int port, const std::string& videoPath)
