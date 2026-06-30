@@ -121,6 +121,25 @@ if (NOT DISABLE_MESH_ASSETS_DOWNLOAD)
      https://raw.githubusercontent.com/alecjacobson/common-3d-test-models/master/data/teapot.obj)
 endif()
 
+# set with -DDISABLE_HDR_ENVMAP_DOWNLOAD=ON on command line to skip downloading the default HDR environment map
+option(DISABLE_HDR_ENVMAP_DOWNLOAD "If set to true the default HDR environment map is not downloaded by CMake" OFF)
+
+# Download default HDR envmap for TRON PBR rendering
+if(NOT DISABLE_HDR_ENVMAP_DOWNLOAD)
+  if(NOT EXISTS "${CMAKE_SOURCE_DIR}/_downloaded_resources/studio_small_07_4k.hdr")
+    message(STATUS "Downloading default HDR environment map (studio_small_07_4k from Poly Haven)...")
+    file(DOWNLOAD
+      "https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/4k/studio_small_07_4k.hdr"
+      "${CMAKE_SOURCE_DIR}/_downloaded_resources/studio_small_07_4k.hdr"
+      EXPECTED_HASH SHA256=3039601936e88401de88f983a461573f24425785701943da251a90c705620a2e
+      SHOW_PROGRESS
+    )
+    message(STATUS "HDR environment map downloaded successfully")
+  else()
+    message(STATUS "HDR environment map already present, skipping download")
+  endif()
+endif()
+
 #####################################################################################
 # additions of 3rdparty
 
