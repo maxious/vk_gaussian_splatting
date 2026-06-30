@@ -71,6 +71,12 @@ struct SplatSet
   std::vector<float> motion     = {};  // 3 components (Vx, Vy, Vz)
   std::vector<float> time       = {};  // 1 component (t_center)
   std::vector<float> time_scale = {};  // 1 component (t_extent/duration)
+
+  // TRON PBR material attributes
+  bool has_material_data = false;  // true when PLY contains basecolor/roughness/metallic
+  std::vector<float> basecolor = {};  // 3 floats per splat: R, G, B (linear)
+  std::vector<float> roughness = {};  // 1 float per splat: [0,1]
+  std::vector<float> metallic  = {};  // 1 float per splat: [0,1]
   float minTime = 0.0f;
   float maxTime = 1.0f;
 
@@ -168,6 +174,19 @@ struct SplatSet
 
     constexpr float SH_C0 = 0.28209479177387814f;
 
+    std::vector<float> newMotion, newTime, newTimeScale;
+    std::vector<float> newBasecolor, newRoughness, newMetallic;
+    if(has_time_data) {
+        newMotion.reserve(motion.size());
+        newTime.reserve(time.size());
+        newTimeScale.reserve(time_scale.size());
+    }
+    if(has_material_data) {
+        newBasecolor.reserve(basecolor.size());
+        newRoughness.reserve(roughness.size());
+        newMetallic.reserve(metallic.size());
+    }
+
     for(size_t i = 0; i < splatCount; ++i)
     {
       // Compute base color from SH DC components
@@ -201,6 +220,24 @@ struct SplatSet
         newRotation.push_back(rotation[i * 4 + 1]);
         newRotation.push_back(rotation[i * 4 + 2]);
         newRotation.push_back(rotation[i * 4 + 3]);
+
+        if(has_time_data)
+        {
+          newMotion.push_back(motion[i * 3 + 0]);
+          newMotion.push_back(motion[i * 3 + 1]);
+          newMotion.push_back(motion[i * 3 + 2]);
+          newTime.push_back(time[i]);
+          newTimeScale.push_back(time_scale[i]);
+        }
+
+        if(has_material_data)
+        {
+          newBasecolor.push_back(basecolor[i * 3 + 0]);
+          newBasecolor.push_back(basecolor[i * 3 + 1]);
+          newBasecolor.push_back(basecolor[i * 3 + 2]);
+          newRoughness.push_back(roughness[i]);
+          newMetallic.push_back(metallic[i]);
+        }
       }
     }
 
@@ -210,27 +247,16 @@ struct SplatSet
     opacity   = std::move(newOpacity);
     scale     = std::move(newScale);
     rotation  = std::move(newRotation);
-    
-    // Resize new vectors if we have temporal data
+
     if(has_time_data) {
-        std::vector<float> newMotion, newTime, newTimeScale;
-        newMotion.reserve(motion.size());
-        newTime.reserve(time.size());
-        newTimeScale.reserve(time_scale.size());
-        
-        for(size_t i = 0; i < splatCount; ++i) {
-             // ... Logic to filter black splats (same indices) ...
-             // BUT wait, the loop above iterates valid splats.
-             // I need to copy the filter logic.
-             // Since I cannot easily inject into the loop in a partial edit,
-             // I will leave the temporal filtering unimplemented for now 
-             // or do a second pass if needed. 
-             // Actually, I should probably implement the removeBlackSplats fully 
-             // but that requires a large replace.
-             // For now, let's just clear them if we filter, to avoid size mismatch crash.
-             // Or better: Assume we won't filter black splats on 4DV files for this pass.
-        }
-        // Ideally we update the loop, but let's keep it simple for the first iteration.
+      motion     = std::move(newMotion);
+      time       = std::move(newTime);
+      time_scale = std::move(newTimeScale);
+    }
+    if(has_material_data) {
+      basecolor = std::move(newBasecolor);
+      roughness = std::move(newRoughness);
+      metallic  = std::move(newMetallic);
     }
   }
 
@@ -377,7 +403,26 @@ struct SplatSet
         time.insert(time.end(), other.time.begin(), other.time.end());
         time_scale.insert(time_scale.end(), other.time_scale.begin(), other.time_scale.end());
     }
-    
+
+    if (has_material_data && other.has_material_data) {
+        basecolor.insert(basecolor.end(), other.basecolor.begin(), other.basecolor.end());
+        roughness.insert(roughness.end(), other.roughness.begin(), other.roughness.end());
+        metallic.insert(metallic.end(), other.metallic.begin(), other.metallic.end());
+    } else if (has_material_data && !other.has_material_data) {
+        basecolor.insert(basecolor.end(), otherSize * 3, 0.0f);
+        roughness.insert(roughness.end(), otherSize, 0.0f);
+        metallic.insert(metallic.end(), otherSize, 0.0f);
+    } else if (!has_material_data && other.has_material_data) {
+        has_material_data = true;
+        basecolor.resize(offset * 3, 0.0f);
+        roughness.resize(offset, 0.0f);
+        metallic.resize(offset, 0.0f);
+
+        basecolor.insert(basecolor.end(), other.basecolor.begin(), other.basecolor.end());
+        roughness.insert(roughness.end(), other.roughness.begin(), other.roughness.end());
+        metallic.insert(metallic.end(), other.metallic.begin(), other.metallic.end());
+    }
+
     return offset;
   }
 
@@ -393,7 +438,11 @@ struct SplatSet
     motion.clear();
     time.clear();
     time_scale.clear();
+    basecolor.clear();
+    roughness.clear();
+    metallic.clear();
     has_time_data = false;
+    has_material_data = false;
     minTime = 0.0f;
     maxTime = 1.0f;
   }
@@ -530,6 +579,14 @@ struct SplatSet
       
       // Rebuild temporal bins after reordering since indices changed
       temporalBins.build(time, time_scale, minTime, maxTime);
+    }
+
+    // Material data
+    if(has_material_data)
+    {
+      reorderVec3(basecolor);
+      reorderVec1(roughness);
+      reorderVec1(metallic);
     }
   }
 };
