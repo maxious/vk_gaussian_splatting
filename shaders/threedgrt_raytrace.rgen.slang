@@ -29,6 +29,7 @@
 #include "threedgrt_payload.h.slang"
 #include "pbr_shading.h.slang"
 #include "irradiance_shadow.h.slang"
+#include "tonemap.h.slang"
 
 // clang-format off
 [[vk::binding(RTX_BINDING_TLAS_SPLATS, 1)]] RaytracingAccelerationStructure topLevelAS;
@@ -546,6 +547,15 @@ void main()
       gbufferNormal[outputPixel]     = float4(gbuf.normal,    0.0);
       gbufferPbr[outputPixel]        = float4(pbrColor,       1.0);
       gbufferIrradiance[outputPixel] = float4(irradiance,     0.0);
+
+      // TRON PBR pipeline: compose PBR + irradiance into final output,
+      // then optionally apply AgX tone mapping for HDR-to-sRGB output.
+      float3 finalColor = pbrColor + irradiance;
+      if(frameInfo.toneMapEnabled != 0)
+      {
+        finalColor = applyToneMapping(finalColor, frameInfo.envMapExposure);
+      }
+      image[outputPixel] = float4(finalColor, 1.0);
     }
     else
     {
@@ -554,6 +564,7 @@ void main()
       gbufferNormal[outputPixel]     = float4(0.0, 0.0, 0.0, 0.0);
       gbufferPbr[outputPixel]        = float4(0.0, 0.0, 0.0, 1.0);
       gbufferIrradiance[outputPixel] = float4(0.0, 0.0, 0.0, 0.0);
+      image[outputPixel] = float4(0.0, 0.0, 0.0, 1.0);
     }
     return;
   }
