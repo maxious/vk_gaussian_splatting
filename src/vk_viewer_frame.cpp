@@ -290,9 +290,9 @@ void VkViewer::buildViews(FrameRenderContext& ctx)
   ctx.views.clear();
   
   cameraManip->getLookat(m_eye, m_center, m_up);
-  ctx.eyePosition = m_eye;
-  ctx.centerPosition = m_center;
-  ctx.upVector = m_up;
+  ctx.eyePosition = glm::vec3(m_eye);
+  ctx.centerPosition = glm::vec3(m_center);
+  ctx.upVector = glm::vec3(m_up);
   ctx.viewMatrix = cameraManip->getViewMatrix();
   ctx.projMatrix = cameraManip->getPerspectiveMatrix();
 
@@ -492,7 +492,7 @@ void VkViewer::prepareSceneForFrame(FrameRenderContext& ctx)
     if(prmRaster.gpuSortSkipWhenStable && !prmRaster.gpuSortForceEveryFrame && m_lastSortValid)
     {
       // Calculate camera direction from eye to center
-      glm::vec3 currentDirection = glm::normalize(m_center - m_eye);
+      glm::dvec3 currentDirection = glm::normalize(m_center - m_eye);
       
       // Check position delta
       float positionDelta = glm::length(m_eye - m_lastSortCameraPosition);

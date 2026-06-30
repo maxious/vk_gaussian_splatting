@@ -37,7 +37,7 @@ void VkViewer::updateAndUploadFrameInfoUBO(VkCommandBuffer cmd, const uint32_t s
   prmFrame.splatCount = splatCount;
   prmFrame.lightCount = int32_t(m_lightSet.size());
 
-  prmFrame.cameraPosition = m_eye;
+  prmFrame.cameraPosition = glm::vec3(m_eye);
   prmFrame.viewMatrix     = cameraManip->getViewMatrix();
   prmFrame.viewInverse    = glm::inverse(prmFrame.viewMatrix);
 

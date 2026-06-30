@@ -605,8 +605,8 @@ void VkViewer::updateKBuffers(uint32_t width, uint32_t height)
 
 bool VkViewer::updateFrameCounter()
 {
-  static float     ref_fov{0};
-  static glm::mat4 ref_cam_matrix;
+  static double    ref_fov{0};
+  static glm::dmat4 ref_cam_matrix;
 
   const auto& m   = cameraManip->getViewMatrix();
   const auto  fov = cameraManip->getFov();

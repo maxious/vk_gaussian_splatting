@@ -61,7 +61,7 @@ VkViewerUI::VkViewerUI(nvutils::ProfilerManager* profilerManager, nvutils::Param
                               [&](const nvutils::ParameterBase* const) {
                                 if(m_app)
                                 {
-                                  m_app->screenShot(m_screenshotFilename);
+                                  m_app->saveScreenShot(m_screenshotFilename);
                                 }
                               }},
                          {".png"}, &m_screenshotFilename);
@@ -211,7 +211,7 @@ void VkViewerUI::onPreRender()
       m_autoScreenshotPending = false;
       if(!m_screenshotFilename.empty())
       {
-        m_app->screenShot(m_screenshotFilename);
+        m_app->saveScreenShot(m_screenshotFilename);
         LOGI("Auto-screenshot requested: %s\n", m_screenshotFilename.string().c_str());
       }
       // Wait a few frames for screenshot to complete before exiting
@@ -2114,7 +2114,7 @@ void VkViewerUI::guiDrawNavigationProperties()
   if(PE::begin())
   {
     auto mode     = cameraManip->getMode();
-    auto speed    = cameraManip->getSpeed();
+    auto speed    = static_cast<float>(cameraManip->getSpeed());
     auto duration = static_cast<float>(cameraManip->getAnimationDuration());
 
     changed |= PE::entry(

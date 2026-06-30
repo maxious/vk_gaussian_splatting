@@ -551,9 +551,9 @@ protected:
 #endif
 
   // camera info for current frame, updated by onRender
-  glm::vec3 m_eye{};
-  glm::vec3 m_center{};
-  glm::vec3 m_up{};
+  glm::dvec3 m_eye{};
+  glm::dvec3 m_center{};
+  glm::dvec3 m_up{};
 
   // IndirectParams structure defined in shaderio.h
   nvvk::Buffer             m_indirect;              // indirect parameter buffer
@@ -577,9 +577,9 @@ protected:
   VrdxSorter            m_gpuSorter = VK_NULL_HANDLE;  // GPU radix sort
 
   // Temporal stability: skip GPU sorting when camera is stationary
-  glm::vec3 m_lastSortCameraPosition{0.0f};
-  glm::vec3 m_lastSortCameraDirection{0.0f};
-  bool      m_lastSortValid = false;
+  glm::dvec3 m_lastSortCameraPosition{0.0};
+  glm::dvec3 m_lastSortCameraDirection{0.0};
+  bool       m_lastSortValid = false;
   bool      m_sortSkippedThisFrame = false;  // For debug UI display
 
   // buffers used by GPU and/or CPU sort

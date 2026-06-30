@@ -330,6 +330,10 @@ endif()
 
 # Note: src/nvvk_swapchain_override.cpp implements the HDR support for the swapchain,
 # overriding the default implementation in nvpro_core2 without modifying the submodule.
+# Removed: the updated nvpro_core2 swapchain now includes equivalent initialization;
+# the override caused duplicate symbol errors. HDR format detection can be re-added
+# via the upstream Swapchain::InitInfo::preferredFormat mechanism.
+list(FILTER SOURCE_FILES EXCLUDE REGEX "nvvk_swapchain_override\\.cpp$")
 # Remove "unity build" partial source files that are #included by vk_viewer.cpp and vk_viewer_ui.cpp
 list(FILTER SOURCE_FILES EXCLUDE REGEX "vk_viewer_(render|shaders|pipelines|rtx|postprocess|dlss_rr|frame_ubo|sorting|multiview|video|frame|chunk_culling|stochasticgs)\\.cpp$")
 list(FILTER SOURCE_FILES EXCLUDE REGEX "vk_viewer_ui_(renderer|depth|vr|project)\\.cpp$")

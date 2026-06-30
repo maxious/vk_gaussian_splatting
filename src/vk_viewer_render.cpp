@@ -40,7 +40,7 @@ void VkViewer::onRender(VkCommandBuffer cmd)
     glm::mat4 viewMatrix = cameraManip->getViewMatrix();
     glm::mat4 projMatrix = cameraManip->getPerspectiveMatrix();
     glm::mat4 viewProj = projMatrix * viewMatrix;
-    updateLccStreaming(viewProj, m_eye, 0.0f);
+    updateLccStreaming(viewProj, glm::vec3(m_eye), 0.0f);
 
     // Wait for async sorter to finish before modifying geometry to prevent race condition
     while(m_cpuSorter.getStatus() == SplatSorterAsync::E_SORTING)
@@ -121,9 +121,9 @@ void VkViewer::onRender(VkCommandBuffer cmd)
     cameraManip->getLookat(m_eye, m_center, m_up);
     ctx.viewMatrix = cameraManip->getViewMatrix();
     ctx.projMatrix = cameraManip->getPerspectiveMatrix();
-    ctx.eyePosition = m_eye;
-    ctx.centerPosition = m_center;
-    ctx.upVector = m_up;
+    ctx.eyePosition = glm::vec3(m_eye);
+    ctx.centerPosition = glm::vec3(m_center);
+    ctx.upVector = glm::vec3(m_up);
 
     if(m_renderSBS)
     {

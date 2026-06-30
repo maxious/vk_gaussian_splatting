@@ -51,7 +51,7 @@ void VkViewer::tryConsumeAndUploadCpuSortingResult(VkCommandBuffer cmd, const ui
         if(m_cpuSorter.getStatus() != SplatSorterAsync::E_READY)
           lazySort = true; // Prevent multiple concurrent sorts when streaming
       }
-      m_cpuSorter.sortAsync(glm::normalize(m_center - m_eye), m_eye, m_splatSet.positions, m_splatSetVk.transform,
+      m_cpuSorter.sortAsync(glm::vec3(glm::normalize(m_center - m_eye)), glm::vec3(m_eye), m_splatSet.positions, m_splatSetVk.transform,
                             lazySort);
     }
   }

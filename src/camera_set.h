@@ -172,11 +172,11 @@ private:
   // preserves the additional fields of camera
   Camera& applyNvutilCamera(const NvutilCamera nvuCam, Camera& camera)
   {
-    camera.eye  = nvuCam.eye;
-    camera.ctr  = nvuCam.ctr;
-    camera.up   = nvuCam.up;
-    camera.fov  = nvuCam.fov;
-    camera.clip = nvuCam.clip;
+    camera.eye  = glm::vec3(nvuCam.eye);
+    camera.ctr  = glm::vec3(nvuCam.ctr);
+    camera.up   = glm::vec3(nvuCam.up);
+    camera.fov  = static_cast<float>(nvuCam.fov);
+    camera.clip = glm::vec2(nvuCam.nearFar);
     return camera;
   }
 
@@ -184,11 +184,11 @@ private:
   {
     // other fields of result are set to default
     return {
-        .eye  = nvuCam.eye,
-        .ctr  = nvuCam.ctr,
-        .up   = nvuCam.up,
-        .fov  = nvuCam.fov,
-        .clip = nvuCam.clip,
+        .eye  = glm::vec3(nvuCam.eye),
+        .ctr  = glm::vec3(nvuCam.ctr),
+        .up   = glm::vec3(nvuCam.up),
+        .fov  = static_cast<float>(nvuCam.fov),
+        .clip = glm::vec2(nvuCam.nearFar),
     };
   }
 
@@ -196,11 +196,11 @@ private:
   {
     // other fields from camera are "lost"
     return {
-        .eye  = camera.eye,
-        .ctr  = camera.ctr,
-        .up   = camera.up,
-        .fov  = camera.fov,
-        .clip = camera.clip,
+        .eye     = glm::dvec3(camera.eye),
+        .ctr     = glm::dvec3(camera.ctr),
+        .up      = glm::dvec3(camera.up),
+        .fov     = static_cast<double>(camera.fov),
+        .nearFar = glm::dvec2(camera.clip),
     };
   }
 };

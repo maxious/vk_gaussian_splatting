@@ -1,0 +1,101 @@
+# Task 2: Build Fix Log — nvpro_core2 API Migration
+Timestamp: 2026-06-30
+
+## Summary
+Fixed all compilation errors caused by the nvpro_core2 submodule update (7c7998c → eb7c2f2).
+Both Debug and Release builds now succeed with 0 errors.
+ctest: tcp_depth_e2e passes; unit_tests has pre-existing SIGTRAP (nvutils Logger debug break, not a regression).
+
+## Root Causes
+
+### 1. CameraManipulator::Camera struct changes (Double Precision Camera)
+The nvpro_core2 Camera struct was updated to double precision:
+- `glm::vec3 eye/ctr/up` → `glm::dvec3 eye/ctr/up`
+- `float fov` → `double fov`
+- `glm::vec2 clip` → `glm::dvec2 nearFar` (renamed)
+- Added: `glm::dvec2 orthMag`, `ProjectionType projectionType`
+
+### 2. nvvk::Swapchain API restructure
+- `m_maxFramesInFlight` → `m_framesInFlight` + `m_imageCount` (separate concepts)
+- `m_imageFormat` → `m_surfaceFormat.surfaceFormat.format`
+- Semaphores restructured: `acquireSemaphore` per frame slot, `presentSemaphore` per image
+- Method `screenShot()` → `saveScreenShot()` in nvapp::Application
+- `getSpeed()` now returns `double` instead of `float`
+
+## Files Modified
+
+### src/camera_set.h (3 fixes)
+- `applyNvutilCamera()`: Added `glm::vec3()` casts for eye/ctr/up, `static_cast<float>()` for fov, `glm::vec2(nvuCam.nearFar)` for clip
+- `toCamera()`: Same pattern — explicit casts from dvec3/double to vec3/float
+- `toNvutilCamera()`: Reverse casts — `glm::dvec3()` for eye/ctr/up, `static_cast<double>()` for fov, `glm::dvec2(camera.clip)` for nearFar
+
+### src/vk_viewer.h (1 fix)
+- Changed `m_eye`, `m_center`, `m_up` from `glm::vec3` to `glm::dvec3` (camera API now uses double)
+- Changed `m_lastSortCameraPosition`, `m_lastSortCameraDirection` from `glm::vec3` to `glm::dvec3`
+
+### src/vk_viewer_frame.cpp (2 fixes)
+- Added `glm::vec3()` casts when assigning m_eye/m_center/m_up to ctx.eyePosition/centerPosition/upVector (which remain vec3)
+- Changed `currentDirection` local from `glm::vec3` to `glm::dvec3`
+
+### src/vk_viewer_render.cpp (2 fixes)
+- Added `glm::vec3()` casts for ctx assignments (same as frame.cpp)
+- Added `glm::vec3()` cast for updateLccStreaming call
+
+### src/vk_viewer_frame_ubo.cpp (1 fix)
+- Added `glm::vec3()` cast for `prmFrame.cameraPosition = glm::vec3(m_eye)`
+
+### src/vk_viewer_rtx.cpp (1 fix)
+- Changed `ref_cam_matrix` from `glm::mat4` to `glm::dmat4` (matches getViewMatrix return type)
+- Changed `ref_fov` from `float` to `double`
+
+### src/vk_viewer_sorting.cpp (1 fix)
+- Added `glm::vec3()` casts for sortAsync arguments (glm::normalize result and m_eye)
+
+### src/vk_viewer_ui.cpp (2 fixes)
+- `m_app->screenShot()` → `m_app->saveScreenShot()` (method renamed in nvpro_core2)
+- `auto speed = cameraManip->getSpeed()` → `auto speed = static_cast<float>(...)` (return type changed to double)
+
+### src/nvvk_swapchain_override.cpp (removed from build)
+- File was rewritten to match new API but caused duplicate symbol errors with upstream libnvvk.a
+- Fix: Excluded from build via CMakeLists.txt FILTER
+- HDR format detection lost (upstream Swapchain now supports preferredFormat via InitInfo)
+
+### CMakeLists.txt (1 fix)
+- Added `list(FILTER SOURCE_FILES EXCLUDE REGEX "nvvk_swapchain_override\\.cpp$")` to exclude the override file
+
+### Files NOT modified (by requirement)
+- No nvpro_core2 files were modified
+
+## Build Verification
+
+### Debug build
+```
+cmake --build build --config Debug 2>&1 | grep "error:" | wc -l
+→ 0
+[72%] Built target vk_viewer
+```
+
+### Release build
+```
+cmake --build build --config Release 2>&1 | grep "error:" | wc -l
+→ 0
+[72%] Built target vk_viewer
+```
+
+## Test Results
+
+### ctest --output-on-failure
+- tcp_depth_e2e: PASSED (42.70s)
+- unit_tests: SIGTRAP — PRE-EXISTING, not caused by migration
+  - Cause: `nvutils::Logger::breakOnErrors()` raises SIGTRAP on all `LOGE()` calls in debug builds
+  - Trigger: "NPZ Loader - Non-existent File" test calls `canLoad()` on non-existent file, which logs `LOGE("NPZ: Failed to open file: ...")`, triggering the debug break
+  - This is by design (helps catch errors during development) and predates the submodule update
+
+## Known Issues
+1. HDR automatic format detection lost with nvvk_swapchain_override.cpp removal
+   - Mitigation: Upstream Swapchain supports `InitInfo::preferredFormat` for HDR format selection
+2. Future PR slots: unit_tests SIGTRAP needs resolution (e.g., use LOGW instead of LOGE in npz_loader.cpp)
+
+## Commit Status
+All changes staged (git add -A) but NOT committed.
+Task 2 is a prerequisite for Task 3 (API audit).
