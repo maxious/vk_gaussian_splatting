@@ -224,6 +224,19 @@ void VkViewer::onAttach(nvapp::Application* app)
     initializeOpenXR();
   }
 #endif
+
+  // Wire PBR/IBL parameters to frame info from CLI args
+  prmFrame.envMapRotation   = prmPbr.envMapRotation;
+  prmFrame.envMapExposure   = prmPbr.envMapExposure;
+  prmFrame.pbrEnabled       = prmPbr.pbrEnabled ? 1 : 0;
+  prmFrame.irradianceEnabled = prmPbr.irradianceEnabled ? 1 : 0;
+  prmFrame.toneMapEnabled   = prmPbr.toneMapEnabled ? 1 : 0;
+
+  // Load environment map if specified via CLI
+  if(!prmPbr.envMap.empty())
+  {
+    loadEnvironment(prmPbr.envMap.string());
+  }
 };
 
 void VkViewer::onDetach()

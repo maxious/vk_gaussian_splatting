@@ -35,6 +35,7 @@ RenderParameters    prmRender{};
 RasterParameters       prmRaster{};
 RtxParameters          prmRtx{};
 StochasticParameters   prmStochastic{};
+PbrParameters          prmPbr{};
 
 // Storage for respective default values
 
@@ -44,7 +45,8 @@ static RtxVramDataParameters prmRtxDataDefault{};
 static shaderio::FrameInfo prmFrameDefault{};
 static RenderParameters    prmRenderDefault{};
 static RasterParameters    prmRasterDefault{};
-static RtxParameters       prmRtxDefault{};
+static RtxParameters prmRtxDefault{};
+static PbrParameters prmPbrDefault{};
 
 void storeDefaultParameters()
 {
@@ -55,6 +57,7 @@ void storeDefaultParameters()
   prmRenderDefault = prmRender;
   prmRasterDefault = prmRaster;
   prmRtxDefault    = prmRtx;
+  prmPbrDefault    = prmPbr;
 }
 
 void resetDataParameters()
@@ -123,6 +126,20 @@ void registerCommandLineParameters(nvutils::ParameterRegistry* parameterRegistry
                          &prmStochastic.stochasticUseGps);
   parameterRegistry->add({"stochasticEnableDof", "0=no DOF, 1=DOF enabled"},
                          &prmStochastic.stochasticEnableDof);
+
+  // PBR / IBL
+  parameterRegistry->add({"envmap", "path to HDR environment map file (.hdr, .exr)"},
+                         {".hdr", ".exr"}, &prmPbr.envMap);
+  parameterRegistry->add({"envmapRotation", "rotation of environment map in radians"},
+                         &prmPbr.envMapRotation);
+  parameterRegistry->add({"envmapExposure", "environment map exposure multiplier"},
+                         &prmPbr.envMapExposure);
+  parameterRegistry->add({"pbrEnabled", "0=disabled, 1=enabled PBR"},
+                         &prmPbr.pbrEnabled);
+  parameterRegistry->add({"irradianceEnabled", "0=disabled, 1=enabled irradiance"},
+                         &prmPbr.irradianceEnabled);
+  parameterRegistry->add({"toneMapEnabled", "0=disabled, 1=enabled tone mapping"},
+                         &prmPbr.toneMapEnabled);
 
   // Scene loading options
   parameterRegistry->add({"mortonReorder", "1=reorder splats using Morton/Z-order curve for cache coherency (default), 0=disabled"},

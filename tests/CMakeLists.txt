@@ -60,6 +60,12 @@ endif()
 # Register with CTest
 add_test(NAME unit_tests COMMAND unit_tests)
 
+# PBR screenshot test - requires GPU with ray tracing, disabled in CI
+add_test(NAME pbr_screenshot_test
+         COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/run_pbr_screenshot_test.sh $<CONFIG>
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(pbr_screenshot_test PROPERTIES DISABLED TRUE)
+
 if(ENABLE_TCP_DEPTH)
     add_test(NAME tcp_depth_e2e 
              COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/integration/test_tcp_depth_e2e.sh $<TARGET_FILE_DIR:vk_viewer>)

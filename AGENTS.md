@@ -120,6 +120,7 @@ The script:
 - **Scene Loading**: `splat_loader_async.cpp`, `sog_loader.cpp`, `splat_set.cpp`
 - **Depth Video**: `vk_viewer_video.cpp`, `depth_video_loader.cpp`
 - **Vulkan Video Decoder** (PoC): `vulkan_video_decoder.cpp` - GPU-accelerated H.265 decoding
+- **TRON PBR Pipeline**: `shaders/pbr_shading.h.slang` - Ray-traced PBR relighting (--pipeline 2 + --pbrEnabled 1)
 - **Compute Stochastic GS**: `vk_viewer_stochasticgs.cpp` - Sorting-free stochastic rasterization (--pipeline 6)
 
 ### Compute Stochastic GS Mode
@@ -136,6 +137,75 @@ Controls:
 - `--stochasticMaxSamples`: max accumulation frames before auto-reset
 
 Requires: NVIDIA GPU with VK_KHR_shader_atomic_int64 support
+
+### TRON PBR Pipeline (--pipeline 2, --pbrEnabled 1)
+
+The TRON PBR pipeline (based on TRON paper arXiv:2606.11314) adds ray-traced PBR relighting to the 3DGRT pipeline. Per-particle material attributes (basecolor, roughness, metallic) are composited into a deferred G-buffer using front-to-back Over compositing, then shaded with Cook-Torrance split-sum PBR against HDR environment maps, with optional MIS shadow rays and AgX tone mapping.
+
+**Pipeline:** Reuses `--pipeline 2` (3DGRT) with `--pbrEnabled 1` to activate PBR mode. Not a separate pipeline number.
+
+**CLI Arguments:**
+- `--envmap <path>`: Path to HDR environment map file (.hdr, .exr)
+- `--envmapRotation <float>`: Environment map rotation in radians (default: 0.0)
+- `--envmapExposure <float>`: Exposure multiplier (default: 1.0)
+- `--pbrEnabled <0|1>`: Enable/disable PBR rendering (default: 0)
+- `--irradianceEnabled <0|1>`: Enable/disable MIS shadow rays (default: 0)
+- `--toneMapEnabled <0|1>`: Enable/disable AgX tone mapping (default: 0)
+
+**PLY Property Format:**
+Extended with optional float properties:
+- `basecolor_0`, `basecolor_1`, `basecolor_2`: RGB base color
+- `roughness`: Surface roughness [0,1]
+- `metallic`: Metallicity [0,1]
+- Missing properties default to: basecolor = SH DC coefficients, roughness = 0.5, metallic = 0.0
+
+**Default Envmap:**
+Automatically downloaded from Poly Haven (CC0) to `_downloaded_resources/studio_small_07_4k.hdr` during CMake configure. Skip with `-DDISABLE_HDR_ENVMAP_DOWNLOAD=ON`.
+
+**Build:**
+No special CMake flags needed. PBR is always compiled in. The default envmap is downloaded automatically.
+
+**Running:**
+```bash
+source /opt/vulkan/1.4.350.1/setup-env.sh
+cd _bin/Debug
+./vk_viewer --inputFile ../../_downloaded_resources/flowers_1/flowers_1.ply \
+  --pipeline 2 --pbrEnabled 1 --irradianceEnabled 0 \
+  --envmap ../../_downloaded_resources/studio_small_07_4k.hdr \
+  --screenshotDelay 3.0 --screenshot /tmp/test_pbr.png \
+  --size 800 600 --validation 0
+```
+
+**CPU Unit Tests:**
+```bash
+# Build and run BRDF math unit tests
+cmake --build build --config Debug --target unit_tests
+ctest --output-on-failure -R test_pbr_helpers
+```
+
+**Key Files:**
+- `shaders/pbr_shading.h.slang` - Cook-Torrance PBR shading with split-sum IBL
+- `shaders/threedgrt_raytrace.rgen.slang` - G-buffer compositing, PBR evaluation, MIS shadow rays
+- `shaders/threedgrt.h.slang` - GBufferData struct, particleProcessHitGbuffer with front-to-back Over
+- `shaders/shaderio.h` - BINDING_PBR_* defines (45-50), FrameInfo PBR fields
+- `src/splat_set.h` - Material vectors in SplatSet
+- `src/splat_loader_fast.cpp` - PLY parser for basecolor/roughness/metallic
+- `src/splat_set_vk.cpp` - GPU buffer upload for material data
+- `src/vk_viewer.cpp` - HdrIbl/HdrEnvDome integration, IBL descriptor binding
+- `src/parameters.h` - PbrParameters struct
+- `src/parameters.cpp` - CLI arg registration
+- `tests/test_pbr_helpers.cpp` - CPU unit tests for GGX, MIS, AgX math
+
+**Limitations:**
+- PBR mode only works with `--pipeline 2` (3DGRT)
+- No DLSS-RR integration
+- Mesh shading remains Blinn-Phong (unaffected)
+- No normal maps, emissive, subsurface, or anisotropy
+- Single envmap, no explicit light sources
+- PBR at primary surface only (no secondary bounces)
+- Default envmap: `studio_small_07_4k` (CC0, Poly Haven)
+
+Requires: NVIDIA GPU with VK_KHR_ray_tracing_pipeline support
 
 ## Python Tools
 

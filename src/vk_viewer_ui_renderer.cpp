@@ -663,3 +663,82 @@ void VkViewerUI::guiDrawRendererProperties()
   }
   ImGui::EndTabBar();
 }
+
+void VkViewerUI::guiDrawPbrSettings()
+{
+  namespace PE = nvgui::PropertyEditor;
+
+  PE::begin("## PBR Settings");
+
+  if(PE::entry("Envmap",
+               [&]() {
+                 ImGui::TextUnformatted(m_envmapFilename.empty() ? "<none>" : m_envmapFilename.filename().string().c_str());
+                 ImGui::SameLine();
+                 return ImGui::Button("Load##Envmap");
+               },
+               "Path of the currently loaded HDR environment map.\n"
+               "Click 'Load' to select a Radiance HDR (.hdr) file from disk."))
+  {
+    std::filesystem::path selected = nvgui::windowOpenFileDialog(m_app->getWindowHandle(), "Load HDR Environment Map",
+                                                                 "HDR Files|*.hdr;*.exr|All Files|*.*");
+    if(!selected.empty())
+    {
+      m_envmapFilename = selected;
+      m_requestUpdateShaders = true;
+      LOGI("PBR envmap selected: %s\n", selected.string().c_str());
+    }
+  }
+
+  if(!m_envmapFilename.empty())
+  {
+    ImGui::SameLine();
+    if(ImGui::Button("Clear##Envmap"))
+    {
+      m_envmapFilename.clear();
+      m_requestUpdateShaders = true;
+      LOGI("PBR envmap cleared\n");
+    }
+  }
+
+  bool pbrEnabled  = prmFrame.pbrEnabled != 0;
+  bool irrEnabled  = prmFrame.irradianceEnabled != 0;
+  bool tonemapEnab = prmFrame.toneMapEnabled != 0;
+  if(PE::Checkbox("PBR shading", &pbrEnabled,
+                  "Enable image-based lighting from the loaded environment map.\n"
+                  "When enabled, the PBR shader samples the prefiltered cubemap\n"
+                  "for specular and the irradiance map for diffuse ambient term."))
+  {
+    prmFrame.pbrEnabled = pbrEnabled ? 1 : 0;
+    m_requestUpdateShaders = true;
+  }
+
+  ImGui::BeginDisabled(!pbrEnabled);
+  if(PE::Checkbox("Irradiance", &irrEnabled,
+                  "Enable diffuse irradiance lookup from the environment map.\n"
+                  "Provides a soft ambient term based on convolution of the envmap."))
+  {
+    prmFrame.irradianceEnabled = irrEnabled ? 1 : 0;
+    m_requestUpdateShaders = true;
+  }
+  ImGui::EndDisabled();
+
+  if(PE::Checkbox("Tone mapping", &tonemapEnab,
+                  "Enable HDR tone mapping (AgX) of the final composited image\n"
+                  "before display. Compresses high dynamic range into the SDR range\n"
+                  "while preserving hue and detail in highlights."))
+  {
+    prmFrame.toneMapEnabled = tonemapEnab ? 1 : 0;
+    resetFrameCounter();
+  }
+
+  ImGui::BeginDisabled(!pbrEnabled);
+  PE::SliderFloat("Rotation", (float*)&prmFrame.envMapRotation, 0.0f, 6.2831853f, "%.3f", 0,
+                  "Yaw rotation of the environment cubemap in radians (0 .. 2π).\n"
+                  "Useful for reorienting pre-baked HDRIs without re-baking.");
+  PE::SliderFloat("Exposure", (float*)&prmFrame.envMapExposure, 0.1f, 10.0f, "%.2f", 0,
+                  "Linear exposure multiplier applied to the environment map samples\n"
+                  "before tone mapping. 1.0 = neutral, > 1 brightens, < 1 darkens.");
+  ImGui::EndDisabled();
+
+  PE::end();
+}

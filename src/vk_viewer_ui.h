@@ -171,6 +171,7 @@ private:
   void guiDrawLightProperties();
   void guiDrawDepthStreamProperties();
   void guiDrawPerformancePanel();
+  void guiDrawPbrSettings();
 
   void guiDrawRendererStatisticsWindow();
 
@@ -205,6 +206,8 @@ private:
 
   // Recent files list
   std::vector<std::filesystem::path> m_recentFiles;
+
+  std::filesystem::path m_envmapFilename;
 
   // Recent projects list
   std::vector<std::filesystem::path> m_recentProjects;

@@ -1653,6 +1653,10 @@ void VkViewerUI::guiDrawPropertiesWindow()
         {
           guiDrawRendererProperties();
         }
+        if(ImGui::CollapsingHeader("PBR Settings", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+          guiDrawPbrSettings();
+        }
         break;
       case GUI_SPLATSET:
         guiDrawSplatSetProperties();

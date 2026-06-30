@@ -190,6 +190,20 @@ struct StochasticParameters
 // Parameters that control Compute Stochastic GS
 extern StochasticParameters prmStochastic;
 
+// Parameters that control PBR/IBL environment mapping
+struct PbrParameters
+{
+  std::filesystem::path envMap;              // Path to HDR environment map file
+  float                 envMapRotation      = 0.0f;  // Rotation of environment map (radians)
+  float                 envMapExposure      = 1.0f;  // Exposure multiplier
+  bool                  pbrEnabled          = false; // Enable PBR rendering
+  bool                  irradianceEnabled   = false; // Enable irradiance
+  bool                  toneMapEnabled      = false; // Enable tone mapping
+};
+
+// Parameters that control PBR/IBL
+extern PbrParameters prmPbr;
+
 // Invoked by main() to save defaults after command line options are applied at startup
 void storeDefaultParameters();
 
