@@ -163,6 +163,14 @@
 #define BINDING_VISIBLE_CHUNKS_BUFFER 35     // Output: visible chunk indices
 #define BINDING_VISIBLE_CHUNK_COUNT_BUFFER 36 // Output: count of visible chunks
 
+// Material data bindings (Tron PBR pipeline)
+#define BINDING_BASECOLOR_TEXTURE 37
+#define BINDING_ROUGHNESS_TEXTURE 38
+#define BINDING_METALLIC_TEXTURE 39
+#define BINDING_BASECOLOR_BUFFER 40
+#define BINDING_ROUGHNESS_BUFFER 41
+#define BINDING_METALLIC_BUFFER 42
+
 // Stochastic (sort-free atomic) GS bindings
 #define BINDING_STOCHASTIC_FRAMEBUFFER_SSBO 40   // uint64_t[] atomic framebuffer (DEPRECATED - split into depth+index)
 #define BINDING_STOCHASTIC_OUTPUT_IMAGE 41       // RWTexture2D<float4> per-pixel color output

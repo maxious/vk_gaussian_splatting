@@ -34,6 +34,9 @@
   [[vk::binding(BINDING_SH_TEXTURE, 0)]] Sampler2D sphericalHarmonicsTexture;
   [[vk::binding(BINDING_MOTION_TEXTURE, 0)]] Sampler2D motionTexture;
   [[vk::binding(BINDING_TIME_TEXTURE, 0)]] Sampler2D timeTexture;
+  [[vk::binding(BINDING_BASECOLOR_TEXTURE, 0)]] Sampler2D basecolorTexture;
+  [[vk::binding(BINDING_ROUGHNESS_TEXTURE, 0)]] Sampler2D roughnessTexture;
+  [[vk::binding(BINDING_METALLIC_TEXTURE, 0)]] Sampler2D metallicTexture;
 #else
   // buffers describing the 3DGS model (alternative to textures)
   [[vk::binding(BINDING_CENTERS_BUFFER, 0)]] RWStructuredBuffer<float> centersBuffer;
@@ -43,6 +46,9 @@
   [[vk::binding(BINDING_COVARIANCES_BUFFER, 0)]] RWStructuredBuffer<float> covariancesBuffer;
   [[vk::binding(BINDING_MOTION_BUFFER, 0)]] RWStructuredBuffer<float> motionBuffer;
   [[vk::binding(BINDING_TIME_BUFFER, 0)]] RWStructuredBuffer<float> timeBuffer;
+  [[vk::binding(BINDING_BASECOLOR_BUFFER, 0)]] RWStructuredBuffer<float> basecolorBuffer;
+  [[vk::binding(BINDING_ROUGHNESS_BUFFER, 0)]] RWStructuredBuffer<float> roughnessBuffer;
+  [[vk::binding(BINDING_METALLIC_BUFFER, 0)]] RWStructuredBuffer<float> metallicBuffer;
   #if SH_FORMAT == FORMAT_FLOAT32
     [[vk::binding(BINDING_SH_BUFFER, 0)]] RWStructuredBuffer<float> sphericalHarmonicsBuffer;
   #else
@@ -196,6 +202,34 @@ float2 fetchTime(in uint splatIndex)
 {
   return float2(timeBuffer[splatIndex * 2 + 0], timeBuffer[splatIndex * 2 + 1]);
 }
+#endif
+
+// --- Material data (TRON PBR) ---
+#if DATA_STORAGE == STORAGE_LCC_PACKED
+float3 fetchBasecolor(in uint splatIndex) { return fetchColor(splatIndex).rgb; }
+float fetchRoughness(in uint splatIndex) { return 0.5; }
+float fetchMetallic(in uint splatIndex) { return 0.0; }
+#elif DATA_STORAGE == STORAGE_TEXTURES
+float3 fetchBasecolor(in uint splatIndex) {
+    int2 texSize; basecolorTexture.GetDimensions(texSize.x, texSize.y);
+    return basecolorTexture.Load(int3(getDataPos(splatIndex, 1, 0, texSize), 0)).xyz;
+}
+float fetchRoughness(in uint splatIndex) {
+    int2 texSize; roughnessTexture.GetDimensions(texSize.x, texSize.y);
+    return roughnessTexture.Load(int3(getDataPos(splatIndex, 1, 0, texSize), 0)).r;
+}
+float fetchMetallic(in uint splatIndex) {
+    int2 texSize; metallicTexture.GetDimensions(texSize.x, texSize.y);
+    return metallicTexture.Load(int3(getDataPos(splatIndex, 1, 0, texSize), 0)).r;
+}
+#else
+float3 fetchBasecolor(in uint splatIndex) {
+    return float3(basecolorBuffer[splatIndex * 3 + 0],
+                  basecolorBuffer[splatIndex * 3 + 1],
+                  basecolorBuffer[splatIndex * 3 + 2]);
+}
+float fetchRoughness(in uint splatIndex) { return roughnessBuffer[splatIndex]; }
+float fetchMetallic(in uint splatIndex) { return metallicBuffer[splatIndex]; }
 #endif
 
 /*
