@@ -578,6 +578,23 @@ def fit_trajectories_delta_compression(
     return results
 
 
+def fit_trajectories(
+    traj_data: TrajectoryData,
+) -> tuple[
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+]:
+    """Fit trajectories to obtain float32 motion vectors. This is the non-delta-compression path."""
+    result = fit_trajectories_delta_compression(traj_data)
+    return result[:8]
+
+
 def compute_motion_vectors(
     frames: list,  # list[GaussianFrame]
     fps: float,
