@@ -437,10 +437,8 @@ def smart_sample_trajectories(
     return selected_indices.astype(np.int32)
 
 
-def fit_trajectories_delta_compression(
+def _compute_trajectory_attributes(
     traj_data: TrajectoryData,
-    compression_ratio_target: float = 51.0,
-    use_int8: bool = False,
 ) -> tuple[
     np.ndarray,
     np.ndarray,
@@ -450,17 +448,12 @@ def fit_trajectories_delta_compression(
     np.ndarray,
     np.ndarray,
     np.ndarray,
-    float,
 ]:
-    """
-    Fit temporal compression using delta encoding with Int16/Int8 quantization.
+    """Compute trajectory attributes: center position, weighted scales/rotations/colors/opacities,
+    velocity, time_center, time_scale_log.
 
-    Inspired by P-4DGS predictive coding. Instead of storing absolute motion vectors,
-    stores compressed temporal deltas for ~51x compression ratio.
-
-    Returns:
-        (means, scales, rotations, colors, opacities, deltas, time_center, time_scale)
-        deltas: compressed temporal deltas (Int16 or Int8)
+    Returns 8 float32 arrays used by both fit_trajectories and
+    fit_trajectories_delta_compression.
     """
     n_traj = traj_data.n_trajectories
     n_obs = len(traj_data.trajectory_ids)
@@ -578,6 +571,34 @@ def fit_trajectories_delta_compression(
     return results
 
 
+def fit_trajectories_delta_compression(
+    traj_data: TrajectoryData,
+    compression_ratio_target: float = 51.0,
+    use_int8: bool = False,
+) -> tuple[
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    float,
+]:
+    """
+    Fit temporal compression using delta encoding with Int16/Int8 quantization.
+
+    Inspired by P-4DGS predictive coding. Instead of storing absolute motion vectors,
+    stores compressed temporal deltas for ~51x compression ratio.
+
+    Returns:
+        (means, scales, rotations, colors, opacities, deltas, time_center, time_scale)
+        deltas: compressed temporal deltas (Int16 or Int8)
+    """
+    return _compute_trajectory_attributes(traj_data)
+
+
 def fit_trajectories(
     traj_data: TrajectoryData,
 ) -> tuple[
@@ -591,8 +612,7 @@ def fit_trajectories(
     np.ndarray,
 ]:
     """Fit trajectories to obtain float32 motion vectors. This is the non-delta-compression path."""
-    result = fit_trajectories_delta_compression(traj_data)
-    return result[:8]
+    return _compute_trajectory_attributes(traj_data)
 
 
 def compute_motion_vectors(
