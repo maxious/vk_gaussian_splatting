@@ -593,10 +593,44 @@ def fit_trajectories_delta_compression(
     stores compressed temporal deltas for ~51x compression ratio.
 
     Returns:
-        (means, scales, rotations, colors, opacities, deltas, time_center, time_scale)
+        (means, scales, rotations, colors, opacities, deltas, time_center, time_scale,
+         compression_scale)
         deltas: compressed temporal deltas (Int16 or Int8)
+        compression_scale: float, scale factor for dequantization:
+            velocity = deltas.astype(float32) / compression_scale
     """
-    return _compute_trajectory_attributes(traj_data)
+    pos_center, scales, rotations, colors, opacities, velocity, time_center, time_scale = (
+        _compute_trajectory_attributes(traj_data)
+    )
+
+    dtype = np.int8 if use_int8 else np.int16
+    int_max = np.iinfo(dtype).max
+    int_min = np.iinfo(dtype).min
+
+    max_abs_vel = float(np.max(np.abs(velocity))) + 1e-12
+
+    if max_abs_vel < 1e-12:
+        # Edge case: all-zero velocity
+        deltas = np.zeros_like(velocity, dtype=dtype)
+        compression_scale = 1.0
+    else:
+        # Safety margin: 0.99 to reduce outlier saturation
+        compression_scale = (int_max * 0.99) / max_abs_vel
+        deltas = np.clip(
+            np.round(velocity * compression_scale), int_min, int_max
+        ).astype(dtype)
+
+    return (
+        pos_center,
+        scales,
+        rotations,
+        colors,
+        opacities,
+        deltas,
+        time_center,
+        time_scale,
+        compression_scale,
+    )
 
 
 def fit_trajectories(
