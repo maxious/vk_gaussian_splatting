@@ -40,6 +40,8 @@ namespace vk_viewer {
 
 struct PropertyLayout
 {
+  enum class MotionType : uint8_t { None, Float, Int16, Int8 };
+
   size_t vertexCount  = 0;
   size_t vertexStride = 0;
   size_t xOffset      = static_cast<size_t>(-1);
@@ -57,6 +59,9 @@ struct PropertyLayout
   size_t basecolorOffset[3] = {static_cast<size_t>(-1), static_cast<size_t>(-1), static_cast<size_t>(-1)};
   size_t roughnessOffset = static_cast<size_t>(-1);
   size_t metallicOffset  = static_cast<size_t>(-1);
+
+  MotionType motionType  = MotionType::None;
+  float      motionScale = 1.0f;
 
   PropertyLayout()
   {
@@ -126,9 +131,30 @@ static bool parseHeader(const char* data, size_t size, size_t& headerSize, Prope
     }
     else if(line.starts_with("element "))
       inVertex = false;
-    else if(inVertex && line.starts_with("property float "))
+    else if(line.starts_with("comment "))
     {
-      std::string_view name = line.substr(15);
+      std::string_view commentContent = line.substr(8);
+      while(!commentContent.empty() && commentContent.front() == ' ')
+        commentContent.remove_prefix(1);
+      
+      if(commentContent.starts_with("motion_scale "))
+      {
+        std::from_chars(commentContent.data() + 13, commentContent.data() + commentContent.size(), layout.motionScale);
+      }
+      else if(commentContent.starts_with("motion_dtype "))
+      {
+        std::string_view dtype = commentContent.substr(13);
+        if(dtype == "int16") layout.motionType = PropertyLayout::MotionType::Int16;
+        else if(dtype == "int8") layout.motionType = PropertyLayout::MotionType::Int8;
+      }
+    }
+    else if(inVertex && (line.starts_with("property float ") ||
+                         line.starts_with("property short ") ||
+                         line.starts_with("property char ")))
+    {
+      bool isFloat = line.starts_with("property float ");
+      size_t nameOffset = isFloat ? 15 : (line.starts_with("property short ") ? 16 : 15);
+      std::string_view name = line.substr(nameOffset);
       if(name == "x") layout.xOffset = layout.vertexStride;
       else if(name == "y") layout.yOffset = layout.vertexStride;
       else if(name == "z") layout.zOffset = layout.vertexStride;
@@ -165,7 +191,16 @@ static bool parseHeader(const char* data, size_t size, size_t& headerSize, Prope
       {
         int idx = 0;
         std::from_chars(name.data() + 7, name.data() + name.size(), idx);
-        if(idx >= 0 && idx < 3) layout.motionOffset[idx] = layout.vertexStride;
+        if(idx >= 0 && idx < 3)
+        {
+          layout.motionOffset[idx] = layout.vertexStride;
+          if(idx == 0)
+          {
+            if(line.starts_with("property short ")) layout.motionType = PropertyLayout::MotionType::Int16;
+            else if(line.starts_with("property char ")) layout.motionType = PropertyLayout::MotionType::Int8;
+            else layout.motionType = PropertyLayout::MotionType::Float;
+          }
+        }
       }
       else if(name == "t") layout.timeOffset = layout.vertexStride;
       else if(name == "t_scale") layout.timeScaleOffset = layout.vertexStride;
@@ -177,7 +212,23 @@ static bool parseHeader(const char* data, size_t size, size_t& headerSize, Prope
       }
       else if(name == "roughness") layout.roughnessOffset = layout.vertexStride;
       else if(name == "metallic") layout.metallicOffset = layout.vertexStride;
-      layout.vertexStride += 4;
+      // Vertex stride: motion properties use their detected type's byte size
+      if(name.starts_with("motion_"))
+      {
+        int idx = 0;
+        std::from_chars(name.data() + 7, name.data() + name.size(), idx);
+        if(idx >= 0 && idx < 3)
+        {
+          if(layout.motionType == PropertyLayout::MotionType::Int16) layout.vertexStride += 2;
+          else if(layout.motionType == PropertyLayout::MotionType::Int8) layout.vertexStride += 1;
+          else layout.vertexStride += 4;
+        }
+        else layout.vertexStride += 4;
+      }
+      else
+      {
+        layout.vertexStride += 4;
+      }
     }
     
     ptr = (lineEnd < end && *lineEnd == '\r') ? (lineEnd + 2) : (lineEnd + 1);
@@ -279,6 +330,28 @@ bool SplatLoaderFast::load(const std::filesystem::path& filename, SplatSet& outp
     });
   };
 
+  auto extract_int16 = [&](size_t offset, float* dest, size_t destStride) {
+    if(offset == static_cast<size_t>(-1)) return;
+    nvutils::parallel_ranges_pooled<1024>(count, [&](uint64_t start, uint64_t end, uint32_t) {
+      for(uint64_t i = start; i < end; ++i)
+      {
+        dest[i * destStride] = float(*reinterpret_cast<const int16_t*>(
+            dataStart + i * stride + offset)) / layout.motionScale;
+      }
+    });
+  };
+
+  auto extract_int8 = [&](size_t offset, float* dest, size_t destStride) {
+    if(offset == static_cast<size_t>(-1)) return;
+    nvutils::parallel_ranges_pooled<1024>(count, [&](uint64_t start, uint64_t end, uint32_t) {
+      for(uint64_t i = start; i < end; ++i)
+      {
+        dest[i * destStride] = float(*reinterpret_cast<const int8_t*>(
+            dataStart + i * stride + offset)) / layout.motionScale;
+      }
+    });
+  };
+
   int currentExtraction = 0;
   
   auto reportProgress = [&]() {
@@ -334,12 +407,33 @@ bool SplatLoaderFast::load(const std::filesystem::path& filename, SplatSet& outp
     output.motion.resize(count * 3);
     output.time.resize(count);
     output.time_scale.resize(count);
-    extract_float(layout.motionOffset[0], output.motion.data() + 0, 3);
-    reportProgress();
-    extract_float(layout.motionOffset[1], output.motion.data() + 1, 3);
-    reportProgress();
-    extract_float(layout.motionOffset[2], output.motion.data() + 2, 3);
-    reportProgress();
+    if(layout.motionType == PropertyLayout::MotionType::Int16)
+    {
+      extract_int16(layout.motionOffset[0], output.motion.data() + 0, 3);
+      reportProgress();
+      extract_int16(layout.motionOffset[1], output.motion.data() + 1, 3);
+      reportProgress();
+      extract_int16(layout.motionOffset[2], output.motion.data() + 2, 3);
+      reportProgress();
+    }
+    else if(layout.motionType == PropertyLayout::MotionType::Int8)
+    {
+      extract_int8(layout.motionOffset[0], output.motion.data() + 0, 3);
+      reportProgress();
+      extract_int8(layout.motionOffset[1], output.motion.data() + 1, 3);
+      reportProgress();
+      extract_int8(layout.motionOffset[2], output.motion.data() + 2, 3);
+      reportProgress();
+    }
+    else
+    {
+      extract_float(layout.motionOffset[0], output.motion.data() + 0, 3);
+      reportProgress();
+      extract_float(layout.motionOffset[1], output.motion.data() + 1, 3);
+      reportProgress();
+      extract_float(layout.motionOffset[2], output.motion.data() + 2, 3);
+      reportProgress();
+    }
     extract_float(layout.timeOffset, output.time.data(), 1);
     reportProgress();
     extract_float(layout.timeScaleOffset, output.time_scale.data(), 1);
