@@ -363,7 +363,8 @@ def write_delta_compressed_freetimegs_ply(
         for i in range(sh_rest.shape[1]):
             dtype_list.append((f"f_rest_{i}", "f4"))
 
-    # Use float32 for deltas to maintain compatibility, but store compressed values
+    # Use native int types for compressed deltas
+    motion_dtype = "i1" if use_int8 else "i2"
     dtype_list.extend(
         [
             ("opacity", "f4"),
@@ -374,9 +375,9 @@ def write_delta_compressed_freetimegs_ply(
             ("rot_1", "f4"),
             ("rot_2", "f4"),
             ("rot_3", "f4"),
-            ("motion_0", "f4"),  # Store compressed deltas as float32
-            ("motion_1", "f4"),
-            ("motion_2", "f4"),
+            ("motion_0", motion_dtype),
+            ("motion_1", motion_dtype),
+            ("motion_2", motion_dtype),
             ("t", "f4"),
             ("t_scale", "f4"),
         ]
@@ -407,20 +408,18 @@ def write_delta_compressed_freetimegs_ply(
     elements["rot_2"] = rotations[:, 2]
     elements["rot_3"] = rotations[:, 3]
 
-    # Store compressed deltas as float32 (viewer needs to know to decompress)
-    elements["motion_0"] = deltas[:, 0].astype(np.float32)
-    elements["motion_1"] = deltas[:, 1].astype(np.float32)
-    elements["motion_2"] = deltas[:, 2].astype(np.float32)
+    elements["motion_0"] = deltas[:, 0]
+    elements["motion_1"] = deltas[:, 1]
+    elements["motion_2"] = deltas[:, 2]
     elements["t"] = time_center
     elements["t_scale"] = time_scale
 
     el = PlyElement.describe(elements, "vertex")
-    PlyData([el], text=False).write(str(path))
-
-    # Add metadata comment about compression
     compression_type = "int8" if use_int8 else "int16"
-    logger.info(
-        f"Wrote delta-compressed PLY: {compression_type}, scale_factor={compression_scale:.2f}"
-    )
+    comments = [
+        f"motion_scale {compression_scale:.10f}",
+        f"motion_dtype {compression_type}",
+    ]
+    PlyData([el], text=False, comments=comments).write(str(path))
 
     logger.info(f"Wrote {n_points} FreeTimeGS Gaussians to {path}")
