@@ -607,7 +607,7 @@ def fit_trajectories_delta_compression(
     int_max = np.iinfo(dtype).max
     int_min = np.iinfo(dtype).min
 
-    max_abs_vel = float(np.max(np.abs(velocity))) + 1e-12
+    max_abs_vel = float(np.max(np.abs(velocity)))
 
     if max_abs_vel < 1e-12:
         # Edge case: all-zero velocity
@@ -615,7 +615,7 @@ def fit_trajectories_delta_compression(
         compression_scale = 1.0
     else:
         # Safety margin: 0.99 to reduce outlier saturation
-        compression_scale = (int_max * 0.99) / max_abs_vel
+        compression_scale = (int_max * 0.99) / (max_abs_vel + 1e-12)
         deltas = np.clip(
             np.round(velocity * compression_scale), int_min, int_max
         ).astype(dtype)
