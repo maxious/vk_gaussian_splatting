@@ -153,7 +153,9 @@ static bool parseHeader(const char* data, size_t size, size_t& headerSize, Prope
                          line.starts_with("property char ")))
     {
       bool isFloat = line.starts_with("property float ");
-      size_t nameOffset = isFloat ? 15 : (line.starts_with("property short ") ? 16 : 15);
+      // "property float " = 15 chars, "property short " = 15 chars, "property char " = 14 chars
+      size_t nameOffset = 15;
+      if (line.starts_with("property char ")) nameOffset = 14;
       std::string_view name = line.substr(nameOffset);
       if(name == "x") layout.xOffset = layout.vertexStride;
       else if(name == "y") layout.yOffset = layout.vertexStride;
