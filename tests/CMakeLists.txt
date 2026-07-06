@@ -4,6 +4,7 @@ cmake_minimum_required(VERSION 3.22)
 # Test executable
 add_executable(unit_tests
     main.cpp
+    test_cloud_protocol.cpp
     test_depth.cpp
     test_tcp_protocol.cpp
     test_tcp_depth_client.cpp
@@ -71,6 +72,16 @@ if(ENABLE_TCP_DEPTH)
              COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/integration/test_tcp_depth_e2e.sh $<TARGET_FILE_DIR:vk_viewer>)
 endif()
 
+# Cloud protocol unit test (standalone, links protocol_parser for serialize/decode)
+add_executable(test_cloud_protocol test_cloud_protocol.cpp ../depth_server/protocol_parser.cpp)
+target_include_directories(test_cloud_protocol PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../depth_server
+    ${CMAKE_CURRENT_SOURCE_DIR}/../nvpro_core2)
+target_link_libraries(test_cloud_protocol PRIVATE nvpro2::nvutils)
+target_compile_features(test_cloud_protocol PRIVATE cxx_std_20)
+add_test(NAME cloud_protocol COMMAND test_cloud_protocol)
+
 if(ENABLE_FREESPLATTER)
     add_executable(test_splat_client
         ../src/free_splatter_client.cpp
@@ -84,3 +95,19 @@ if(ENABLE_FREESPLATTER)
     target_compile_features(test_splat_client PRIVATE cxx_std_20)
     set_property(TARGET test_splat_client PROPERTY FOLDER "DepthServer")
 endif()
+
+# Cloud splat encoder test (pure function, no external deps)
+add_executable(test_cloud_splat_encoder
+    test_cloud_splat_encoder.cpp
+    ${CMAKE_SOURCE_DIR}/depth_server/cloud_splat_encoder.cpp
+)
+target_include_directories(test_cloud_splat_encoder PRIVATE
+    ${CMAKE_SOURCE_DIR}/depth_server
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+target_compile_definitions(test_cloud_splat_encoder PRIVATE
+    TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+)
+target_compile_features(test_cloud_splat_encoder PRIVATE cxx_std_20)
+add_test(NAME cloud_splat_encoder COMMAND test_cloud_splat_encoder)
+set_property(TARGET test_cloud_splat_encoder PROPERTY FOLDER "DepthServer")
