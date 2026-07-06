@@ -1,6 +1,7 @@
 add_executable(depth_server
     main.cpp
     benchmark.cpp
+    cloud_splat_encoder.cpp
     da_capi_buffer.cpp
     model_downloader.cpp
     protocol_parser.cpp
