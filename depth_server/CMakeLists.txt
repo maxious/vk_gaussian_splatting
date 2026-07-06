@@ -11,6 +11,7 @@ add_executable(depth_server
     splat_worker_pool.cpp
     splat_worker.cpp
     freesplatter_capi_buffer.cpp
+    cloud_worker.cpp
 )
 
 target_include_directories(depth_server PRIVATE

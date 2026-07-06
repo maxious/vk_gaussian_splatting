@@ -4,7 +4,6 @@ cmake_minimum_required(VERSION 3.22)
 # Test executable
 add_executable(unit_tests
     main.cpp
-    test_cloud_protocol.cpp
     test_depth.cpp
     test_tcp_protocol.cpp
     test_tcp_depth_client.cpp
@@ -95,6 +94,38 @@ if(ENABLE_FREESPLATTER)
     target_compile_features(test_splat_client PRIVATE cxx_std_20)
     set_property(TARGET test_splat_client PROPERTY FOLDER "DepthServer")
 endif()
+
+if(ENABLE_TCP_DEPTH)
+    add_executable(test_cloud_client
+        ../src/cloud_client.cpp
+        test_cloud_client.cpp
+    )
+    target_link_libraries(test_cloud_client PRIVATE pthread nvpro2::nvutils)
+    target_include_directories(test_cloud_client PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../src
+        ${CMAKE_CURRENT_SOURCE_DIR}/../depth_server
+    )
+    target_compile_definitions(test_cloud_client PRIVATE WITH_TCP_DEPTH)
+    target_compile_features(test_cloud_client PRIVATE cxx_std_20)
+    set_property(TARGET test_cloud_client PROPERTY FOLDER "DepthServer")
+endif()
+
+# Cloud worker pool test (fork/socketpair IPC integration)
+add_executable(test_cloud_pool
+    test_cloud_pool.cpp
+    ${CMAKE_SOURCE_DIR}/depth_server/cloud_worker.cpp
+    ${CMAKE_SOURCE_DIR}/depth_server/cloud_splat_encoder.cpp
+)
+target_include_directories(test_cloud_pool PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/depth_server
+    ${CMAKE_SOURCE_DIR}/3rdparty/depth-anything-cpp/include
+    ${CMAKE_SOURCE_DIR}/nvpro_core2
+)
+target_link_libraries(test_cloud_pool PRIVATE depthanything nvpro2::nvutils)
+target_compile_features(test_cloud_pool PRIVATE cxx_std_20)
+add_test(NAME cloud_pool COMMAND test_cloud_pool)
+set_property(TARGET test_cloud_pool PROPERTY FOLDER "DepthServer")
 
 # Cloud splat encoder test (pure function, no external deps)
 add_executable(test_cloud_splat_encoder
