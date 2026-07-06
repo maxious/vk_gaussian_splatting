@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cstring>
 #include <limits>
+#include <string>
 
 namespace {
 
@@ -44,6 +45,12 @@ size_t minimumFrameSize(uint32_t message_type)
     case MSG_SPLAT_PROGRESS: return sizeof(FrameHeader) + sizeof(SplatProgressPayload);
     case MSG_SPLAT_RESPONSE: return sizeof(FrameHeader) + sizeof(SplatResponsePayload);
     case MSG_SPLAT_CANCEL: return sizeof(FrameHeader) + sizeof(SplatCancelPayload);
+    case MSG_CLOUD_REQUEST: return sizeof(FrameHeader) + sizeof(CloudRequestPayload) + sizeof(CloudRequestOptions);
+    case MSG_CLOUD_POLL: return sizeof(FrameHeader) + sizeof(CloudPollPayload);
+    case MSG_CLOUD_PROGRESS: return sizeof(FrameHeader) + sizeof(CloudProgressPayload);
+    case MSG_CLOUD_RESPONSE: return sizeof(FrameHeader) + sizeof(CloudResponsePayload);
+    case MSG_CLOUD_CANCEL: return sizeof(FrameHeader) + sizeof(CloudCancelPayload);
+    case MSG_CLOUD_ERROR: return sizeof(FrameHeader) + sizeof(CloudErrorPayload);
     case MSG_SPLAT_ERROR: return sizeof(FrameHeader) + sizeof(SplatErrorPayload);
     default: return 0;
     }
@@ -462,6 +469,228 @@ std::vector<uint8_t> TcpProtocolSerializer::serializeSplatError(uint32_t job_id,
     copyTextField(payload.error_msg, sizeof(payload.error_msg), error_msg);
     std::memcpy(frame.data() + sizeof(FrameHeader), &payload, sizeof(payload));
     return frame;
+}
+
+std::vector<uint8_t> TcpProtocolSerializer::serializeCloudRequest(
+    const CloudRequestPayload& payload,
+    const CloudRequestOptions& opts,
+    const std::vector<std::string>& frame_paths)
+{
+    if(frame_paths.size() != payload.n_frames)
+    {
+        LOGE("TcpProtocolSerializer: frame_paths.size()=%zu != n_frames=%u\n",
+             frame_paths.size(), payload.n_frames);
+        return {};
+    }
+    if(payload.n_frames < 2 || payload.n_frames > MAX_CLOUD_FRAMES)
+    {
+        LOGE("TcpProtocolSerializer: n_frames=%u out of range [2,%u]\n",
+             payload.n_frames, MAX_CLOUD_FRAMES);
+        return {};
+    }
+
+    size_t frame_data_size = 0;
+    for(const auto& path : frame_paths)
+    {
+        if(path.size() > MAX_CLOUD_PATH_LEN)
+        {
+            LOGE("TcpProtocolSerializer: path length %zu exceeds MAX_CLOUD_PATH_LEN\n", path.size());
+            return {};
+        }
+        size_t with_prefix = 0;
+        if(!checkedAdd(sizeof(uint32_t), path.size(), with_prefix))
+        {
+            return {};
+        }
+        if(!checkedAdd(frame_data_size, with_prefix, frame_data_size))
+        {
+            return {};
+        }
+    }
+
+    size_t payload_size = 0;
+    if(!checkedAdd(sizeof(CloudRequestPayload), sizeof(CloudRequestOptions), payload_size) ||
+       !checkedAdd(payload_size, frame_data_size, payload_size))
+    {
+        LOGE("TcpProtocolSerializer: cloud request payload overflow\n");
+        return {};
+    }
+
+    auto frame = makeFrame(MSG_CLOUD_REQUEST, payload_size);
+    if(frame.empty())
+    {
+        return {};
+    }
+
+    CloudRequestPayload out_payload{};
+    out_payload.n_frames = payload.n_frames;
+    out_payload.options_size = sizeof(CloudRequestOptions);
+    out_payload.frame_data_size = static_cast<uint32_t>(frame_data_size);
+
+    uint8_t* write_ptr = frame.data() + sizeof(FrameHeader);
+    std::memcpy(write_ptr, &out_payload, sizeof(out_payload));
+    write_ptr += sizeof(out_payload);
+
+    std::memcpy(write_ptr, &opts, sizeof(CloudRequestOptions));
+    write_ptr += sizeof(CloudRequestOptions);
+
+    for(const auto& path : frame_paths)
+    {
+        uint32_t len = static_cast<uint32_t>(path.size());
+        std::memcpy(write_ptr, &len, sizeof(len));
+        write_ptr += sizeof(len);
+        if(len != 0)
+        {
+            std::memcpy(write_ptr, path.data(), len);
+            write_ptr += len;
+        }
+    }
+
+    return frame;
+}
+
+std::vector<uint8_t> TcpProtocolSerializer::serializeCloudPoll(uint32_t job_id)
+{
+    auto frame = makeFrame(MSG_CLOUD_POLL, sizeof(CloudPollPayload));
+    CloudPollPayload payload{};
+    payload.job_id = job_id;
+    std::memcpy(frame.data() + sizeof(FrameHeader), &payload, sizeof(payload));
+    return frame;
+}
+
+std::vector<uint8_t> TcpProtocolSerializer::serializeCloudProgress(const CloudProgressPayload& p)
+{
+    auto frame = makeFrame(MSG_CLOUD_PROGRESS, sizeof(CloudProgressPayload));
+    std::memcpy(frame.data() + sizeof(FrameHeader), &p, sizeof(p));
+    return frame;
+}
+
+std::vector<uint8_t> TcpProtocolSerializer::serializeCloudResponse(const CloudResponsePayload& p,
+                                                                   const std::string& path)
+{
+    const size_t path_len = path.size() + 1;
+    if(path_len > MAX_FRAME_SIZE)
+    {
+        LOGE("TcpProtocolSerializer: cloud response path too long (%zu)\n", path_len);
+        return {};
+    }
+
+    size_t payload_size = 0;
+    if(!checkedAdd(sizeof(CloudResponsePayload), path_len, payload_size))
+    {
+        LOGE("TcpProtocolSerializer: cloud response payload overflow\n");
+        return {};
+    }
+
+    auto frame = makeFrame(MSG_CLOUD_RESPONSE, payload_size);
+    if(frame.empty())
+    {
+        return {};
+    }
+
+    CloudResponsePayload out_payload{};
+    out_payload.job_id = p.job_id;
+    out_payload.n_points = p.n_points;
+    out_payload.path_length = static_cast<uint32_t>(path_len);
+
+    std::memcpy(frame.data() + sizeof(FrameHeader), &out_payload, sizeof(out_payload));
+    std::memcpy(frame.data() + sizeof(FrameHeader) + sizeof(CloudResponsePayload), path.c_str(), path_len);
+    return frame;
+}
+
+std::vector<uint8_t> TcpProtocolSerializer::serializeCloudCancel(uint32_t job_id)
+{
+    auto frame = makeFrame(MSG_CLOUD_CANCEL, sizeof(CloudCancelPayload));
+    CloudCancelPayload payload{};
+    payload.job_id = job_id;
+    std::memcpy(frame.data() + sizeof(FrameHeader), &payload, sizeof(payload));
+    return frame;
+}
+
+std::vector<uint8_t> TcpProtocolSerializer::serializeCloudError(const CloudErrorPayload& p)
+{
+    auto frame = makeFrame(MSG_CLOUD_ERROR, sizeof(CloudErrorPayload));
+    std::memcpy(frame.data() + sizeof(FrameHeader), &p, sizeof(p));
+    return frame;
+}
+
+bool decodeCloudRequest(const uint8_t* data,
+                        size_t len,
+                        CloudRequestPayload& out_payload,
+                        CloudRequestOptions& out_opts,
+                        std::vector<std::string>& out_paths)
+{
+    out_paths.clear();
+
+    if(data == nullptr)
+    {
+        return false;
+    }
+
+    const size_t min_size = sizeof(FrameHeader) + sizeof(CloudRequestPayload) + sizeof(CloudRequestOptions);
+    if(len < min_size)
+    {
+        return false;
+    }
+
+    FrameHeader header{};
+    std::memcpy(&header, data, sizeof(header));
+    if(!validateHeader(&header, len))
+    {
+        return false;
+    }
+
+    if(len < header.frame_length)
+    {
+        return false;
+    }
+
+    std::memcpy(&out_payload, data + sizeof(FrameHeader), sizeof(out_payload));
+
+    if(out_payload.n_frames < 2 || out_payload.n_frames > MAX_CLOUD_FRAMES)
+    {
+        return false;
+    }
+    if(out_payload.options_size != sizeof(CloudRequestOptions))
+    {
+        return false;
+    }
+
+    const size_t header_and_payload = sizeof(FrameHeader) + sizeof(CloudRequestPayload);
+    const size_t options_end = header_and_payload + sizeof(CloudRequestOptions);
+
+    if(len < options_end)
+    {
+        return false;
+    }
+
+    std::memcpy(&out_opts, data + header_and_payload, sizeof(out_opts));
+
+    size_t remaining = len - options_end;
+    const uint8_t* cursor = data + options_end;
+
+    for(uint32_t i = 0; i < out_payload.n_frames; ++i)
+    {
+        if(remaining < sizeof(uint32_t))
+        {
+            return false;
+        }
+        uint32_t path_len = 0;
+        std::memcpy(&path_len, cursor, sizeof(path_len));
+        remaining -= sizeof(uint32_t);
+        cursor += sizeof(uint32_t);
+
+        if(path_len > MAX_CLOUD_PATH_LEN || remaining < path_len)
+        {
+            return false;
+        }
+
+        out_paths.emplace_back(reinterpret_cast<const char*>(cursor), path_len);
+        remaining -= path_len;
+        cursor += path_len;
+    }
+
+    return true;
 }
 
 bool decodeSplatRequest(const uint8_t* message,

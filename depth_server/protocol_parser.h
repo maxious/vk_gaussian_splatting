@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 class TcpProtocolParser {
@@ -75,8 +76,23 @@ public:
     static std::vector<uint8_t> serializeSplatCancel(uint32_t job_id);
 
     static std::vector<uint8_t> serializeSplatError(uint32_t job_id,
-                                                    uint32_t error_code,
-                                                    const char* error_msg);
+                                                     uint32_t error_code,
+                                                     const char* error_msg);
+
+    static std::vector<uint8_t> serializeCloudRequest(const CloudRequestPayload& payload,
+                                                       const CloudRequestOptions& opts,
+                                                       const std::vector<std::string>& frame_paths);
+
+    static std::vector<uint8_t> serializeCloudPoll(uint32_t job_id);
+
+    static std::vector<uint8_t> serializeCloudProgress(const CloudProgressPayload& p);
+
+    static std::vector<uint8_t> serializeCloudResponse(const CloudResponsePayload& p,
+                                                        const std::string& path);
+
+    static std::vector<uint8_t> serializeCloudCancel(uint32_t job_id);
+
+    static std::vector<uint8_t> serializeCloudError(const CloudErrorPayload& p);
 };
 
 bool decodeSplatRequest(const uint8_t* message,
@@ -85,3 +101,9 @@ bool decodeSplatRequest(const uint8_t* message,
                         const uint8_t*& options,
                         const uint8_t*& images,
                         size_t& images_size);
+
+bool decodeCloudRequest(const uint8_t* data,
+                        size_t len,
+                        CloudRequestPayload& out_payload,
+                        CloudRequestOptions& out_opts,
+                        std::vector<std::string>& out_paths);
