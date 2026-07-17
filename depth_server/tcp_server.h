@@ -1,5 +1,6 @@
 #pragma once
 
+#include "cloud_worker_pool.h"
 #include "protocol_parser.h"
 #include "splat_worker_pool.h"
 #include "worker_pool.h"
@@ -41,6 +42,9 @@ public:
     // Allow late-binding the splat pool (e.g. when constructed in depth-only mode)
     void setSplatPool(SplatWorkerPool* pool) { m_splatPool = pool; }
 
+    // Allow late-binding the cloud pool
+    void setCloudPool(CloudWorkerPool* pool) { m_cloudPool = pool; }
+
 private:
     struct InFlightFrame {
         int client_slot = -1;
@@ -50,6 +54,7 @@ private:
 
     WorkerPool& m_pool;
     SplatWorkerPool* m_splatPool = nullptr;
+    CloudWorkerPool* m_cloudPool = nullptr;
     int m_listenFd = -1;
     std::atomic<bool> m_running{false};
     std::vector<ClientConnection> m_clients;
@@ -60,6 +65,7 @@ private:
     std::vector<uint64_t> m_clientGenerations;
     std::unordered_map<uint32_t, InFlightFrame> m_inFlightFrames;
     std::map<uint32_t, InFlightFrame> m_inFlightSplatJobs;
+    std::map<uint32_t, InFlightFrame> m_inFlightCloudJobs;
 
     // Constants
     static constexpr int MAX_CLIENTS = 16;

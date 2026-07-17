@@ -113,6 +113,21 @@ bool sendSplatError(int fd, uint32_t job_id, uint32_t error_code, const char* er
     return sendAll(fd, frame.data(), frame.size(), bytes_tx);
 }
 
+bool sendCloudError(int fd, uint32_t job_id, uint32_t error_code, const char* error_msg, uint64_t& bytes_tx)
+{
+    CloudErrorPayload payload{};
+    payload.job_id = job_id;
+    payload.error_code = error_code;
+    std::strncpy(payload.error_msg, error_msg != nullptr ? error_msg : "unknown error", sizeof(payload.error_msg) - 1);
+    payload.error_msg[sizeof(payload.error_msg) - 1] = '\0';
+    auto frame = TcpProtocolSerializer::serializeCloudError(payload);
+    if(frame.empty())
+    {
+        return false;
+    }
+    return sendAll(fd, frame.data(), frame.size(), bytes_tx);
+}
+
 }  // namespace
 
 TcpServer::TcpServer(WorkerPool& pool, SplatWorkerPool* splatPool) : m_pool(pool), m_splatPool(splatPool) {}
@@ -537,6 +552,124 @@ void TcpServer::update()
                         m_inFlightSplatJobs.erase(cancel.job_id);
                         LOGD("TcpServer: cancelled splat job %u from client %zu\n", cancel.job_id, client_idx);
                     }
+                    else if(message_type == MSG_CLOUD_REQUEST)
+                    {
+                        if(m_cloudPool == nullptr)
+                        {
+                            sendCloudError(client.fd, 0, 0, "cloud server not running", client.bytes_tx);
+                            client.last_activity_ms = nowMs();
+                            continue;
+                        }
+
+                        CloudRequestPayload cloud_payload{};
+                        CloudRequestOptions cloud_opts{};
+                        std::vector<std::string> frame_paths;
+                        if(!decodeCloudRequest(message, message_len, cloud_payload, cloud_opts, frame_paths))
+                        {
+                            LOGE("TcpServer: invalid CLOUD_REQUEST from client %zu\n", client_idx);
+                            sendCloudError(client.fd, 0, 2, "invalid cloud request", client.bytes_tx);
+                            client.last_activity_ms = nowMs();
+                            continue;
+                        }
+
+                        if(cloud_payload.n_frames < 2 || cloud_payload.n_frames > MAX_CLOUD_FRAMES)
+                        {
+                            sendCloudError(client.fd, 0, 2, "n_frames must be 2-200", client.bytes_tx);
+                            client.last_activity_ms = nowMs();
+                            continue;
+                        }
+
+                        const uint32_t job_id = m_cloudPool->submitJob(frame_paths, cloud_opts);
+                        if(job_id == 0)
+                        {
+                            sendCloudError(client.fd, 0, 1, "queue full", client.bytes_tx);
+                            client.last_activity_ms = nowMs();
+                            continue;
+                        }
+
+                        m_inFlightCloudJobs.emplace(job_id,
+                                                    InFlightFrame{static_cast<int>(client_idx),
+                                                                  m_clientGenerations[client_idx],
+                                                                  0});
+                        LOGD("TcpServer: queued cloud job %u from client %zu (%u frames)\n",
+                             job_id, client_idx, cloud_payload.n_frames);
+
+                        CloudProgressPayload progress{};
+                        progress.job_id = job_id;
+                        progress.stage = 0;
+                        progress.percent = 0;
+                        progress.windows_done = 0;
+                        progress.windows_total = 0;
+                        progress.eta_ms = 0;
+                        auto progress_msg = TcpProtocolSerializer::serializeCloudProgress(progress);
+                        if(!progress_msg.empty())
+                        {
+                            sendAll(client.fd, progress_msg.data(), progress_msg.size(), client.bytes_tx);
+                            client.last_activity_ms = nowMs();
+                        }
+                    }
+                    else if(message_type == MSG_CLOUD_POLL)
+                    {
+                        if(m_cloudPool == nullptr)
+                        {
+                            sendCloudError(client.fd, 0, 0, "cloud server not running", client.bytes_tx);
+                            client.last_activity_ms = nowMs();
+                            continue;
+                        }
+
+                        if(message_len < sizeof(FrameHeader) + sizeof(CloudPollPayload))
+                        {
+                            continue;
+                        }
+
+                        CloudPollPayload poll{};
+                        std::memcpy(&poll, message + sizeof(FrameHeader), sizeof(poll));
+
+                        auto inflight_it = m_inFlightCloudJobs.find(poll.job_id);
+                        if(inflight_it == m_inFlightCloudJobs.end())
+                        {
+                            sendCloudError(client.fd, poll.job_id, 0, "unknown job_id", client.bytes_tx);
+                            client.last_activity_ms = nowMs();
+                            continue;
+                        }
+
+                        uint8_t percent = static_cast<uint8_t>(
+                            std::min(100, m_cloudPool->queueDepth() * 10));
+                        CloudProgressPayload progress{};
+                        progress.job_id = poll.job_id;
+                        progress.stage = 1;
+                        progress.percent = percent;
+                        progress.windows_done = 0;
+                        progress.windows_total = 0;
+                        progress.eta_ms = 0;
+                        auto progress_msg = TcpProtocolSerializer::serializeCloudProgress(progress);
+                        if(!progress_msg.empty())
+                        {
+                            sendAll(client.fd, progress_msg.data(), progress_msg.size(), client.bytes_tx);
+                        }
+                        client.last_activity_ms = nowMs();
+                    }
+                    else if(message_type == MSG_CLOUD_CANCEL)
+                    {
+                        if(m_cloudPool == nullptr)
+                        {
+                            sendCloudError(client.fd, 0, 0, "cloud server not running", client.bytes_tx);
+                            client.last_activity_ms = nowMs();
+                            continue;
+                        }
+
+                        if(message_len < sizeof(FrameHeader) + sizeof(CloudCancelPayload))
+                        {
+                            continue;
+                        }
+
+                        CloudCancelPayload cancel{};
+                        std::memcpy(&cancel, message + sizeof(FrameHeader), sizeof(cancel));
+
+                        m_cloudPool->cancelJob(cancel.job_id);
+                        m_inFlightCloudJobs.erase(cancel.job_id);
+                        LOGD("TcpServer: cancelled cloud job %u from client %zu\n", cancel.job_id, client_idx);
+                    }
                     else
                     {
                         LOGW("TcpServer: ignoring unsupported message type %s from client %zu\n",
@@ -690,6 +823,81 @@ void TcpServer::update()
             }
 
             m_inFlightSplatJobs.erase(it);
+        }
+    }
+
+    // Poll cloud pool for completed jobs
+    if(m_cloudPool != nullptr)
+    {
+        for(;;)
+        {
+            CloudJobResult cloud_res;
+            if(!m_cloudPool->pollResult(cloud_res))
+            {
+                break;
+            }
+
+            auto it = m_inFlightCloudJobs.find(cloud_res.job_id);
+            if(it == m_inFlightCloudJobs.end())
+            {
+                LOGW("TcpServer: no in-flight routing entry for cloud job %u\n", cloud_res.job_id);
+                continue;
+            }
+
+            const InFlightFrame inflight = it->second;
+
+            if(inflight.client_slot < 0 || inflight.client_slot >= static_cast<int>(m_clients.size()))
+            {
+                m_inFlightCloudJobs.erase(it);
+                continue;
+            }
+
+            ClientConnection& client = m_clients[static_cast<size_t>(inflight.client_slot)];
+            if(client.fd < 0 || m_clientGenerations[static_cast<size_t>(inflight.client_slot)] != inflight.client_generation)
+            {
+                LOGW("TcpServer: dropping cloud job %u because client %d is no longer active\n",
+                     cloud_res.job_id, inflight.client_slot);
+                m_inFlightCloudJobs.erase(it);
+                continue;
+            }
+
+            if(cloud_res.error.empty())
+            {
+                CloudResponsePayload resp_payload{};
+                resp_payload.job_id = cloud_res.job_id;
+                resp_payload.n_points = cloud_res.n_points;
+                resp_payload.path_length = static_cast<uint32_t>(cloud_res.output_path.size());
+                auto resp = TcpProtocolSerializer::serializeCloudResponse(resp_payload, cloud_res.output_path);
+                if(resp.empty() || !sendAll(client.fd, resp.data(), resp.size(), client.bytes_tx))
+                {
+                    LOGE("TcpServer: failed to send CLOUD_RESPONSE for job %u to client %d: %s\n",
+                         cloud_res.job_id, inflight.client_slot, std::strerror(errno));
+                    resetClient(client);
+                    ++m_clientGenerations[static_cast<size_t>(inflight.client_slot)];
+                }
+                else
+                {
+                    client.last_activity_ms = nowMs();
+                    LOGD("TcpServer: delivered cloud job %u to client %d (%u points)\n",
+                         cloud_res.job_id, inflight.client_slot, cloud_res.n_points);
+                }
+            }
+            else
+            {
+                if(!sendCloudError(client.fd, cloud_res.job_id, 3, cloud_res.error.c_str(), client.bytes_tx))
+                {
+                    LOGE("TcpServer: failed to send CLOUD_ERROR for job %u to client %d: %s\n",
+                         cloud_res.job_id, inflight.client_slot, std::strerror(errno));
+                    resetClient(client);
+                    ++m_clientGenerations[static_cast<size_t>(inflight.client_slot)];
+                }
+                else
+                {
+                    client.last_activity_ms = nowMs();
+                }
+            }
+
+            m_inFlightCloudJobs.erase(it);
         }
     }
 
