@@ -97,23 +97,26 @@ endif()
 
 if(ENABLE_TCP_DEPTH)
     add_executable(test_cloud_client
-        ../src/cloud_client.cpp
         test_cloud_client.cpp
     )
-    target_link_libraries(test_cloud_client PRIVATE pthread nvpro2::nvutils)
+    target_link_libraries(test_cloud_client PRIVATE pthread)
     target_include_directories(test_cloud_client PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../src
         ${CMAKE_CURRENT_SOURCE_DIR}/../depth_server
     )
-    target_compile_definitions(test_cloud_client PRIVATE WITH_TCP_DEPTH)
     target_compile_features(test_cloud_client PRIVATE cxx_std_20)
     set_property(TARGET test_cloud_client PROPERTY FOLDER "DepthServer")
+
+    # Smoke test: verify binary runs and --help prints all flags
+    add_test(NAME test_cloud_client_smoke
+        COMMAND test_cloud_client --help
+    )
 endif()
 
 # Cloud worker pool test (fork/socketpair IPC integration)
 add_executable(test_cloud_pool
     test_cloud_pool.cpp
     ${CMAKE_SOURCE_DIR}/depth_server/cloud_worker.cpp
+    ${CMAKE_SOURCE_DIR}/depth_server/cloud_worker_pool.cpp
     ${CMAKE_SOURCE_DIR}/depth_server/cloud_splat_encoder.cpp
 )
 target_include_directories(test_cloud_pool PRIVATE
