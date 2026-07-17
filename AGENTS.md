@@ -486,6 +486,56 @@ cmake --build build --target test_splat_client --config Debug
 - `ggml` (nested submodule in `3rdparty/free-splatter/ggml/`) — tensor/ML backend
 - License: Apache-2.0 (both free-splatter.cpp and its model weights)
 
+### Cloud Streaming Mode (--mode cloud)
+
+Turns a sequence of JPEG frames into a coherent 3D point cloud (.splat) using depth-anything.cpp's `da_capi_points_stream` sliding-window Sim3 stitching. Optional de-ghosting: TSDF voxel fusion, per-seam ICP refinement, loop-closure pose-graph.
+
+**Requires**: a pose-capable DA3 model (e.g. `depth-anything-giant-f32.gguf`). Auto-downloaded on first use via `model_downloader.cpp`.
+
+**Build Flag**: `ENABLE_CLOUD=ON` for vk_viewer UI integration (default OFF). No extra flag needed for depth_server.
+
+**CLI Arguments** (`depth_server --mode cloud`):
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--cloud-model` | (required) | DA3 GGUF path |
+| `--cloud-backend` | `cpu` | Inference backend (`cpu`, `cuda`) |
+| `--cloud-workers` | `1` | Number of worker processes |
+| `--cloud-max-frames` | `64` | Max frames per job (2..200) |
+| `--cloud-chunk-size` | `12` | Frames per sliding window (2..24) |
+| `--cloud-overlap` | `3` | Window overlap |
+| `--cloud-fuse` | off | TSDF voxel fusion |
+| `--cloud-metric` | off | Absolute-metre rescale |
+| `--cloud-icp` | off | Per-seam ICP refinement |
+| `--cloud-loop-close` | off | Loop-closure pose-graph |
+| `--cloud-conf-pct` | `55` | Confidence percentile |
+| `--cloud-point-size` | `1.2` | Point radius multiplier |
+| `--cloud-fuse-voxel-frac` | `0.004` | Voxel fraction of bbox diagonal |
+| `--cloud-fuse-trunc-mult` | `4` | Truncation multiple of voxel |
+
+**Frame Cap**: 2 minimum, 64 default, 200 hard maximum.
+
+**Toggles**: All de-ghosting options are OFF by default. Enable individually: `--cloud-fuse`, `--cloud-icp`, `--cloud-loop-close`, `--cloud-metric`.
+
+**Output**: `.splat` file in `~/.cache/depth_server/clouds/job_{id}.splat`. Loadable in vk_viewer.
+
+**Test Command**:
+```bash
+source /opt/vulkan/1.4.350.1/setup-env.sh
+cd _bin/Debug
+# Start server on port 9102
+./depth_server --mode cloud --cloud-model ~/.cache/depth_server/depth-anything-giant-f32.gguf --port 9102 &
+# Run test client with 8 test frames
+./test_cloud_client --port 9102 --frames /path/to/frames/frame_*.jpg --output /tmp/test.splat
+# Verify
+file /tmp/test.splat
+```
+
+**Limitations**:
+- Hard cap of 200 frames per request
+- `--mode cloud` and `--mode splat` are mutually exclusive (cannot run both in same process)
+- No flythrough camera poses in this version (da_capi_stream_last_poses available but not wired yet)
+- No glTF/OBJ/VDB/VOX export (point cloud only; viewer renders Minecraft cube mode)
+
 ## Third-party Libraries
 
 - nvpro_core2 - NVIDIA Vulkan utilities (submodule)
