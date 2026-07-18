@@ -415,7 +415,7 @@ void VkViewer::renderStochasticFrame(VkCommandBuffer cmd, const FrameRenderConte
   vkCmdPushConstants(cmd, m_stochastic.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(shaderio::PushConstant),
                      &m_pcRaster);
 
-  const uint32_t resolveWg     = 8;
+  const uint32_t resolveWg     = 16;
   const uint32_t resolveDispX = (fbWidth + resolveWg - 1) / resolveWg;
   const uint32_t resolveDispY = (fbHeight + resolveWg - 1) / resolveWg;
   vkCmdDispatch(cmd, resolveDispX, resolveDispY, 1);

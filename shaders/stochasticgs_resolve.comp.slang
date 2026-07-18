@@ -44,7 +44,7 @@ RWTexture2D<float4>         outputImage;
 RWTexture2D<float4>         accumulationImage;
 // clang-format on
 
-[numthreads(8, 8, 1)]
+[numthreads(16, 16, 1)]
 [shader("compute")]
 void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
