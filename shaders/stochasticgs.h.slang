@@ -287,7 +287,7 @@ struct StochasticProjectedGaussian
  *
  * Parameters:
  *   mean3d         - 3D world-space center of the Gaussian
- *   raw_scale      - Log-scale parameters (3 floats)
+ *   variance       - Pre-computed exp(2*scale) from CPU (3 floats)
  *   raw_rotation   - Rotation quaternion (r, i, j, k) = (w, x, y, z)
  *   raw_opacity    - Raw opacity (pre-sigmoid)
  *   w2c            - World-to-camera (view) matrix (4x4, row-vector convention matching threedgs.h.slang)
@@ -302,7 +302,7 @@ struct StochasticProjectedGaussian
  *-----------------------------------------------------------------------------------------------*/
 bool project_gaussian(
     float3 mean3d,
-    float3 raw_scale,
+    float3 variance,
     float4 raw_rotation,
     float raw_opacity,
     float4x4 w2c,
@@ -340,8 +340,6 @@ bool project_gaussian(
     if(norm_sq < 1e-8f)
         return false;
     const float norm_sq_rcp = 1.0f / norm_sq;
-
-    const float3 variance = exp(2.0f * raw_scale);
 
     float3x3 R = float3x3(
         1.0f - 2.0f * (jj + kk) * norm_sq_rcp, 2.0f * (ij - rk) * norm_sq_rcp, 2.0f * (ik + rj) * norm_sq_rcp,

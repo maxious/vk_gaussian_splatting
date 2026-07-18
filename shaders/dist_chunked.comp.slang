@@ -89,10 +89,14 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uint3 groupThreadID : SV
   {
     float4 splatPos = float4(fetchCenter(id), 1.0);
 
-    // Row-major: multiply in reverse order (vector * matrix)
+#if CAMERA_TYPE == CAMERA_PINHOLE
+    // OPTIMIZATION: use precomputed modelViewProj matrix (modelView * projection, stored in modelMatrixInverse)
+    float4 ndcPos = mul(splatPos, pcRaster.modelMatrixInverse);
+#else
+    // Fisheye: need viewPos for projectPointFisheye, so use separate modelView + projection
     float4 viewPos = mul(splatPos, pcRaster.modelMatrixRotScaleInverse);
-    // TODO: projection matrix is not correct with fisheye, this is a coarse aprox to compute depth
     float4 ndcPos = mul(viewPos, frameInfo.projectionMatrix);
+#endif
     ndcPos = ndcPos / ndcPos.w;
     depth = ndcPos.z;
     isVisible = true;

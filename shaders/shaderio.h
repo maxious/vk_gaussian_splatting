@@ -197,6 +197,9 @@
 #define BINDING_PBR_BRDF_LUT_SAMPLER 49   // Sampler for the BRDF LUT
 #define BINDING_PBR_ENVMAP_ACCEL 50       // StructuredBuffer<EnvAccel> HdrIbl alias table for MIS
 
+// Precomputed variance buffer (exp(2*scale) uploaded from CPU to save GPU exp() calls)
+#define BINDING_VARIANCE_BUFFER 51
+
 // location for vertex attributes
 // (only for vertex shader mode)
 #define ATTRIBUTE_LOC_POSITION 0

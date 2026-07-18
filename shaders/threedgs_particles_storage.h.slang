@@ -46,6 +46,7 @@
   [[vk::binding(BINDING_COVARIANCES_BUFFER, 0)]] RWStructuredBuffer<float> covariancesBuffer;
   [[vk::binding(BINDING_MOTION_BUFFER, 0)]] RWStructuredBuffer<float> motionBuffer;
   [[vk::binding(BINDING_TIME_BUFFER, 0)]] RWStructuredBuffer<float> timeBuffer;
+  [[vk::binding(BINDING_VARIANCE_BUFFER, 0)]] RWStructuredBuffer<float> varianceBuffer;
   [[vk::binding(BINDING_BASECOLOR_BUFFER, 0)]] RWStructuredBuffer<float> basecolorBuffer;
   [[vk::binding(BINDING_ROUGHNESS_BUFFER, 0)]] RWStructuredBuffer<float> roughnessBuffer;
   [[vk::binding(BINDING_METALLIC_BUFFER, 0)]] RWStructuredBuffer<float> metallicBuffer;
@@ -138,6 +139,28 @@ float3 fetchScale(in uint splatIndex)
 float3 fetchScale(in uint splatIndex)
 {
   return float3(scalesBuffer[splatIndex * 3 + 0], scalesBuffer[splatIndex * 3 + 1], scalesBuffer[splatIndex * 3 + 2]);
+}
+#endif
+
+#if DATA_STORAGE == STORAGE_LCC_PACKED
+// fetch pre-computed variance (exp(2*scale)) from LCC packed buffer
+float3 fetchVariance(in uint splatIndex)
+{
+  // LCC doesn't have a variance buffer; compute from scale on-the-fly
+  return exp(2.0f * fetchScale(splatIndex));
+}
+#elif DATA_STORAGE == STORAGE_TEXTURES
+// fetch pre-computed variance from texture (fallback: compute from scale)
+float3 fetchVariance(in uint splatIndex)
+{
+  // Textures don't have a variance texture; compute from scale on-the-fly
+  return exp(2.0f * fetchScale(splatIndex));
+}
+#else
+// fetch pre-computed variance from data buffer
+float3 fetchVariance(in uint splatIndex)
+{
+  return float3(varianceBuffer[splatIndex * 3 + 0], varianceBuffer[splatIndex * 3 + 1], varianceBuffer[splatIndex * 3 + 2]);
 }
 #endif
 

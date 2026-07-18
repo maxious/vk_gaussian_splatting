@@ -150,6 +150,9 @@ void VkViewer::processSortingOnGPU(VkCommandBuffer cmd, const uint32_t splatCoun
     m_pcRaster.modelMatrixInverse = m_splatSetVk.transformInverse;
     // OPTIMIZATION: Reuse modelMatrixRotScaleInverse for ModelView matrix (dist shader doesn't use RotScaleInverse)
     m_pcRaster.modelMatrixRotScaleInverse = m_splatSetVk.transform * viewMatrix;
+    // OPTIMIZATION: Pre-multiply modelView * projection for dist shader (single matrix multiply per splat)
+    // Reuse modelMatrixInverse for the combined matrix (dist shader doesn't use transformInverse)
+    m_pcRaster.modelMatrixInverse = m_pcRaster.modelMatrixRotScaleInverse * prmFrame.projectionMatrix;
 
     vkCmdPushConstants(cmd, m_pipelineLayout,
                        VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_MESH_BIT_EXT | VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,

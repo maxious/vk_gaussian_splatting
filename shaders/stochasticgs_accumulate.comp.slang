@@ -211,7 +211,7 @@ void main(uint3 id : SV_DispatchThreadID)
 
     // ---- Fetch Gaussian attributes from particle storage ----
     const float3 mean3d_obj  = fetchCenter(gaussian_idx);
-    const float3 raw_scale   = fetchScale(gaussian_idx);
+    const float3 variance    = fetchVariance(gaussian_idx);
     const float4 raw_rotation = fetchRotation(gaussian_idx);
     // fetchOpacity reads only the opacity component (avoids fetching RGB when only alpha needed)
     const float activated_opacity = clamp(fetchOpacity(gaussian_idx), 1e-7f, 1.0f - 1e-7f);
@@ -237,7 +237,7 @@ void main(uint3 id : SV_DispatchThreadID)
     StochasticProjectedGaussian proj;
     const bool visible = project_gaussian(
         mean3d,
-        raw_scale,
+        variance,
         raw_rotation,
         raw_opacity,
         frameInfo.viewMatrix,

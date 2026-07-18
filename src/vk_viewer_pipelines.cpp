@@ -57,6 +57,7 @@ void VkViewer::initPipelines()
     bindings.addBinding(BINDING_SH_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
     bindings.addBinding(BINDING_MOTION_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
     bindings.addBinding(BINDING_TIME_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
+    bindings.addBinding(BINDING_VARIANCE_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
     
     // LCC packed storage buffer (for GPU-side decompression)
     bindings.addBinding(BINDING_LCC_PACKED_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
@@ -195,6 +196,9 @@ void VkViewer::initPipelines()
         
       writeContainer.append(bindings.getWriteSet(BINDING_MOTION_BUFFER, m_descriptorSet), m_splatSetVk.motionBuffer);
       writeContainer.append(bindings.getWriteSet(BINDING_TIME_BUFFER, m_descriptorSet), m_splatSetVk.timeBuffer);
+      
+      if(m_splatSetVk.varianceBuffer.buffer != VK_NULL_HANDLE)
+        writeContainer.append(bindings.getWriteSet(BINDING_VARIANCE_BUFFER, m_descriptorSet), m_splatSetVk.varianceBuffer);
     }
   }
 

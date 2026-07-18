@@ -62,20 +62,27 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uint3 groupThreadID : SV
     float4 splatPos = float4(fetchCenter(id), 1.0);
 
     // Row-major: multiply in reverse order (vector * matrix)
-    // Optimization: use precomputed modelViewMatrix (stored in modelMatrixRotScaleInverse for this shader)
+#if CAMERA_TYPE == CAMERA_PINHOLE
+    // OPTIMIZATION: use precomputed modelViewProj matrix (modelView * projection, stored in modelMatrixInverse)
+    float4 ndcPos = mul(splatPos, pcRaster.modelMatrixInverse);
+    ndcPos = ndcPos / ndcPos.w;
+    depth = ndcPos.z;
+    isVisible = true;
+
+#if FRUSTUM_CULLING_MODE == FRUSTUM_CULLING_AT_DIST
+    const float clip = 1.0f + frameInfo.frustumDilation;
+    if(abs(ndcPos.x) > clip || abs(ndcPos.y) > clip || ndcPos.z < 0.f - frameInfo.frustumDilation || ndcPos.z > 1.0)
+      isVisible = false;
+#endif
+#else
+    // Fisheye: need viewPos for projectPointFisheye, so use separate modelView + projection
     float4 viewPos = mul(splatPos, pcRaster.modelMatrixRotScaleInverse);
-    // TODO: projection matrix is not correct with fisheye, this is a coarse aprox to compute depth
     float4 ndcPos = mul(viewPos, frameInfo.projectionMatrix);
     ndcPos = ndcPos / ndcPos.w;
     depth = ndcPos.z;
     isVisible = true;
 
 #if FRUSTUM_CULLING_MODE == FRUSTUM_CULLING_AT_DIST
-#if CAMERA_TYPE == CAMERA_PINHOLE
-    const float clip = 1.0f + frameInfo.frustumDilation;
-    if(abs(ndcPos.x) > clip || abs(ndcPos.y) > clip || ndcPos.z < 0.f - frameInfo.frustumDilation || ndcPos.z > 1.0)
-      isVisible = false;
-#else
     CameraModelParameters sensorModel = initPerfectFisheyeCamera(frameInfo.viewport, frameInfo.focal);
 
     float2 projected;

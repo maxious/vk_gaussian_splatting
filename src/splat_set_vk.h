@@ -174,6 +174,7 @@ public:
   nvvk::Buffer basecolorBuffer;
   nvvk::Buffer roughnessBuffer;
   nvvk::Buffer metallicBuffer;
+  nvvk::Buffer varianceBuffer;      // Precomputed exp(2*scale) for stochastic GS
 
   // LCC packed buffer (for STORAGE_LCC_PACKED mode)
   nvvk::Buffer lccPackedBuffer;    // Raw 32-byte packed LCC splat data

@@ -340,6 +340,33 @@ void SplatSetVk::initDataBuffers(SplatSet& splatSet)
     buffersToDestroy.push_back(hostBufferTime);
   }
 
+  // Precomputed variance (exp(2*scale)) — saves GPU exp() calls in stochastic GS
+  {
+    const uint32_t bufferSize = splatCount * 3 * sizeof(float);
+
+    nvvk::Buffer hostBuffer;
+    m_alloc->createBuffer(hostBuffer, bufferSize, hostBufferUsageFlags, hostMemoryUsageFlags, hostAllocCreateFlags);
+    NVVK_DBG_NAME(hostBuffer.buffer);
+
+    m_alloc->createBuffer(varianceBuffer, bufferSize, deviceBufferUsageFlags, deviceMemoryUsageFlags);
+    NVVK_DBG_NAME(varianceBuffer.buffer);
+
+    float* mapped = static_cast<float*>(hostBuffer.mapping);
+    START_PAR_LOOP(splatCount, i)
+    {
+      const auto stride3 = i * 3;
+      mapped[stride3 + 0] = std::exp(2.0f * splatSet.scale[stride3 + 0]);
+      mapped[stride3 + 1] = std::exp(2.0f * splatSet.scale[stride3 + 1]);
+      mapped[stride3 + 2] = std::exp(2.0f * splatSet.scale[stride3 + 2]);
+    }
+    END_PAR_LOOP()
+
+    VkBufferCopy bc{.srcOffset = 0, .dstOffset = 0, .size = bufferSize};
+    vkCmdCopyBuffer(cmd, hostBuffer.buffer, varianceBuffer.buffer, 1, &bc);
+
+    buffersToDestroy.push_back(hostBuffer);
+  }
+
   // TRON PBR material attributes
   {
     const bool    hasMaterial        = splatSet.has_material_data;
@@ -652,6 +679,7 @@ void SplatSetVk::deinitDataBuffers()
   m_alloc->destroyBuffer(basecolorBuffer);
   m_alloc->destroyBuffer(roughnessBuffer);
   m_alloc->destroyBuffer(metallicBuffer);
+  m_alloc->destroyBuffer(varianceBuffer);
 }
 
 ///////////////////
