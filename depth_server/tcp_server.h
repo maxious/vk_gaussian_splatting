@@ -66,6 +66,7 @@ private:
     std::unordered_map<uint32_t, InFlightFrame> m_inFlightFrames;
     std::map<uint32_t, InFlightFrame> m_inFlightSplatJobs;
     std::map<uint32_t, InFlightFrame> m_inFlightCloudJobs;
+    std::unordered_map<uint32_t, CloudJobResult> m_pendingCloudResults;
 
     // Constants
     static constexpr int MAX_CLIENTS = 16;

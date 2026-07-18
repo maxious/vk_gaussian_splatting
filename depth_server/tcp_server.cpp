@@ -272,7 +272,7 @@ void TcpServer::update()
 
         char addr_buffer[INET_ADDRSTRLEN] = {};
         const char* printable_addr = inet_ntop(AF_INET, &client_addr.sin_addr, addr_buffer, sizeof(addr_buffer));
-        LOGI("TcpServer: accepted client %d from %s:%u\n", free_slot,
+        LOGD("TcpServer: accepted client %d from %s:%u\n", free_slot,
              printable_addr != nullptr ? printable_addr : "unknown",
              static_cast<unsigned int>(ntohs(client_addr.sin_port)));
     }
@@ -633,6 +633,36 @@ void TcpServer::update()
                             continue;
                         }
 
+                        inflight_it->second.client_slot         = static_cast<int>(client_idx);
+                        inflight_it->second.client_generation   = m_clientGenerations[client_idx];
+
+                        auto pending = m_pendingCloudResults.find(poll.job_id);
+                        if(pending != m_pendingCloudResults.end())
+                        {
+                            CloudJobResult cloud_res = std::move(pending->second);
+                            m_pendingCloudResults.erase(pending);
+
+                            if(cloud_res.error.empty())
+                            {
+                                CloudResponsePayload resp_payload{};
+                                resp_payload.job_id = cloud_res.job_id;
+                                resp_payload.n_points = cloud_res.n_points;
+                                resp_payload.path_length = static_cast<uint32_t>(cloud_res.output_path.size());
+                                auto resp = TcpProtocolSerializer::serializeCloudResponse(resp_payload, cloud_res.output_path);
+                                if(!resp.empty())
+                                {
+                                    sendAll(client.fd, resp.data(), resp.size(), client.bytes_tx);
+                                }
+                            }
+                            else
+                            {
+                                sendCloudError(client.fd, cloud_res.job_id, 3, cloud_res.error.c_str(), client.bytes_tx);
+                            }
+                            m_inFlightCloudJobs.erase(poll.job_id);
+                            client.last_activity_ms = nowMs();
+                            continue;
+                        }
+
                         uint8_t percent = static_cast<uint8_t>(
                             std::min(100, m_cloudPool->queueDepth() * 10));
                         CloudProgressPayload progress{};
@@ -686,7 +716,7 @@ void TcpServer::update()
 
         if(close_client)
         {
-            LOGI("TcpServer: closing client %zu\n", client_idx);
+            LOGD("TcpServer: closing client %zu\n", client_idx);
             resetClient(client);
             ++m_clientGenerations[client_idx];
         }
@@ -855,9 +885,9 @@ void TcpServer::update()
             ClientConnection& client = m_clients[static_cast<size_t>(inflight.client_slot)];
             if(client.fd < 0 || m_clientGenerations[static_cast<size_t>(inflight.client_slot)] != inflight.client_generation)
             {
-                LOGW("TcpServer: dropping cloud job %u because client %d is no longer active\n",
+                LOGD("TcpServer: deferring cloud job %u result (client %d reconnecting)\n",
                      cloud_res.job_id, inflight.client_slot);
-                m_inFlightCloudJobs.erase(it);
+                m_pendingCloudResults[cloud_res.job_id] = std::move(cloud_res);
                 continue;
             }
 
