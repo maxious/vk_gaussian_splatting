@@ -540,6 +540,8 @@ void main()
         // per-ray base offset. A proper per-ray slice (SSBO copy in the host
         // or a base-indexed function signature) is left as a follow-up so the
         // build can proceed without changing irradiance_shadow.h.slang.
+        const uint rayIndex_PBR = launchID.y * launchSize.x + launchID.x;
+        const uint numRays_PBR = launchSize.x * launchSize.y;
         irradiance = traceIrradianceMIS(gbuf.position,
                                         gbuf.normal,
                                         prefilteredEnvMap,
@@ -547,7 +549,9 @@ void main()
                                         envAccel,
                                         gKDist,
                                         gKId,
-                                        numSamples);
+                                        numSamples,
+                                        rayIndex_PBR,
+                                        numRays_PBR);
 #else
         // The MIS shadow pass depends on the K-buffer for visibility; without
         // RTX_USE_GLOBAL_KBUFFER the splat hits live in the per-ray payload
