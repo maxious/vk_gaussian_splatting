@@ -124,12 +124,14 @@ void sampleEnvMap(TextureCube envMap,
  * (which holds the global SoA K-buffer as RW for the per-frame init writes)
  * without a separate read-only descriptor. The function itself only reads.
  *-----------------------------------------------------------------------------------------------*/
-bool shadowedByKBuffer(RWStructuredBuffer<float> kBufferDist, RWStructuredBuffer<int> kBufferId)
+bool shadowedByKBuffer(RWStructuredBuffer<float> kBufferDist, RWStructuredBuffer<int> kBufferId,
+                       uint rayIndex, uint numRays)
 {
     [[unroll]]
     for(int k = 1; k < IRRADIANCE_KBUFFER_SIZE; ++k)
     {
-        const int splatId = kBufferId[k];
+        // SoA layout: buffer[slotIndex * numRays + rayIndex]
+        const int splatId = kBufferId[k * int(numRays) + int(rayIndex)];
         if(splatId != IRRADIANCE_KBUFFER_INVALID_ID)
         {
             // Any K-buffer Gaussian in front of the shading point along the
@@ -178,7 +180,9 @@ float3 traceIrradianceMIS(float3 shadingPoint,
                           StructuredBuffer<EnvAccel> envAccel,
                           RWStructuredBuffer<float> kBufferDist,
                           RWStructuredBuffer<int> kBufferId,
-                          int numSamples)
+                          int numSamples,
+                          uint rayIndex,
+                          uint numRays)
 {
     // Deterministic per-pixel seed from the shading point's position. The host
     // raygen is expected to feed a fresh seed each frame for temporal stability.
@@ -186,7 +190,7 @@ float3 traceIrradianceMIS(float3 shadingPoint,
 
     // Pre-compute shadow visibility (independent of sample direction). The K-buffer
     // is the same for every shadow ray from this shading point in this implementation.
-    const bool shadowed = shadowedByKBuffer(kBufferDist, kBufferId);
+    const bool shadowed = shadowedByKBuffer(kBufferDist, kBufferId, rayIndex, numRays);
     const float vis     = shadowed ? 0.0F : 1.0F;
 
     float3 irradiance = float3(0.0F);
