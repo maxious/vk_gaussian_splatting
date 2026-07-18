@@ -63,7 +63,12 @@ float G_Smith(float NdotV, float NdotL, float roughness)
 // VdotH is the cosine of the angle between view and half vector.
 float3 schlickFresnel(float3 F0, float VdotH)
 {
-    return F0 + (1.0F - F0) * pow(1.0F - VdotH, 5.0F);
+    // Explicit multiplication avoids a full pow() for a constant exponent.
+    float t = 1.0F - VdotH;
+    float t5 = t * t;    // t^2
+    t5 = t5 * t5;        // t^4
+    t5 = t5 * t;         // t^5
+    return F0 + (1.0F - F0) * t5;
 }
 
 // --- Cook-Torrance Specular BRDF ---
@@ -92,7 +97,6 @@ float3 cookTorranceSpecular(float NdotV, float NdotL, float NdotH, float VdotH, 
 //   brdfLUT          : 2D RG LUT (R = scale, G = bias), lookup by (NdotV, roughness)
 //   lutSampler       : sampler for the BRDF LUT (clamp + linear)
 //   envRotation      : Y-axis rotation in radians applied to the reflected direction
-//   exposure         : linear exposure multiplier applied at the end
 float3 evaluatePBR(
     float3 basecolor,
     float roughness,
@@ -103,8 +107,7 @@ float3 evaluatePBR(
     SamplerState envSampler,
     Texture2D brdfLUT,
     SamplerState lutSampler,
-    float envRotation,
-    float exposure)
+    float envRotation)
 {
     float NdotV = max(dot(N, V), 0.0F);
 
@@ -141,8 +144,9 @@ float3 evaluatePBR(
     float3 kD = (1.0F - kS) * (1.0F - metallic);
     float3 diffuseColor = kD * basecolor * (1.0F / M_PI);
 
-    // Combine diffuse + specular, then apply linear exposure.
-    return (diffuseColor + specularColor) * exposure;
+    // Combine diffuse + specular. Exposure is applied by the caller so it
+    // uniformly affects both PBR and irradiance contributions.
+    return (diffuseColor + specularColor);
 }
 
 #endif // PBR_SHADING_H_SLANG

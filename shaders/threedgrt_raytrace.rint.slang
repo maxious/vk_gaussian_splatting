@@ -81,8 +81,11 @@ bool particleDensityHitInstance(in float3   canonicalRayOrigin,
   const float numerator   = -dot(canonicalRayOrigin, canonicalUnormalizedRayDirection);
   const float denominator = dot(canonicalUnormalizedRayDirection, canonicalUnormalizedRayDirection);
   hitDistance             = numerator / denominator;
+  // Reuse denominator (|dir|^2 already computed above) to avoid redundant rsqrt.
+  const float invLen = rsqrt(denominator);
+  const float3 normalizedDir = canonicalUnormalizedRayDirection * invLen;
   return (hitDistance > minHitDistance) && (hitDistance < maxHitDistance)
-         && (particleRayMinSquaredDistance(canonicalRayOrigin, normalize(canonicalUnormalizedRayDirection)) < maxParticleSquaredDistance);
+         && (particleRayMinSquaredDistance(canonicalRayOrigin, normalizedDir) < maxParticleSquaredDistance);
 }
 
 [shader("intersection")]

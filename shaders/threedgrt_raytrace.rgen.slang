@@ -168,9 +168,10 @@ void main()
   int  bounce  = 0;
   int  done    = 1;
 
-  uint64_t clockStart = clockARB();
-
   // for debug feedback and alternative visu modes
+#if VISUALIZE == VISUALIZE_CLOCK
+  uint64_t clockStart = clockARB();
+#endif
   bool  closestParticleFound = false;
   float closestParticleDist  = PAYLOAD_INF_DISTANCE;
   int   closestParticleId    = PAYLOAD_INVALID_ID;
@@ -192,6 +193,12 @@ void main()
   // median-depth weighted material persists across iterations. Initialized
   // per-bounce before the multi-pass any-hit loop.
   GBufferData gbuf;
+
+  // Save primary ray for motion-vector computation (used after the bounce
+  // loop for DLSS-RR / SpaceWarp, where rayOrigin/Direction may have been
+  // modified by secondary bounces).
+  const float3 primaryRayOrigin    = rayOrigin;
+  const float3 primaryRayDirection = rayDirection;
 
   // bounce loop
   while(true)
@@ -291,6 +298,11 @@ void main()
     }
 #endif
 
+    // Pre-compute float minTransmittance once to avoid per-iteration double cast.
+    // Declared here (before HYBRID_ENABLED guard) so it's in scope for both
+    // the splat and mesh transmittance checks.
+    const float minTransmittance = float(frameInfo.minTransmittance);
+
     // when hybrid is enabled, we trace the particles only for secondary rays
 #if HYBRID_ENABLED
     if(bounce > 0)
@@ -326,7 +338,7 @@ void main()
 #endif
 
       while(outerIdx < frameInfo.maxPasses && (rayLastHitDistance <= tMax)
-            && (maxComponent(transmittance) > double(frameInfo.minTransmittance)))
+            && (float(maxComponent(transmittance)) > minTransmittance))
       {
 #if RTX_USE_GLOBAL_KBUFFER
         // Initialize global K-buffer for this ray
@@ -390,7 +402,7 @@ void main()
           const float dist    = payload.dist[i];
 #endif
 
-          if((splatId != PAYLOAD_INVALID_ID) && (maxComponent(transmittance) > double(frameInfo.minTransmittance)))
+          if((splatId != PAYLOAD_INVALID_ID) && (float(maxComponent(transmittance)) > minTransmittance))
           {
 #if WIREFRAME
             // we render wireframe only for primary rays.
@@ -457,7 +469,7 @@ void main()
 
 #if RTX_USE_MESHES
     // process mesh shading if needed
-    if((meshHitDist < PAYLOAD_INF_DISTANCE) && (maxComponent(transmittance) > double(frameInfo.minTransmittance)))
+    if((meshHitDist < PAYLOAD_INF_DISTANCE) && (float(maxComponent(transmittance)) > minTransmittance))
     {
       // retrieve the material for this hit
       ObjMaterial meshHitMaterial = objDesc[meshHitObjId].materialAddress[meshHitMatId];
@@ -497,6 +509,8 @@ void main()
       const float3 V = normalize(frameInfo.cameraPosition - gbuf.position);
 
       // Cook-Torrance split-sum IBL shading at the median-depth Gaussian.
+      // evaluatePBR returns linear HDR without exposure applied. Exposure is
+      // applied uniformly to the (PBR + irradiance) result below.
       const float3 pbrColor = evaluatePBR(gbuf.basecolor,
                                           gbuf.roughness,
                                           gbuf.metallic,
@@ -506,8 +520,7 @@ void main()
                                           envSampler,
                                           brdfLUT,
                                           lutSampler,
-                                          frameInfo.envMapRotation,
-                                          frameInfo.envMapExposure);
+                                          frameInfo.envMapRotation);
 
       // MIS shadow-ray pass: sample the env map with multiple importance
       // sampling, occluded by the K-buffer splats that produced this shading
@@ -550,10 +563,14 @@ void main()
 
       // TRON PBR pipeline: compose PBR + irradiance into final output,
       // then optionally apply AgX tone mapping for HDR-to-sRGB output.
-      float3 finalColor = pbrColor + irradiance;
+      // Exposure is applied to the combined result uniformly (evaluatePBR
+      // no longer applies it internally) to avoid the previous double-exposure
+      // of the PBR contribution.
+      float3 finalColor = (pbrColor + irradiance) * frameInfo.envMapExposure;
       if(frameInfo.toneMapEnabled != 0)
       {
-        finalColor = applyToneMapping(finalColor, frameInfo.envMapExposure);
+        // Exposure already applied; tone mapping only needs AgX + clamp.
+        finalColor = applyToneMapping(finalColor, 1.0);
       }
       image[outputPixel] = float4(finalColor, 1.0);
     }
@@ -572,9 +589,8 @@ void main()
   //
   float3 fragRadiance = radiance;
 
-  uint64_t clock = clockARB() - clockStart;
-
 #if VISUALIZE == VISUALIZE_CLOCK
+  uint64_t clock = clockARB() - clockStart;
   fragRadiance = hsbToRgb(
       float3(lerp(0.65, 0.02, smoothstep(0.0, 1.0, frameInfo.multiplier * 0.1 * float(clock) / float(1 << 20))), 1.0, 1.));
 #endif
@@ -619,14 +635,14 @@ void main()
 #if defined(WITH_DLSS_RR) || defined(WITH_SPACE_WARP)
   // Motion vectors: compute screen-space motion from current and previous frame matrices
 
-  // Since splat tracing now uses model-space rays, compute hit position in model space first,
-  // then transform to world space for motion vector calculation.
+  // Compute model-space hit position from the saved primary ray (not the
+  // current rayOrigin/Direction which may reflect a secondary bounce).
   // Note: For XR locomotion, the model matrix changes frame-to-frame, but we don't track
   // prevModelMatrix, so motion vectors may be inaccurate during locomotion.
   // This is acceptable since DLSS-RR is typically disabled during rapid movement.
-  const float3 splatSetModelRayOrigin = mul(float4(rayOrigin, 1.0), pcRay.modelMatrixInverse).xyz;
-  const float3 splatSetModelRayDirection = normalize(mul(rayDirection, float3x3(pcRay.modelMatrixRotScaleInverse)));
-  float3 modelPos = splatSetModelRayOrigin + splatSetModelRayDirection * closestParticleDist;
+  const float3 msRayOrigin = mul(float4(primaryRayOrigin, 1.0), pcRay.modelMatrixInverse).xyz;
+  const float3 msRayDirection = normalize(mul(primaryRayDirection, float3x3(pcRay.modelMatrixRotScaleInverse)));
+  float3 modelPos = msRayOrigin + msRayDirection * closestParticleDist;
   float3 worldPos = mul(float4(modelPos, 1.0), pcRay.modelMatrix).xyz;
   
   float4 prevClip = mul(mul(float4(worldPos, 1.0), frameInfo.prevViewMatrix), frameInfo.prevProjectionMatrix);

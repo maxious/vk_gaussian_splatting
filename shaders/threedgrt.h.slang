@@ -42,19 +42,19 @@ void fetchParticlePSR(in FrameInfo frameInfo, in int splatIndex, out float3 part
 {
   particlePosition = fetchCenter(splatIndex);
 
-  // Apply 4D Motion
-  float3 motion = fetchMotion(splatIndex);
-  float2 timeData = fetchTime(splatIndex);
-  float t_scale = timeData.x; // JS Order: x = scale
-  float t_center = timeData.y; // JS Order: y = center
-  float dt = frameInfo.currentTime - t_center;
-
+  // Apply 4D Motion — fetch motion/time data only when motion is enabled
+  // to avoid wasted SSBO reads for static scenes (~5 reads per particle hit).
   if (frameInfo.applyMotion != 0) {
+      float3 motion = fetchMotion(splatIndex);
+      float2 timeData = fetchTime(splatIndex);
+      float t_center = timeData.y; // JS Order: y = center
+      float dt = frameInfo.currentTime - t_center;
       particlePosition += motion * dt;
   }
 
   particleScale    = exp(fetchScale(splatIndex));
-  const float4 wxyzQuat  = normalize(fetchRotation(splatIndex));
+  // Rotation quaternions are stored pre-normalized by the loader.
+  const float4 wxyzQuat  = fetchRotation(splatIndex);
   // vec4toQuat converts to scalar (w) last internal
   // transpose the pure rotation matrix to get its inverse
   particleInvRotation = quatToMat3Transpose(vec4toQuat(wxyzQuat));
