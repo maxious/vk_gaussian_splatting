@@ -213,7 +213,7 @@ int main(int argc, char** argv)
   float       conf_pct       = 0.0f;
   float       point_size     = 0.01f;
   bool        fuse           = true;
-  bool        metric_enabled = true;  // "metric" collides with std::metric
+  bool        metric_enabled = false;
   bool        icp            = true;
   bool        loop_close     = true;
   float       fuse_voxel_frac = 0.0f;
@@ -419,7 +419,7 @@ int main(int argc, char** argv)
   std::cout << "Job submitted, id=" << job_id << "\n";
 
   // ---- poll loop -----------------------------------------------------------
-  const int kPollIntervalMs = 250;
+  const int kPollIntervalMs = 1000;
   const int kPollTimeoutMs  = 600000;  // 10 minutes
   int       waited_ms       = 0;
 

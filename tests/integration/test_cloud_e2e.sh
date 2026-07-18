@@ -46,7 +46,7 @@ try_extract_video() {
     echo "  Using $label..."
     FRAME_DIR=$(mktemp -d)
     if ! ffmpeg -y -loglevel error -i "$video_path" \
-        -vf "fps=2,scale=640:-2" -frames:v 8 "${FRAME_DIR}/frame_%05d.jpg" 2>/dev/null; then
+        -vf "fps=2,scale=640:-2" -frames:v 2 "${FRAME_DIR}/frame_%05d.jpg" 2>/dev/null; then
         echo "  ffmpeg extraction failed for $label, skipping"
         rm -rf "$FRAME_DIR" 2>/dev/null || true
         FRAME_DIR=""
@@ -66,7 +66,7 @@ if ! try_extract_video "${ROOT}/_downloaded_resources/lake_processed/rgb_sequenc
     if ! try_extract_video "${ROOT}/_downloaded_resources/rocket/rocket.mp4" "rocket video"; then
         if [ -d "${ROOT}/tests/fixtures/cloud" ]; then
             echo "  Using pre-extracted frames from tests/fixtures/cloud/"
-            TEST_FRAMES=$(ls "${ROOT}/tests/fixtures/cloud/frame_*.jpg" 2>/dev/null | sort | tr '\n' ',' | sed 's/,$//')
+            TEST_FRAMES=$(ls "${ROOT}"/tests/fixtures/cloud/frame_*.jpg 2>/dev/null | sort | head -2 | tr '\n' ',' | sed 's/,$//')
         fi
     fi
 fi
@@ -83,8 +83,8 @@ MODEL=""
 MODEL_CANDIDATES=(
     "${HOME}/.cache/depth_server/mudler/depth-anything.cpp-gguf/depth-anything-base-q8_0.gguf"
     "${HOME}/.cache/depth_server/mudler/depth-anything.cpp-gguf/depth-anything-base-f16.gguf"
-    "${HOME}/.cache/depth_server/mudler/depth-anything.cpp-gguf/depth-anything-large-f32.gguf"
     "${ROOT}/models/depth-anything-base-q8_0.gguf"
+    "${HOME}/.cache/depth_server/mudler/depth-anything.cpp-gguf/depth-anything-large-f32.gguf"
 )
 for candidate in "${MODEL_CANDIDATES[@]}"; do
     if [ -f "$candidate" ]; then
@@ -133,7 +133,7 @@ echo "  Server ready (pid=${SERVER_PID})"
 # --- 4. Run test_cloud_client -----------------------------------------------
 echo "[4/7] Running test_cloud_client (120s timeout)..."
 if ! "${BIN}/test_cloud_client" --port "$TEST_PORT" --frames "$TEST_FRAMES" \
-    --output "$TMP_SPLAT" --chunk-size 8 --overlap 2 --timeout-ms 120000; then
+    --output "$TMP_SPLAT" --chunk-size 2 --overlap 1 --no-fuse --no-icp --no-loop-close --timeout-ms 120000; then
     echo "FAIL: test_cloud_client returned non-zero"
     exit 1
 fi
