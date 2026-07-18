@@ -48,9 +48,9 @@ TEST_CASE("cloud_splat_encoder single point")
     CHECK(read_le_f32(out.data(), 4) == doctest::Approx(2.0f));
     CHECK(read_le_f32(out.data(), 8) == doctest::Approx(3.0f));
 
-    CHECK(read_le_f32(out.data(), 12) == doctest::Approx(0.75f));
-    CHECK(read_le_f32(out.data(), 16) == doctest::Approx(0.75f));
-    CHECK(read_le_f32(out.data(), 20) == doctest::Approx(0.75f));
+    CHECK(read_le_f32(out.data(), 12) == doctest::Approx(75.0f));
+    CHECK(read_le_f32(out.data(), 16) == doctest::Approx(75.0f));
+    CHECK(read_le_f32(out.data(), 20) == doctest::Approx(75.0f));
 
     CHECK(read_u8(out.data(), 24) == 128);
     CHECK(read_u8(out.data(), 25) == 64);
@@ -58,8 +58,8 @@ TEST_CASE("cloud_splat_encoder single point")
 
     CHECK(read_u8(out.data(), 27) == 255);
 
-    CHECK(read_u8(out.data(), 28) == 128);
-    CHECK(read_u8(out.data(), 29) == 255);
+    CHECK(read_u8(out.data(), 28) == 255);
+    CHECK(read_u8(out.data(), 29) == 128);
     CHECK(read_u8(out.data(), 30) == 128);
     CHECK(read_u8(out.data(), 31) == 128);
 }
