@@ -304,6 +304,10 @@ int main(int argc, char** argv)
     }
 
     TcpServer server(pool, splatPool ? splatPool.get() : nullptr);
+    if(cloudPool)
+    {
+        server.setCloudPool(cloudPool.get());
+    }
     if(!server.start(port))
     {
         LOGE("Failed to start TCP server\n");
@@ -312,6 +316,7 @@ int main(int argc, char** argv)
         if(splatPool) splatPool->shutdown();
         return 1;
     }
+    if(cloudPool) server.setCloudPool(cloudPool.get());
 
     while(!g_shutdownRequested.load())
     {
