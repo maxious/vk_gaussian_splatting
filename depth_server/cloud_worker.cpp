@@ -17,6 +17,7 @@
 #include <string>
 #include <vector>
 
+#include <sys/socket.h>
 #include <unistd.h>
 
 namespace {
@@ -103,13 +104,12 @@ bool sendError(int fd, std::uint32_t job_id, std::uint32_t error_code, const std
            && (error.empty() || writeAll(fd, error.data(), error.size()));
 }
 
-bool hasPoseCapability(const char* json)
+bool shutdownWriteEnd(int fd)
 {
-    if (!json)
-        return false;
-    return std::strstr(json, "\"pose\":true") != nullptr
-        || std::strstr(json, "\"pose\": 1") != nullptr
-        || std::strstr(json, "\"pose\":1") != nullptr;
+    // Signal EOF to the reader while ensuring all buffered data is
+    // still readable. Without this the parent may see POLLHUP before
+    // POLLIN and close the socket without consuming the error message.
+    return ::shutdown(fd, SHUT_WR) == 0;
 }
 
 }  // namespace
@@ -188,26 +188,15 @@ void CloudWorker::run(int parent_fd, const std::string& model_path,
                 std::string err_str = err && err[0] ? err : "failed to load model";
                 LOGE("CloudWorker: failed to load model: %s\n", err_str.c_str());
                 sendError(parent_fd, job_id, 5, err_str);
+                shutdownWriteEnd(parent_fd);
                 break;
             }
 
             LOGI("CloudWorker: model loaded (backend=%s)\n", backend.c_str());
-
-            char* info = da_capi_info_json(ctx);
-            if (info)
-            {
-                if (!hasPoseCapability(info))
-                {
-                    LOGE("CloudWorker: model is not pose-capable\n");
-                    sendError(parent_fd, job_id, 5,
-                              "requires a pose-capable model (DA3)");
-                    da_capi_free_string(info);
-                    da_capi_free(ctx);
-                    ctx = nullptr;
-                    break;
-                }
-                da_capi_free_string(info);
-            }
+            // da_capi_points_stream has its own pose-capability guard
+            // (checks engine->is_mono() || engine->is_da2()). The JSON
+            // from da_capi_info_json does NOT contain a "pose" key, so
+            // we must NOT gate here — let the C API validate instead.
         }
 
         sendProgress(parent_fd, job_id, 2, 0);
