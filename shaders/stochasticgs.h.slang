@@ -261,42 +261,6 @@ uint poisson(inout uint2 state, float lambda)
 }
 
 /*-------------------------------------------------------------------------------------------------
- * 3D covariance computation from scale and rotation (ported from gs_utils.h project_gaussian)
- *
- * Computes the 3D covariance matrix: Sigma = R * diag(exp(2*scale)) * R^T / norm_sq
- * where R is the rotation matrix from the (possibly unnormalized) quaternion.
- *
- * The quaternion is stored as (r, i, j, k) = (w, x, y, z).
- *-----------------------------------------------------------------------------------------------*/
-float3x3 stochasticgs_covariance3d(float3 raw_scale, float4 raw_rotation)
-{
-    const float3 variance = exp(2.0f * raw_scale);
-
-    const float r = raw_rotation.x, i = raw_rotation.y, j = raw_rotation.z, k = raw_rotation.w;
-    const float ii = i * i, jj = j * j, kk = k * k;
-    const float ij = i * j, ik = i * k, jk = j * k;
-    const float ri = r * i, rj = r * j, rk = r * k;
-    const float norm_sq     = r * r + ii + jj + kk;
-    const float norm_sq_rcp = 1.0f / norm_sq;
-
-    // Rotation matrix R (normalized by norm_sq)
-    float3x3 R = float3x3(
-        1.0f - 2.0f * (jj + kk) * norm_sq_rcp, 2.0f * (ij - rk) * norm_sq_rcp, 2.0f * (ik + rj) * norm_sq_rcp,
-        2.0f * (ij + rk) * norm_sq_rcp, 1.0f - 2.0f * (ii + kk) * norm_sq_rcp, 2.0f * (jk - ri) * norm_sq_rcp,
-        2.0f * (ik - rj) * norm_sq_rcp, 2.0f * (jk + ri) * norm_sq_rcp, 1.0f - 2.0f * (ii + jj) * norm_sq_rcp);
-
-    // R * diag(variance)
-    float3x3 RSS = float3x3(
-        R[0][0] * variance.x, R[0][1] * variance.y, R[0][2] * variance.z,
-        R[1][0] * variance.x, R[1][1] * variance.y, R[1][2] * variance.z,
-        R[2][0] * variance.x, R[2][1] * variance.y, R[2][2] * variance.z);
-
-    // cov3d = RSS * R^T (upper-triangular portion in CUDA, full matrix here)
-    float3x3 cov3d = mul(RSS, transpose(R));
-    return cov3d;
-}
-
-/*-------------------------------------------------------------------------------------------------
  * Projected Gaussian result struct
  *-----------------------------------------------------------------------------------------------*/
 struct StochasticProjectedGaussian
@@ -368,9 +332,7 @@ bool project_gaussian(
         return false;
 
     // Compute 3D covariance from scale and rotation
-    const float3 raw_scale_local = raw_scale;
-    const float4 raw_rot_local   = raw_rotation;
-    const float  r = raw_rot_local.x, i = raw_rot_local.y, j = raw_rot_local.z, k = raw_rot_local.w;
+    const float  r = raw_rotation.x, i = raw_rotation.y, j = raw_rotation.z, k = raw_rotation.w;
     const float ii = i * i, jj = j * j, kk = k * k;
     const float ij = i * j, ik = i * k, jk = j * k;
     const float ri = r * i, rj = r * j, rk = r * k;
@@ -379,7 +341,7 @@ bool project_gaussian(
         return false;
     const float norm_sq_rcp = 1.0f / norm_sq;
 
-    const float3 variance = exp(2.0f * raw_scale_local);
+    const float3 variance = exp(2.0f * raw_scale);
 
     float3x3 R = float3x3(
         1.0f - 2.0f * (jj + kk) * norm_sq_rcp, 2.0f * (ij - rk) * norm_sq_rcp, 2.0f * (ik + rj) * norm_sq_rcp,

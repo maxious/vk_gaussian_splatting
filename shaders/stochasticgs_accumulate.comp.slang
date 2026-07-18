@@ -213,11 +213,11 @@ void main(uint3 id : SV_DispatchThreadID)
     const float3 mean3d_obj  = fetchCenter(gaussian_idx);
     const float3 raw_scale   = fetchScale(gaussian_idx);
     const float4 raw_rotation = fetchRotation(gaussian_idx);
-    const float4 color        = fetchColor(gaussian_idx);
+    // fetchOpacity reads only the opacity component (avoids fetching RGB when only alpha needed)
+    const float activated_opacity = clamp(fetchOpacity(gaussian_idx), 1e-7f, 1.0f - 1e-7f);
     // fetchColor stores SIGMOID-activated opacity (applied on CPU during upload).
     // project_gaussian() expects RAW logit opacity and applies sigmoid internally.
     // Reverse the activation to avoid double-activation.
-    const float activated_opacity = clamp(color.w, 1e-7f, 1.0f - 1e-7f);
     const float raw_opacity  = -log(1.0f / activated_opacity - 1.0f);
 
     // ---- Transform splat center to world space via the model matrix ----

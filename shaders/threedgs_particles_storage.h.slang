@@ -267,6 +267,26 @@ float4 fetchColor(in uint splatIndex)
 }
 #endif
 
+// fetchOpacity - read only the opacity component (avoids fetching RGB when only alpha needed)
+#if DATA_STORAGE == STORAGE_LCC_PACKED
+float fetchOpacity(in uint splatIndex)
+{
+  return fetchColor(splatIndex).w;
+}
+#elif DATA_STORAGE == STORAGE_TEXTURES
+float fetchOpacity(in uint splatIndex)
+{
+  int2 texSize;
+  colorsTexture.GetDimensions(texSize.x, texSize.y);
+  return colorsTexture.Load(int3(getDataPos(splatIndex, 1, 0, texSize), 0)).w;
+}
+#else
+float fetchOpacity(in uint splatIndex)
+{
+  return colorsBuffer[splatIndex * 4 + 3];
+}
+#endif
+
 #if DATA_STORAGE == STORAGE_LCC_PACKED
 // LCC Portable format doesn't have full SH coefficients, return zeros
 void fetchSh(in uint    splatIndex,
