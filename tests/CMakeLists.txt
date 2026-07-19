@@ -93,6 +93,12 @@ set_tests_properties(pbr_screenshot_test PROPERTIES DISABLED TRUE)
 if(ENABLE_TCP_DEPTH)
     add_test(NAME tcp_depth_e2e 
              COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/integration/test_tcp_depth_e2e.sh $<TARGET_FILE_DIR:vk_viewer>)
+    set_tests_properties(tcp_depth_e2e PROPERTIES TIMEOUT 300)
+
+    add_test(NAME cloud_e2e
+             COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/integration/test_cloud_e2e.sh $<TARGET_FILE_DIR:vk_viewer>
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(cloud_e2e PROPERTIES TIMEOUT 300)
 endif()
 
 # Cloud protocol unit test (standalone, links protocol_parser for serialize/decode)

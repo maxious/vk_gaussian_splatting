@@ -1,32 +1,58 @@
 {
-  "active_plan": "/home/maxious/vk_gaussian_splatting/.sisyphus/plans/tron-pbr-pipeline.md",
-  "started_at": "2026-06-30T08:12:54.619Z",
+  "active_plan": "/home/maxious/vk_gaussian_splatting/.sisyphus/plans/depth-server-pr2-integration.md",
+  "started_at": "2026-07-06T10:38:15.809Z",
   "session_ids": [
-    "ses_0e8b1398fffeX05i6vVz5fxVK0"
+    "ses_0c90e32bcffe6Ubcl6BnyMDw6u",
+    "ses_08c10f9e1ffeNWyRQZiqApspEL",
+    "ses_08c10dbb1ffeO75Q1MjBnsHd00",
+    "ses_08c10cb84ffeAQ7yRMr31A16Lm",
+    "ses_08c10b101ffeR4qhYoqDScxoLc"
   ],
   "session_origins": {
-    "ses_0e8b1398fffeX05i6vVz5fxVK0": "direct"
+    "ses_0c90e32bcffe6Ubcl6BnyMDw6u": "direct",
+    "ses_08c10f9e1ffeNWyRQZiqApspEL": "appended",
+    "ses_08c10dbb1ffeO75Q1MjBnsHd00": "appended",
+    "ses_08c10cb84ffeAQ7yRMr31A16Lm": "appended",
+    "ses_08c10b101ffeR4qhYoqDScxoLc": "appended"
   },
-  "plan_name": "tron-pbr-pipeline",
+  "plan_name": "depth-server-pr2-integration",
   "agent": "atlas",
   "task_sessions": {
     "todo:1": {
       "task_key": "todo:1",
       "task_label": "1",
-      "task_title": "Update nvpro_core2 submodule to latest upstream main",
-      "session_id": "ses_0e868ceddffel0iFeDLI2ITXUD",
+      "task_title": "T1. Bump submodule to PR #2 + backward-compat regression gate",
+      "session_id": "ses_0c8fb8b45ffeUBc3D4TpMbpWap",
       "agent": "Sisyphus-Junior",
-      "category": "quick",
-      "updated_at": "2026-06-30T08:14:13.259Z"
+      "category": "unspecified-high",
+      "updated_at": "2026-07-06T10:46:27.861Z"
     },
     "todo:2": {
       "task_key": "todo:2",
       "task_label": "2",
-      "task_title": "Build and fix any API breaks in existing vk_viewer code",
-      "session_id": "ses_0e863f3f8ffeCWjQ4a3UsJl7iG",
+      "task_title": "T2. cloud_splat_encoder module + golden-bytes test (TDD: test first)",
+      "session_id": "ses_0c8f204a3ffeG6UTVfDQ8WC3tS",
+      "agent": "Sisyphus-Junior",
+      "category": "quick",
+      "updated_at": "2026-07-06T10:55:28.541Z"
+    },
+    "todo:5": {
+      "task_key": "todo:5",
+      "task_label": "5",
+      "task_title": "T5. CloudWorker (forked child process, single-job model) + doctest with mock C API (TDD: test first)",
+      "session_id": "ses_0c8e694e5ffeh01zciXvxROtZC",
       "agent": "Sisyphus-Junior",
       "category": "unspecified-high",
-      "updated_at": "2026-06-30T08:48:51.183Z"
+      "updated_at": "2026-07-06T11:34:00.888Z"
+    },
+    "todo:6": {
+      "task_key": "todo:6",
+      "task_label": "6",
+      "task_title": "T6. CloudWorkerPool (async job queue, multi-worker, cancellation) (TDD: test first)",
+      "session_id": "ses_08c10cb84ffeAQ7yRMr31A16Lm",
+      "agent": "Sisyphus-Junior",
+      "category": "unspecified-high",
+      "updated_at": "2026-07-18T06:40:09.221Z"
     }
   }
 }

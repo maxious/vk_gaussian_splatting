@@ -351,7 +351,7 @@ void SplatSetVk::initDataBuffers(SplatSet& splatSet)
     m_alloc->createBuffer(varianceBuffer, bufferSize, deviceBufferUsageFlags, deviceMemoryUsageFlags);
     NVVK_DBG_NAME(varianceBuffer.buffer);
 
-    float* mapped = static_cast<float*>(hostBuffer.mapping);
+    float* mapped = reinterpret_cast<float*>(hostBuffer.mapping);
     START_PAR_LOOP(splatCount, i)
     {
       const auto stride3 = i * 3;

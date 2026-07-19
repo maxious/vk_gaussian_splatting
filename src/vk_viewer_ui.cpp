@@ -80,6 +80,10 @@ VkViewerUI::VkViewerUI(nvutils::ProfilerManager* profilerManager, nvutils::Param
 #ifdef WITH_FREE_SPLATTER
   m_freeSplatterClient = std::make_unique<vk_viewer::FreeSplatterClient>();
 #endif
+#ifdef WITH_CLOUD
+  m_cloudClient = std::make_unique<vk_viewer::CloudClient>();
+  m_cloudRequestParams = prmCloud;  // start with CLI defaults, user can tweak in dialog
+#endif
 };
 
 VkViewerUI::~VkViewerUI() {
@@ -577,6 +581,26 @@ void VkViewerUI::onUIMenu()
           m_freeSplatterServerReachable = s.reachable;
           m_freeSplatterStatusText = s.reachable ? "Server: connected (127.0.0.1:" + std::to_string(m_freeSplatterServerPort) + ")"
                                                 : "Server: unreachable - check splat server";
+        });
+      }
+    }
+#endif
+#ifdef WITH_CLOUD
+    if(ImGui::MenuItem(ICON_MS_CLOUD " Generate Point Cloud from Images...", ""))
+    {
+      m_showCloudDialog       = true;
+      m_cloudStatusText       = "Connecting to server...";
+      m_cloudServerReachable  = false;
+      m_cloudJobInFlight      = false;
+      m_cloudProgress         = 0.0f;
+      m_cloudRequestParams    = prmCloud;  // refresh from CLI defaults each time the menu opens
+      if(m_cloudClient)
+      {
+        m_cloudClient->setServerAddress("127.0.0.1", m_cloudRequestParams.cloudPort);
+        m_cloudClient->testConnection([this](const vk_viewer::CloudClient::ConnectionStatus& s) {
+          m_cloudServerReachable = s.reachable;
+          m_cloudStatusText      = s.reachable ? "Server: connected (127.0.0.1:" + std::to_string(m_cloudRequestParams.cloudPort) + ")"
+                                               : "Server: unreachable - check depth_server --mode cloud";
         });
       }
     }
@@ -1209,6 +1233,9 @@ void VkViewerUI::onUIRender()
   guiDrawSupersplatDialog();
 #ifdef WITH_FREE_SPLATTER
   guiDrawFreeSplatterDialog();
+#endif
+#ifdef WITH_CLOUD
+  guiDrawCloudDialog();
 #endif
   if(m_showVrMenu)
     guiDrawVrMenu();
@@ -3464,6 +3491,237 @@ void VkViewerUI::guiDrawFreeSplatterDialog()
   ImGui::End();
 }
 #endif  // WITH_FREE_SPLATTER
+
+#ifdef WITH_CLOUD
+void VkViewerUI::guiDrawCloudDialog()
+{
+  if(!m_showCloudDialog)
+    return;
+
+  ImGui::SetNextWindowSize(ImVec2(620, 620), ImGuiCond_Appearing);
+  if(!ImGui::Begin("Generate Point Cloud from Images", &m_showCloudDialog, ImGuiWindowFlags_NoDocking))
+  {
+    ImGui::End();
+    return;
+  }
+
+  ImGui::TextColored(m_cloudServerReachable ? ImVec4(0, 1, 0, 1) : ImVec4(1, 0, 0, 1), "\xe2\x97\x8f");
+  ImGui::SameLine();
+  ImGui::Text("%s", m_cloudStatusText.c_str());
+
+  ImGui::SameLine();
+  if(ImGui::SmallButton("Reconnect"))
+  {
+    if(m_cloudClient)
+    {
+      m_cloudClient->setServerAddress("127.0.0.1", m_cloudRequestParams.cloudPort);
+      m_cloudClient->testConnection([this](const vk_viewer::CloudClient::ConnectionStatus& s) {
+        m_cloudServerReachable = s.reachable;
+        m_cloudStatusText      = s.reachable ? "Server: connected (127.0.0.1:" + std::to_string(m_cloudRequestParams.cloudPort) + ")"
+                                             : "Server: unreachable - check depth_server --mode cloud";
+      });
+    }
+  }
+
+  ImGui::Separator();
+
+  ImGui::Text("Input Video:");
+  ImGui::SameLine();
+  ImGui::TextDisabled("%s", m_cloudVideoPath.empty() ? "<none>" : m_cloudVideoPath.filename().string().c_str());
+
+  if(!m_cloudJobInFlight)
+  {
+    if(ImGui::Button("Pick Video..."))
+    {
+      auto path = nvgui::windowOpenFileDialog(m_app->getWindowHandle(), "Select Video",
+                                              "Video Files|*.mp4;*.mov;*.mkv;*.webm;*.avi");
+      if(!path.empty())
+      {
+        m_cloudVideoPath = path;
+      }
+    }
+  }
+
+  ImGui::Separator();
+
+  ImGui::Text("Reconstruction Parameters");
+
+  ImGui::BeginDisabled(m_cloudJobInFlight);
+
+  ImGui::SliderInt("Max Frames", &m_cloudRequestParams.cloudMaxFrames, 2, 200);
+  ImGui::SliderInt("Chunk Size", &m_cloudRequestParams.cloudChunkSize, 2, 24);
+  int maxOverlap = std::max(0, m_cloudRequestParams.cloudChunkSize - 1);
+  if(m_cloudRequestParams.cloudOverlap > maxOverlap)
+    m_cloudRequestParams.cloudOverlap = maxOverlap;
+  ImGui::SliderInt("Overlap", &m_cloudRequestParams.cloudOverlap, 0, maxOverlap);
+  ImGui::SliderFloat("Confidence %%", &m_cloudRequestParams.cloudConfPct, 0.0f, 100.0f, "%.0f");
+  ImGui::SliderFloat("Point Size", &m_cloudRequestParams.cloudPointSize, 0.1f, 10.0f, "%.2f");
+  ImGui::SliderInt("Global Budget (0=unlimited)", &m_cloudRequestParams.cloudGlobalBudget, 0, 5000000);
+
+  ImGui::Separator();
+
+  ImGui::Checkbox("Fuse (TSDF fusion across windows)", &m_cloudRequestParams.cloudFuse);
+  ImGui::Checkbox("Metric Scale", &m_cloudRequestParams.cloudMetric);
+  ImGui::Checkbox("ICP Refine", &m_cloudRequestParams.cloudIcpRefine);
+  ImGui::Checkbox("Loop Close", &m_cloudRequestParams.cloudLoopClose);
+
+  ImGui::BeginDisabled(!m_cloudRequestParams.cloudFuse);
+  ImGui::SliderFloat("Fuse Voxel Frac", &m_cloudRequestParams.cloudFuseVoxelFrac, 0.0f, 0.1f, "%.4f");
+  ImGui::SliderFloat("Fuse Trunc Mult", &m_cloudRequestParams.cloudFuseTruncMult, 1.0f, 20.0f, "%.2f");
+  ImGui::EndDisabled();
+
+  ImGui::Separator();
+
+  ImGui::Text("Server");
+  ImGui::InputInt("Port", &m_cloudRequestParams.cloudPort);
+  if(m_cloudRequestParams.cloudPort < 1)
+    m_cloudRequestParams.cloudPort = 1;
+  if(m_cloudRequestParams.cloudPort > 65535)
+    m_cloudRequestParams.cloudPort = 65535;
+
+  ImGui::EndDisabled();  // !m_cloudJobInFlight
+
+  ImGui::Separator();
+
+  if(m_cloudJobInFlight)
+  {
+    ImGui::ProgressBar(m_cloudProgress, ImVec2(-1, 0));
+    ImGui::Text("%s", m_cloudStatusText.c_str());
+
+    if(ImGui::Button("Cancel"))
+    {
+      if(m_cloudClient)
+      {
+        m_cloudClient->cancelJob(m_cloudCurrentJobId);
+      }
+      m_cloudJobInFlight = false;
+      m_cloudStatusText   = "Cancelled";
+    }
+  }
+  else
+  {
+    bool can_submit = m_cloudServerReachable && !m_cloudVideoPath.empty()
+                      && m_cloudRequestParams.cloudMaxFrames >= 2
+                      && m_cloudRequestParams.cloudChunkSize >= 2
+                      && m_cloudRequestParams.cloudOverlap < m_cloudRequestParams.cloudChunkSize;
+    ImGui::BeginDisabled(!can_submit);
+    if(ImGui::Button("Generate", ImVec2(200, 40)))
+    {
+      m_cloudJobInFlight = true;
+      m_cloudProgress    = 0.0f;
+      m_cloudStatusText  = "Submitting job...";
+
+      if(m_cloudClient)
+      {
+        // Translate UI params -> wire-format CloudRequestOptions
+        CloudRequestOptions opts{};
+        opts.n_frames        = static_cast<uint32_t>(m_cloudRequestParams.cloudMaxFrames);
+        opts.chunk_size      = static_cast<uint32_t>(m_cloudRequestParams.cloudChunkSize);
+        opts.overlap         = static_cast<uint32_t>(m_cloudRequestParams.cloudOverlap);
+        opts.conf_pct        = m_cloudRequestParams.cloudConfPct;
+        opts.point_size      = m_cloudRequestParams.cloudPointSize;
+        opts.global_budget   = static_cast<uint32_t>(m_cloudRequestParams.cloudGlobalBudget);
+        opts.icp_refine      = m_cloudRequestParams.cloudIcpRefine ? 1u : 0u;
+        opts.loop_close      = m_cloudRequestParams.cloudLoopClose ? 1u : 0u;
+        opts.fuse            = m_cloudRequestParams.cloudFuse      ? 1u : 0u;
+        opts.metric          = m_cloudRequestParams.cloudMetric    ? 1u : 0u;
+        opts.fuse_voxel_frac = m_cloudRequestParams.cloudFuseVoxelFrac;
+        opts.fuse_trunc_mult = m_cloudRequestParams.cloudFuseTruncMult;
+        opts.timeout_ms      = static_cast<uint32_t>(m_cloudRequestParams.cloudTimeoutMs);
+        opts.flags           = 0u;
+
+        m_cloudClient->setServerAddress("127.0.0.1", m_cloudRequestParams.cloudPort);
+
+        m_cloudCurrentJobId = m_cloudClient->submitVideo(
+            m_cloudVideoPath.string(), opts,
+            [this](uint32_t job_id, const vk_viewer::CloudClient::JobStatus& status) {
+              m_cloudProgress = static_cast<float>(status.percent) / 100.0f;
+              switch(status.state)
+              {
+                case vk_viewer::CloudClient::JobStatus::State::Queued:
+                  m_cloudStatusText = "Queued...";
+                  break;
+                case vk_viewer::CloudClient::JobStatus::State::Extracting:
+                  m_cloudStatusText = "Extracting frames...";
+                  break;
+                case vk_viewer::CloudClient::JobStatus::State::Inference:
+                  if(status.windows_total > 0)
+                  {
+                    m_cloudStatusText = "Inference: window " + std::to_string(status.windows_done) + " / "
+                                        + std::to_string(status.windows_total);
+                  }
+                  else
+                  {
+                    m_cloudStatusText = "Running inference...";
+                  }
+                  break;
+                case vk_viewer::CloudClient::JobStatus::State::Writing:
+                  m_cloudStatusText = "Writing output...";
+                  break;
+                case vk_viewer::CloudClient::JobStatus::State::Done:
+                  m_cloudStatusText = "Done!";
+                  break;
+                case vk_viewer::CloudClient::JobStatus::State::Error:
+                  m_cloudStatusText = "Error: " + status.error_message;
+                  break;
+                case vk_viewer::CloudClient::JobStatus::State::Cancelled:
+                  m_cloudStatusText = "Cancelled";
+                  break;
+              }
+            },
+            [this](uint32_t job_id, const std::string& local_path, const std::string& error) {
+              m_cloudJobInFlight = false;
+              if(!error.empty())
+              {
+                m_cloudStatusText = "Error: " + error;
+              }
+              else if(!local_path.empty())
+              {
+                m_cloudStatusText = "Loading splat: " + local_path;
+                m_cloudOutputPath = local_path;
+                prmScene.sceneToLoadFilename = local_path;
+                m_showCloudDialog  = false;
+              }
+            });
+
+        if(m_cloudCurrentJobId == 0)
+        {
+          m_cloudJobInFlight = false;
+          m_cloudStatusText  = "Failed to submit job (see log)";
+        }
+      }
+    }
+    ImGui::EndDisabled();
+
+    if(!m_cloudServerReachable)
+    {
+      ImGui::TextColored(ImVec4(1, 0.5f, 0, 1), "Server not reachable. Start depth_server --mode cloud on port %d",
+                         m_cloudRequestParams.cloudPort);
+    }
+    else if(m_cloudVideoPath.empty())
+    {
+      ImGui::TextColored(ImVec4(1, 0.5f, 0, 1), "Pick an input video file");
+    }
+    else if(m_cloudRequestParams.cloudOverlap >= m_cloudRequestParams.cloudChunkSize)
+    {
+      ImGui::TextColored(ImVec4(1, 0.5f, 0, 1), "Overlap must be < chunk size");
+    }
+  }
+
+  ImGui::Separator();
+  if(ImGui::Button("Close"))
+  {
+    m_showCloudDialog = false;
+    if(m_cloudJobInFlight && m_cloudClient)
+    {
+      m_cloudClient->cancelJob(m_cloudCurrentJobId);
+    }
+    m_cloudJobInFlight = false;
+  }
+
+  ImGui::End();
+}
+#endif  // WITH_CLOUD
 
 // Include UI partial files (unity build pattern)
 #include "vk_viewer_ui_renderer.cpp"

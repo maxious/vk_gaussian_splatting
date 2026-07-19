@@ -204,6 +204,32 @@ struct PbrParameters
 // Parameters that control PBR/IBL
 extern PbrParameters prmPbr;
 
+// Parameters that control the Cloud (video -> point cloud streaming) integration.
+// The struct holds UI-friendly defaults; values are translated to a wire-format
+// CloudRequestOptions (from depth_server/protocol.h) at submit time. The struct
+// itself is unconditionally compiled so --cloud-* CLI flags exist in every build,
+// but the File menu and modal dialog are gated on WITH_CLOUD.
+struct CloudParameters
+{
+  int    cloudMaxFrames    = 64;     // 2..200
+  int    cloudChunkSize    = 12;     // 2..24
+  int    cloudOverlap      = 3;      // 0..chunk_size-1
+  float  cloudConfPct      = 55.0f;  // 0..100
+  float  cloudPointSize    = 1.2f;   // > 0
+  int    cloudGlobalBudget = 0;      // 0 = unlimited
+  bool   cloudIcpRefine    = false;
+  bool   cloudLoopClose    = false;
+  bool   cloudFuse         = false;
+  bool   cloudMetric       = false;
+  float  cloudFuseVoxelFrac = 0.004f;
+  float  cloudFuseTruncMult = 4.0f;
+  int    cloudPort         = 9002;
+  int    cloudTimeoutMs    = 0;      // 0 = no timeout
+};
+
+// Parameters that control the Cloud (video -> point cloud) integration
+extern CloudParameters prmCloud;
+
 // Invoked by main() to save defaults after command line options are applied at startup
 void storeDefaultParameters();
 

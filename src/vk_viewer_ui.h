@@ -115,6 +115,10 @@
 #include "free_splatter_client.h"
 #endif
 
+#ifdef WITH_CLOUD
+#include "cloud_client.h"
+#endif
+
 // Json
 #include <tinygltf/json.hpp>
 using nlohmann::json;
@@ -347,6 +351,9 @@ private:
 #ifdef WITH_FREE_SPLATTER
   void guiDrawFreeSplatterDialog();
 #endif
+#ifdef WITH_CLOUD
+  void guiDrawCloudDialog();
+#endif
   void createTextureFromRGBA(const std::vector<uint8_t>& data, int width, int height, nvvk::Image& texture, VkImageView& view);
 
   std::unique_ptr<SupersplatClient> m_supersplatClient;
@@ -373,6 +380,19 @@ private:
   std::string                                   m_freeSplatterOutputPath;
   uint32_t                                      m_freeSplatterCurrentJobId = 0;
   bool                                          m_freeSplatterJobInFlight = false;
+#endif
+
+#ifdef WITH_CLOUD
+  std::unique_ptr<vk_viewer::CloudClient> m_cloudClient;
+  bool                                    m_showCloudDialog         = false;
+  bool                                    m_cloudServerReachable    = false;
+  float                                   m_cloudProgress           = 0.0f;
+  std::string                             m_cloudStatusText         = "Ready";
+  std::string                             m_cloudOutputPath;
+  uint32_t                                m_cloudCurrentJobId       = 0;
+  bool                                    m_cloudJobInFlight        = false;
+  std::filesystem::path                   m_cloudVideoPath;
+  CloudParameters                         m_cloudRequestParams;  // editable copy used by the dialog
 #endif
 
   bool m_showVrMenu = false;

@@ -287,6 +287,15 @@ option(DA_GGML_CUDA "Enable CUDA backend for depth-anything.cpp GPU inference" O
 # to avoid a duplicate-target conflict when both integrations are enabled.
 option(ENABLE_FREESPLATTER "Enable free-splatter.cpp integration (image-to-3DGS) for depth_server" OFF)
 
+#####################################################################################
+# Cloud streaming (video -> point cloud) File menu integration
+#
+# Gated separately from ENABLE_TCP_DEPTH so the cloud UI/menu can be enabled
+# independently of the underlying depth_server binary. The menu + dialog is
+# compiled only when this is ON, but the --cloud-* CLI flags (in parameters.cpp)
+# are always available so users can pre-configure defaults regardless of mode.
+option(ENABLE_CLOUD "Enable cloud streaming mode (--mode cloud) File menu integration" OFF)
+
 if(ENABLE_FREESPLATTER)
   message(STATUS "Free-splatter integration enabled")
   set(FREE_SPLATTER_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
@@ -430,6 +439,9 @@ if(ENABLE_TCP_DEPTH)
 endif()
 if(ENABLE_FREESPLATTER)
   target_compile_definitions(${PROJECT_NAME} PRIVATE WITH_FREE_SPLATTER)
+endif()
+if(ENABLE_CLOUD)
+  target_compile_definitions(${PROJECT_NAME} PRIVATE WITH_CLOUD)
 endif()
 target_link_libraries(${PROJECT_NAME} PRIVATE ixwebsocket)
 target_include_directories(${PROJECT_NAME} PRIVATE ${ixwebsocket_SOURCE_DIR})

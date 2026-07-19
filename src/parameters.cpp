@@ -36,6 +36,7 @@ RasterParameters       prmRaster{};
 RtxParameters          prmRtx{};
 StochasticParameters   prmStochastic{};
 PbrParameters          prmPbr{};
+CloudParameters        prmCloud{};
 
 // Storage for respective default values
 
@@ -140,6 +141,36 @@ void registerCommandLineParameters(nvutils::ParameterRegistry* parameterRegistry
                          &prmPbr.irradianceEnabled);
   parameterRegistry->add({"toneMapEnabled", "0=disabled, 1=enabled tone mapping"},
                          &prmPbr.toneMapEnabled);
+
+  // Cloud (video -> point cloud streaming) integration
+  parameterRegistry->add({"cloudPort", "Cloud server port (depth_server --mode cloud)"},
+                         &prmCloud.cloudPort);
+  parameterRegistry->add({"cloudMaxFrames", "Max frames extracted from input video (2..200)"},
+                         &prmCloud.cloudMaxFrames, 2, 200);
+  parameterRegistry->add({"cloudChunkSize", "Sliding window chunk size (2..24)"},
+                         &prmCloud.cloudChunkSize, 2, 24);
+  parameterRegistry->add({"cloudOverlap", "Overlap between consecutive chunks (0..chunk_size-1)"},
+                         &prmCloud.cloudOverlap, 0, 23);
+  parameterRegistry->add({"cloudConfPct", "Confidence percentile for filtering (0..100)"},
+                         &prmCloud.cloudConfPct, 0.0f, 100.0f);
+  parameterRegistry->add({"cloudPointSize", "Point size for downstream splatting (> 0)"},
+                         &prmCloud.cloudPointSize, 0.01f, 100.0f);
+  parameterRegistry->add({"cloudGlobalBudget", "Global point budget (0 = unlimited)"},
+                         &prmCloud.cloudGlobalBudget, 0, 10000000);
+  parameterRegistry->add({"cloudIcpRefine", "0=disabled, 1=enabled ICP refinement between windows"},
+                         &prmCloud.cloudIcpRefine);
+  parameterRegistry->add({"cloudLoopClose", "0=disabled, 1=enabled loop closure"},
+                         &prmCloud.cloudLoopClose);
+  parameterRegistry->add({"cloudFuse", "0=disabled, 1=fuse reconstructed windows into one cloud"},
+                         &prmCloud.cloudFuse);
+  parameterRegistry->add({"cloudMetric", "0=relative scale, 1=metric scale"},
+                         &prmCloud.cloudMetric);
+  parameterRegistry->add({"cloudFuseVoxelFrac", "Voxel fraction for the fusion step"},
+                         &prmCloud.cloudFuseVoxelFrac, 0.0f, 0.1f);
+  parameterRegistry->add({"cloudFuseTruncMult", "Truncation multiplier for the fusion step"},
+                         &prmCloud.cloudFuseTruncMult, 1.0f, 20.0f);
+  parameterRegistry->add({"cloudTimeoutMs", "Per-job server-side timeout in ms (0 = no timeout)"},
+                         &prmCloud.cloudTimeoutMs, 0, 24 * 60 * 60 * 1000);
 
   // Scene loading options
   parameterRegistry->add({"mortonReorder", "1=reorder splats using Morton/Z-order curve for cache coherency (default), 0=disabled"},
