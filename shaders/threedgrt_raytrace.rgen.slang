@@ -192,7 +192,7 @@ void main()
   // PBR G-buffer accumulator. Declared outside the bounce loop so the
   // median-depth weighted material persists across iterations. Initialized
   // per-bounce before the multi-pass any-hit loop.
-  GBufferData gbuf;
+  GBufferData gbuf = {};
 
   // Save primary ray for motion-vector computation (used after the bounce
   // loop for DLSS-RR / SpaceWarp, where rayOrigin/Direction may have been
