@@ -172,9 +172,9 @@ private:
   // preserves the additional fields of camera
   Camera& applyNvutilCamera(const NvutilCamera nvuCam, Camera& camera)
   {
-    camera.eye  = glm::vec3(nvuCam.eye);
-    camera.ctr  = glm::vec3(nvuCam.ctr);
-    camera.up   = glm::vec3(nvuCam.up);
+    camera.eye  = nvuCam.eye;
+    camera.ctr  = nvuCam.ctr;
+    camera.up   = nvuCam.up;
     camera.fov  = static_cast<float>(nvuCam.fov);
     camera.clip = glm::vec2(nvuCam.nearFar);
     return camera;

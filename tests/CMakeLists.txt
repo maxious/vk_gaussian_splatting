@@ -6,7 +6,6 @@ add_executable(unit_tests
     main.cpp
     test_depth.cpp
     test_tcp_protocol.cpp
-    test_tcp_depth_client.cpp
     test_npz_loader.cpp
     test_lod_loader.cpp
     test_morton_order.cpp
@@ -15,17 +14,33 @@ add_executable(unit_tests
     test_ply_material.cpp
 )
 
+if(NOT WIN32)
+    target_sources(unit_tests PRIVATE
+        test_tcp_depth_client.cpp
+    )
+endif()
+
 # Add source files we need to test
 target_sources(unit_tests PRIVATE
     ../src/depth_parser.cpp
     ../depth_server/protocol_parser.cpp
-    ../src/tcp_depth_client.cpp
-    ../src/tcp_server_manager.cpp
     depth_buffer_stub.cpp
     ../src/npz_loader.cpp
     ../src/lod_loader.cpp
     ../src/sog_loader.cpp
 )
+
+if(NOT WIN32)
+    target_sources(unit_tests PRIVATE
+        ../src/tcp_server_manager.cpp
+    )
+endif()
+
+if(NOT WIN32)
+    target_sources(unit_tests PRIVATE
+        ../src/tcp_depth_client.cpp
+    )
+endif()
 
 # Include directories for src files and tests
 target_include_directories(unit_tests PRIVATE
@@ -50,7 +65,9 @@ target_link_libraries(unit_tests PRIVATE webp)
 # C++20 required
 target_compile_features(unit_tests PRIVATE cxx_std_20)
 
-target_compile_definitions(unit_tests PRIVATE WITH_TCP_DEPTH)
+if(NOT WIN32)
+    target_compile_definitions(unit_tests PRIVATE WITH_TCP_DEPTH)
+endif()
 
 # Disable assertions in Release builds to prevent SIGTRAP
 if(CMAKE_BUILD_TYPE MATCHES "Release")
@@ -112,23 +129,25 @@ if(ENABLE_TCP_DEPTH)
     )
 endif()
 
-# Cloud worker pool test (fork/socketpair IPC integration)
-add_executable(test_cloud_pool
-    test_cloud_pool.cpp
-    ${CMAKE_SOURCE_DIR}/depth_server/cloud_worker.cpp
-    ${CMAKE_SOURCE_DIR}/depth_server/cloud_worker_pool.cpp
-    ${CMAKE_SOURCE_DIR}/depth_server/cloud_splat_encoder.cpp
-)
-target_include_directories(test_cloud_pool PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_SOURCE_DIR}/depth_server
-    ${CMAKE_SOURCE_DIR}/3rdparty/depth-anything-cpp/include
-    ${CMAKE_SOURCE_DIR}/nvpro_core2
-)
-target_link_libraries(test_cloud_pool PRIVATE depthanything nvpro2::nvutils)
-target_compile_features(test_cloud_pool PRIVATE cxx_std_20)
-add_test(NAME cloud_pool COMMAND test_cloud_pool)
-set_property(TARGET test_cloud_pool PROPERTY FOLDER "DepthServer")
+# Cloud worker pool test (fork/socketpair IPC integration, POSIX only)
+if(NOT WIN32)
+    add_executable(test_cloud_pool
+        test_cloud_pool.cpp
+        ${CMAKE_SOURCE_DIR}/depth_server/cloud_worker.cpp
+        ${CMAKE_SOURCE_DIR}/depth_server/cloud_worker_pool.cpp
+        ${CMAKE_SOURCE_DIR}/depth_server/cloud_splat_encoder.cpp
+    )
+    target_include_directories(test_cloud_pool PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/depth_server
+        ${CMAKE_SOURCE_DIR}/3rdparty/depth-anything-cpp/include
+        ${CMAKE_SOURCE_DIR}/nvpro_core2
+    )
+    target_link_libraries(test_cloud_pool PRIVATE depthanything nvpro2::nvutils)
+    target_compile_features(test_cloud_pool PRIVATE cxx_std_20)
+    add_test(NAME cloud_pool COMMAND test_cloud_pool)
+    set_property(TARGET test_cloud_pool PROPERTY FOLDER "DepthServer")
+endif()
 
 # Cloud splat encoder test (pure function, no external deps)
 add_executable(test_cloud_splat_encoder
