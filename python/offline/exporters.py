@@ -16,6 +16,7 @@ from .ply_io import (
     write_static_gaussian_ply,
 )
 from .processors.infini_depth import InfiniDepthGaussianProcessor
+from .processors.infini_splat import InfiniSplatGaussianProcessor, parse_infinisplat_model_id
 from .processors.matrix3d import Matrix3DGaussianProcessor
 from .processors.sharp import SharpGaussianProcessor
 from .processors.triposplat import TripoSplatGaussianProcessor, parse_triposplat_model_id
@@ -400,6 +401,15 @@ def export_video_to_gaussian_plys(
             num_gaussians=tri_config["num_gaussians"],
             steps=tri_config["steps"],
             guidance_scale=tri_config["guidance_scale"],
+        )
+    elif "infinisplat" in model_id.lower():
+        inf_config = parse_infinisplat_model_id(model_id)
+        processor = InfiniSplatGaussianProcessor(
+            device=device,
+            mode=inf_config["mode"],
+            focal_length_px=inf_config["focal_length_px"],
+            disable_floater_filter=inf_config["disable_floater_filter"],
+            checkpoint_path=inf_config["checkpoint_path"],
         )
     else:
         processor = InfiniDepthGaussianProcessor(

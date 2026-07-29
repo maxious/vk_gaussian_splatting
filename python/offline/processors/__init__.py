@@ -2,6 +2,7 @@
 
 from .base import GaussianProcessor
 from .hybrid import HybridProcessor
+from .infini_splat import InfiniSplatGaussianProcessor, parse_infinisplat_model_id
 from .sam3dbody import Sam3DBodyProcessor
 from .sharp import SharpGaussianProcessor
 from .unisharp import UniSHARPGaussianProcessor
@@ -9,9 +10,11 @@ from .unisharp import UniSHARPGaussianProcessor
 __all__ = [
     "GaussianProcessor",
     "HybridProcessor",
+    "InfiniSplatGaussianProcessor",
     "Sam3DBodyProcessor",
     "SharpGaussianProcessor",
     "UniSHARPGaussianProcessor",
+    "parse_infinisplat_model_id",
 ]
 
 

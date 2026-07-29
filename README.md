@@ -30,6 +30,10 @@ This fork adds the following features to the original NVIDIA sample.
 ### Generative AI Integration
 - **ComfyUI Integration** - Generate 3D Gaussian Splats from text/image prompts via ComfyUI workflows
 
+### TODO / Upstream to Merge
+- [ ] [InfiniSplat](https://github.com/zju3dv/InfiniSplat) — 3D Gaussian Splatting from Infinite-Scale Input
+- [ ] [Awesome 4DGS](https://github.com/awesome-4dgs/awesome-4dgs) — 4D Gaussian Splatting resource list
+
 ### Free-Splatter Integration (image-to-3DGS)
 - **Image-to-Gaussians** — Convert 2-4 photos of a scene into a 3DGS `.splat` file via the [free-splatter.cpp](https://github.com/localai-org/free-splatter.cpp) backend. Runs on CPU by default (14s per scene); Vulkan (incl. Intel XPU) is ~60x faster.
 - **File Menu Access** — File > "Generate Splats from Images..." opens a dialog with multi-image picker, progress bar, and auto-load.

@@ -163,6 +163,18 @@ unisharp = [
     "unik3d @ git+https://github.com/lpiccinelli-eth/UniK3D.git",
 ]
 
+infinisplat = [
+    "hydra-core>=1.3",
+    "dacite>=1.8",
+    "jaxtyping>=0.2",
+    "termcolor>=2.0",
+    "rich>=13.0",
+    "h5py>=3.0",
+    "regex>=2023.0",
+    "xformers>=0.0.26",
+    "gradio>=6.20",
+]
+
 [project.scripts]
 # CLI entry points
 vkgs-backend = "backend.main:run_server"
@@ -177,7 +189,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["backend*", "offline*", "common*", "InfiniDepth*"]
+include = ["backend*", "offline*", "common*"]
 
 [tool.ruff]
 line-length = 100
@@ -187,7 +199,7 @@ target-version = "py310"
 
 [tool.ty.src]
 include = ["*"]
-exclude = ["sharp/", "unisharp/"]
+exclude = ["sharp/", "unisharp/", "third_party/", "infinisplat/", "InfiniDepth/"]
 
 [tool.uv]
 # Define mutually exclusive GPU backends
