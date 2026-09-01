@@ -89,6 +89,10 @@ public:
   // Parse meta.json (v3) content
   static bool parseMeta(const std::vector<uint8_t>& jsonData, SogXtMeta& meta);
 
+  // Quick check whether `path` (a container directory, meta.json, or
+  // scene.json manifest) is a SOG-XT container, without decoding planes.
+  static bool isSogXtManifest(const std::filesystem::path& path);
+
 private:
   // WebP image data
   struct WebPImage

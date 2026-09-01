@@ -21,6 +21,8 @@
 #include "sogxt_loader.h"
 
 #include <filesystem>
+#include <fstream>
+#include <limits>
 
 using namespace vk_viewer;
 
@@ -107,5 +109,27 @@ TEST_SUITE("SogXtLoader")
     {
       CHECK_FALSE(std::isnan(output.positions[i]));
     }
+  }
+
+  TEST_CASE("isSogXtManifest detects container and rejects plain JSON")
+  {
+    // Garden container directory / meta.json / scene.json
+    std::filesystem::path container = std::filesystem::path(SOGXT_TEST_FIXTURE_DIR) / "sog_xt_garden";
+    if(std::filesystem::is_directory(container))
+    {
+      CHECK(SogXtLoader::isSogXtManifest(container));
+      CHECK(SogXtLoader::isSogXtManifest(container / "meta.json"));
+      CHECK(SogXtLoader::isSogXtManifest(container / "scene.json"));
+    }
+
+    // Non-SOG-XT JSON (e.g. depth-video metadata) is rejected
+    std::filesystem::path tempDir = std::filesystem::temp_directory_path();
+    std::filesystem::path bogusJson = tempDir / "sogxt_bogus_meta.json";
+    {
+      std::ofstream ofs(bogusJson);
+      ofs << R"({"version": 2, "count": 10, "format": "sog"})";
+    }
+    CHECK_FALSE(SogXtLoader::isSogXtManifest(bogusJson));
+    std::filesystem::remove(bogusJson);
   }
 }

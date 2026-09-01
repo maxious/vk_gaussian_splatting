@@ -566,6 +566,46 @@ bool SogXtLoader::loadWithReader(const SogXtMeta& meta, FileReader reader, Splat
   return true;
 }
 
+bool SogXtLoader::isSogXtManifest(const std::filesystem::path& path)
+{
+  // Directory container
+  if(std::filesystem::is_directory(path))
+  {
+    std::vector<uint8_t> dirMeta = readFile(path / "meta.json");
+    if(dirMeta.empty())
+      return false;
+    SogXtMeta meta;
+    return parseMeta(dirMeta, meta);
+  }
+
+  const std::string fname = path.filename().string();
+  std::filesystem::path metaPath = path;
+
+  if(fname == "scene.json")
+  {
+    // Resolve the metadata url from the manifest.
+    std::vector<uint8_t> manifest = readFile(path);
+    if(manifest.empty())
+      return false;
+    try
+    {
+      json scene = json::parse(manifest.begin(), manifest.end());
+      std::string metaUrl = scene.value("metadata", json::object()).value("url", std::string("meta.json"));
+      metaPath = path.parent_path() / metaUrl;
+    }
+    catch(const std::exception&)
+    {
+      return false;
+    }
+  }
+
+  std::vector<uint8_t> metaData = readFile(metaPath);
+  if(metaData.empty())
+    return false;
+  SogXtMeta meta;
+  return parseMeta(metaData, meta);
+}
+
 bool SogXtLoader::load(const std::filesystem::path& filename, SplatSet& output,
                        std::function<void(float)> progressCallback)
 {

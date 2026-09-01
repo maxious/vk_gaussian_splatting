@@ -40,6 +40,7 @@
 #include "animation_ui.h"
 #include "utilities.h"
 #include "lcc_loader.h"
+#include "sogxt_loader.h"
 #include <backends/imgui_impl_vulkan.h>
 #include <imgui/imgui_internal.h>
 
@@ -940,10 +941,28 @@ void VkViewerUI::onUIRender()
       }
       else if(prmScene.sceneToLoadFilename.extension() == ".json")
       {
-        enableDepthVideoPlayback(prmScene.sceneToLoadFilename.string());
-        prmFrame.vdzUseVideoTexture = 1;
-        m_requestUpdateShaders      = true;
-        prmScene.sceneToLoadFilename.clear();
+        if(SogXtLoader::isSogXtManifest(prmScene.sceneToLoadFilename))
+        {
+          // SOG-XT container manifest (meta.json / scene.json) -> async loader
+          m_pendingLoadFilename = prmScene.sceneToLoadFilename;
+          m_splatSetPending.clear();
+          if(!m_splatLoader.loadScene(prmScene.sceneToLoadFilename, m_splatSetPending))
+          {
+            LOGE("Error: cannot start scene load while loader is not ready status=%d\n",
+                 static_cast<int>(m_splatLoader.getStatus()));
+          }
+          else
+          {
+            ImGui::OpenPopup("Loading");
+          }
+        }
+        else
+        {
+          enableDepthVideoPlayback(prmScene.sceneToLoadFilename.string());
+          prmFrame.vdzUseVideoTexture = 1;
+          m_requestUpdateShaders      = true;
+          prmScene.sceneToLoadFilename.clear();
+        }
       }
       else
       {
