@@ -8,11 +8,71 @@
 #include <webp/decode.h>
 #include <cstring>
 #include <algorithm>
+#include <string_view>
+
+#ifdef _WIN32
+#include <winsock2.h>
+#include <windows.h>
+#include <winhttp.h>
+#pragma comment(lib, "winhttp.lib")
+#endif
 
 #include <ixwebsocket/IXHttpClient.h>
 #include <ixwebsocket/IXNetSystem.h>
 
 namespace vk_viewer {
+
+namespace {
+
+// Parse the JSON bootstrap block instead of taking the quote after the
+// property name, which produces a malformed URL for the current page.
+bool extractContentUrl(const std::string& html, std::string& contentUrl)
+{
+  const std::string scriptStart = R"(<script type="application/json" id="sse-bootstrap">)";
+  size_t            start       = html.find(scriptStart);
+  if(start != std::string::npos)
+  {
+    start += scriptStart.size();
+    size_t end = html.find("</script>", start);
+    if(end != std::string::npos)
+    {
+      try
+      {
+        auto bootstrap = nlohmann::json::parse(html.substr(start, end - start));
+        if(bootstrap.contains("contentUrl") && bootstrap["contentUrl"].is_string())
+        {
+          contentUrl = bootstrap["contentUrl"].get<std::string>();
+          return !contentUrl.empty();
+        }
+      }
+      catch(const std::exception& e)
+      {
+        LOGW("SupersplatClient: Could not parse bootstrap JSON: %s\n", e.what());
+      }
+    }
+  }
+
+  // Compatibility with older viewer pages that used a JavaScript assignment.
+  for(const std::string_view marker : {std::string_view("contentUrl"), std::string_view("data-content-url")})
+  {
+    size_t markerPos = html.find(marker);
+    if(markerPos == std::string::npos)
+      continue;
+    size_t separator = html.find_first_of(":=", markerPos + marker.size());
+    size_t quote     = separator == std::string::npos ? std::string::npos : html.find_first_of("'\"", separator + 1);
+    if(quote == std::string::npos)
+      continue;
+    size_t end = html.find(html[quote], quote + 1);
+    if(end != std::string::npos)
+    {
+      contentUrl = html.substr(quote + 1, end - quote - 1);
+      return !contentUrl.empty();
+    }
+  }
+  return false;
+}
+
+}  // namespace
 
 SupersplatClient::SupersplatClient()
 {
@@ -184,6 +244,61 @@ void SupersplatClient::fetchThumbnail(const std::string& url, ThumbnailCallback 
 
 bool SupersplatClient::httpGet(const std::string& url, std::vector<uint8_t>& response)
 {
+#ifdef _WIN32
+  std::wstring wideUrl(url.begin(), url.end());
+  URL_COMPONENTS parts = {};
+  parts.dwStructSize = sizeof(parts);
+  wchar_t host[256] = {};
+  wchar_t path[4096] = {};
+  wchar_t extra[4096] = {};
+  parts.lpszHostName = host;
+  parts.dwHostNameLength = static_cast<DWORD>(std::size(host));
+  parts.lpszUrlPath = path;
+  parts.dwUrlPathLength = static_cast<DWORD>(std::size(path));
+  parts.lpszExtraInfo = extra;
+  parts.dwExtraInfoLength = static_cast<DWORD>(std::size(extra));
+  if(!WinHttpCrackUrl(wideUrl.c_str(), static_cast<DWORD>(wideUrl.size()), 0, &parts))
+    return false;
+
+  HINTERNET session = WinHttpOpen(L"vk_viewer/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+                                  WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+  HINTERNET connection = session ? WinHttpConnect(session, host, parts.nPort, 0) : nullptr;
+  DWORD flags = parts.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0;
+  std::wstring requestPath(path, parts.dwUrlPathLength);
+  requestPath.append(extra, parts.dwExtraInfoLength);
+  HINTERNET request = connection ? WinHttpOpenRequest(connection, L"GET", requestPath.c_str(), nullptr,
+                                                       WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags)
+                                 : nullptr;
+  bool success = request && WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+                                                WINHTTP_NO_REQUEST_DATA, 0, 0, 0)
+                 && WinHttpReceiveResponse(request, nullptr);
+  DWORD status = 0;
+  DWORD statusSize = sizeof(status);
+  success = success && WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                                            WINHTTP_HEADER_NAME_BY_INDEX, &status, &statusSize,
+                                            WINHTTP_NO_HEADER_INDEX) && status == 200;
+  if(success)
+  {
+    DWORD available = 0;
+    while(WinHttpQueryDataAvailable(request, &available) && available > 0)
+    {
+      size_t offset = response.size();
+      response.resize(offset + available);
+      DWORD received = 0;
+      if(!WinHttpReadData(request, response.data() + offset, available, &received))
+      {
+        response.clear();
+        success = false;
+        break;
+      }
+      response.resize(offset + received);
+    }
+  }
+  if(request) WinHttpCloseHandle(request);
+  if(connection) WinHttpCloseHandle(connection);
+  if(session) WinHttpCloseHandle(session);
+  return success;
+#else
   ix::HttpClient httpClient;
   auto           args = httpClient.createRequest(url, ix::HttpClient::kGet);
 
@@ -205,6 +320,7 @@ bool SupersplatClient::httpGet(const std::string& url, std::vector<uint8_t>& res
 
   response.assign(res->body.begin(), res->body.end());
   return true;
+#endif
 }
 
 bool SupersplatClient::isSuperSplatUrl(const std::string& url)
@@ -277,43 +393,8 @@ void SupersplatClient::resolveContentUrl(const std::string& viewUrl, ContentUrlC
 
     std::string html(responseData.begin(), responseData.end());
 
-    const char* patterns[] = {R"(const\s+contentUrl\s*=\s*['"]([^'"]+)['"])", R"(data-content-url\s*=\s*["']([^"']+)["'])",
-                              R"(window\.contentUrl\s*=\s*['"]([^'"]+)['"])"};
-
     std::string contentUrl;
-    for(const auto& pattern : patterns)
-    {
-      size_t      patternLen = 0;
-      const char* p          = pattern;
-      while(*p)
-      {
-        if(*p != '(' && *p != '[')
-          patternLen++;
-        p++;
-      }
-
-      size_t matchStart = html.find("contentUrl");
-      if(matchStart != std::string::npos)
-      {
-        size_t valueStart = html.find('"', matchStart);
-        if(valueStart == std::string::npos)
-          valueStart = html.find('\'', matchStart);
-        if(valueStart != std::string::npos)
-        {
-          valueStart++;
-          size_t valueEnd = html.find('"', valueStart);
-          if(valueEnd == std::string::npos)
-            valueEnd = html.find('\'', valueStart);
-          if(valueEnd != std::string::npos)
-          {
-            contentUrl = html.substr(valueStart, valueEnd - valueStart);
-            break;
-          }
-        }
-      }
-    }
-
-    if(contentUrl.empty())
+    if(!extractContentUrl(html, contentUrl))
     {
       LOGE("SupersplatClient: Could not find content URL in page (URL format may have changed)\n");
       if(callback)
@@ -343,33 +424,11 @@ bool SupersplatClient::resolveContentUrlSync(const std::string& viewUrl, std::st
 
   std::string html(responseData.begin(), responseData.end());
 
-  size_t searchStart = html.find("contentUrl");
-  if(searchStart == std::string::npos)
+  if(!extractContentUrl(html, outContentUrl))
   {
-    LOGE("SupersplatClient: Could not find contentUrl in page\n");
+    LOGE("SupersplatClient: Could not find content URL in page\n");
     return false;
   }
-
-  size_t valueStart = html.find('"', searchStart);
-  if(valueStart == std::string::npos)
-    valueStart = html.find('\'', searchStart);
-  if(valueStart == std::string::npos)
-  {
-    LOGE("SupersplatClient: Could not parse contentUrl value\n");
-    return false;
-  }
-  valueStart++;
-
-  size_t valueEnd = html.find('"', valueStart);
-  if(valueEnd == std::string::npos)
-    valueEnd = html.find('\'', valueStart);
-  if(valueEnd == std::string::npos)
-  {
-    LOGE("SupersplatClient: Could not find end of contentUrl\n");
-    return false;
-  }
-
-  outContentUrl = html.substr(valueStart, valueEnd - valueStart);
   LOGI("Resolved to: %s\n", outContentUrl.c_str());
   return true;
 }

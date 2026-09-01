@@ -318,7 +318,7 @@ void VkViewerUI::guiDrawDepthStreamProperties()
         {
           m_backendManager->stop();
           m_localBackendStarted = false;
-          strncpy(hostBuffer, "192.168.1.200", sizeof(hostBuffer) - 1);
+          std::snprintf(hostBuffer, sizeof(hostBuffer), "%s", "192.168.1.200");
           backendConnected = false;
         }
       }
@@ -328,7 +328,7 @@ void VkViewerUI::guiDrawDepthStreamProperties()
         {
           if (m_backendManager->start())
           {
-            strncpy(hostBuffer, "127.0.0.1", sizeof(hostBuffer) - 1);
+            std::snprintf(hostBuffer, sizeof(hostBuffer), "%s", "127.0.0.1");
             port = 8000;
 
             if (m_depthClient)
@@ -550,7 +550,7 @@ void VkViewerUI::guiDrawDepthStreamProperties()
       float durationSec = currentSession.durationMs / 1000.0f;
       if(durationSec > 0)
       {
-        float currentTimeSec = m_playbackTimeOffset / 1000.0f;
+        float currentTimeSec = static_cast<float>(m_playbackTimeOffset / 1000.0);
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
         if(ImGui::SliderFloat("##timeline", &currentTimeSec, 0.0f, durationSec))
         {

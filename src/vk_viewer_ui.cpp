@@ -33,6 +33,7 @@
 #include <filesystem>
 #include <algorithm>  // for std::clamp
 #include <fstream>    // for debug mesh export
+#include <cstdio>
 
 #include <GLFW/glfw3.h>
 
@@ -2816,8 +2817,7 @@ void VkViewerUI::guiDrawComfyUIWindow()
 
   std::string workflowStr = m_comfyWorkflowPath.string();
   char        workflowBuf[512];
-  strncpy(workflowBuf, workflowStr.c_str(), sizeof(workflowBuf) - 1);
-  workflowBuf[sizeof(workflowBuf) - 1] = '\0';
+  std::snprintf(workflowBuf, sizeof(workflowBuf), "%s", workflowStr.c_str());
 
   ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 80);
   if(ImGui::InputText("##workflow", workflowBuf, sizeof(workflowBuf)))
@@ -2968,7 +2968,10 @@ void VkViewerUI::guiDrawPerformancePanel()
     {
       if(!metric.historyForPlotting.empty())
       {
-        std::vector<float> values(metric.historyForPlotting.begin(), metric.historyForPlotting.end());
+        std::vector<float> values;
+        values.reserve(metric.historyForPlotting.size());
+        for(double value : metric.historyForPlotting)
+          values.push_back(static_cast<float>(value));
         ImGui::PlotLines(name.c_str(), values.data(), (int)values.size(), 0, nullptr, FLT_MAX, FLT_MAX, ImVec2(0, 50));
       }
     }
@@ -3062,8 +3065,7 @@ void VkViewerUI::guiDrawSupersplatDialog()
       static char searchBuf[256] = "";
       if(m_supersplatSearch.size() < sizeof(searchBuf))
       {
-        strncpy(searchBuf, m_supersplatSearch.c_str(), sizeof(searchBuf) - 1);
-        searchBuf[sizeof(searchBuf) - 1] = '\0';
+        std::snprintf(searchBuf, sizeof(searchBuf), "%s", m_supersplatSearch.c_str());
       }
       bool triggerSearch = ImGui::InputText("Search", searchBuf, sizeof(searchBuf), ImGuiInputTextFlags_EnterReturnsTrue);
       ImGui::SameLine();
@@ -3117,10 +3119,11 @@ void VkViewerUI::guiDrawSupersplatDialog()
       std::lock_guard<std::mutex> lock(m_thumbnailMutex);
       if(ImGui::BeginTable("Scenes", 4))
       {
-        for(const auto& scene : m_supersplatScenes)
+        for(size_t sceneIndex = 0; sceneIndex < m_supersplatScenes.size(); ++sceneIndex)
         {
+          const auto& scene = m_supersplatScenes[sceneIndex];
           ImGui::TableNextColumn();
-          ImGui::PushID(scene.id);
+          ImGui::PushID(static_cast<int>(sceneIndex));
 
           ImTextureID texId = 0;
           if(m_thumbnailDescriptors.count(scene.thumbnailUrl))

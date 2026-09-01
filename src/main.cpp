@@ -260,9 +260,11 @@ int main(int argc, char** argv)
 
   // Setting up the validation layers
   nvvk::ValidationSettings vvlInfo{};
-  // vvlInfo.validate_best_practices = true;
-  vvlInfo.validate_core = false;
-  //vvlInfo.setPreset(nvvk::ValidationSettings::LayerPresets::eSynchronization);
+  // Keep core object-lifetime checks enabled; they are essential when tracking
+  // invalid handles during resize and shutdown.
+  vvlInfo.setPreset(nvvk::ValidationSettings::LayerPresets::eStandard);
+  vvlInfo.validate_sync             = VK_TRUE;
+  vvlInfo.validate_best_practices   = VK_TRUE;
   vkSetup.instanceCreateInfoExt = vvlInfo.buildPNextChain();  // Adding the validation layer settings
 
   // Create Vulkan context

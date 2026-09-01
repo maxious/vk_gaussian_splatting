@@ -247,12 +247,16 @@ void VkViewer::onDetach()
 
   // Wait for GPU to finish before cleanup
   vkDeviceWaitIdle(m_device);
+  m_profilerGpuTimer.deinit();
 
   // stops the threads
   m_splatLoader.shutdown();
   m_cpuSorter.shutdown();
   // release scene and rendering related resources
   deinitAll();
+  // GBuffer owns Vulkan images and descriptor sets and requires explicit cleanup
+  // before its destructor runs.
+  m_gBuffers.deinit();
   // release application wide related resources
   m_splatSetVk.deinit();
   m_meshSetVk.deinit();
@@ -262,6 +266,17 @@ void VkViewer::onDetach()
   // before HdrIbl releases the HDR image and alias-method buffer.
   m_hdrEnvDome.deinit();
   m_hdrIbl.deinit();
+  m_samplerPool.deinit();
+
+  if(m_dummyTextureArray.view != VK_NULL_HANDLE)
+  {
+    vkDestroyImageView(m_device, m_dummyTextureArray.view, nullptr);
+    m_dummyTextureArray.view = VK_NULL_HANDLE;
+  }
+  if(m_dummyTextureArray.image.image != VK_NULL_HANDLE)
+    m_alloc.destroyImage(m_dummyTextureArray.image);
+  m_uploader.deinit();
+  m_alloc.deinit();
 
 #ifdef WITH_TCP_DEPTH
   if(m_tcpServerManager)
@@ -908,6 +923,11 @@ void VkViewer::deinitAll()
   deinitPipelines();
   deinitRendererBuffers();
   deinitChunkCullingBuffers();
+  if(m_kBufferDist.buffer != VK_NULL_HANDLE)
+    m_alloc.destroyBuffer(m_kBufferDist);
+  if(m_kBufferId.buffer != VK_NULL_HANDLE)
+    m_alloc.destroyBuffer(m_kBufferId);
+  m_kBufferSize = {};
   resetRenderSettings();
   // record default cam for reset in UI
   m_cameraSet.setCamera(Camera());
