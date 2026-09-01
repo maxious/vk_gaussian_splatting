@@ -26,18 +26,12 @@ This fork adds the following features to the original NVIDIA sample.
 
 The application exposes `--dlss 1` and the **Enable DLSS Neural Rendering** checkbox in the renderer properties. This runs a native Vulkan NGX Super Resolution evaluation in DLAA mode at the current viewport size. It is intentionally limited to the 3DGRT pipeline and is mutually exclusive with DLSS-RR.
 
-The DLSS5 neural pass itself is not bundled. It requires the optional community Vulkan bridge and ReShade Vulkan layer:
+The DLSS5 neural pass itself is not bundled. It requires the optional community bridge as a ReShade add-on:
 
-1. Obtain `dlss5-vk-bridge.dll` and `dlss5-vk-bridge.json` from [AlanBacker/dlss5-vk-bridge](https://github.com/AlanBacker/dlss5-vk-bridge/releases).
-2. Register the bridge as a per-user Vulkan implicit layer and enable it:
-
-   ```powershell
-   reg add "HKCU\SOFTWARE\Khronos\Vulkan\ImplicitLayers" /v "C:\path\to\dlss5-vk-bridge.json" /t REG_DWORD /d 0 /f
-   setx ENABLE_DLSS5_VK_BRIDGE 1
-   ```
-
-3. Install ReShade with Vulkan add-on support, then place the legally obtained `renodx-dlss5.addon64`, `nvngx_dlssnr.dll`, and `nvngx_dlss.dll` where ReShade can discover them. The neural-rendering add-on is closed-source and is not distributed by this project.
-4. Restart the launcher, run `vk_viewer --pipeline 2 --dlss 1`, and inspect `dlss5-vk-bridge.log` and the ReShade overlay. Disable DLSS Frame Generation if present; the bridge does not support it.
+1. Obtain `dlss5-bridge.addon64` from [NIGos/dlss5-bridge](https://github.com/NIGos/dlss5-bridge/releases). Its Vulkan mirror is enabled by default (`vk_mirror=1`).
+2. Install ReShade with Vulkan add-on support and place `dlss5-bridge.addon64` in ReShade's `AddonPath`.
+3. Place the legally obtained `renodx-dlss5.addon64`, `nvngx_dlssnr.dll`, and `nvngx_dlss.dll` where ReShade can discover them. The neural-rendering add-on is closed-source and is not distributed by this project.
+4. Run `vk_viewer --pipeline 2 --dlss 1`, then inspect `dlss5-bridge.log` and the ReShade overlay. Disable DLSS Frame Generation if present; the bridge does not support it.
 
 Without the bridge and add-on, `--dlss 1` still exercises the standard Vulkan DLAA path and safely falls back through normal NGX errors when the runtime is unavailable.
 

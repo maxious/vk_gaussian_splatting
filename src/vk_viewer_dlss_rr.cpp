@@ -177,8 +177,9 @@ void VkViewer::updateDlssDescriptorSet()
                       m_gBuffers.getColorImageView(COLOR_DLSS_OUTPUT), m_colorFormat);
   m_dlss->setResource(GsDlss::RESOURCE_MOTION_VECTORS, m_gBuffers.getColorImage(COLOR_MOTION),
                       m_gBuffers.getColorImageView(COLOR_MOTION), VK_FORMAT_R16G16_SFLOAT);
-  m_dlss->setResource(GsDlss::RESOURCE_DEPTH, m_gBuffers.getColorImage(COLOR_DLSS_LINEAR_DEPTH),
-                      m_gBuffers.getColorImageView(COLOR_DLSS_LINEAR_DEPTH), VK_FORMAT_R32_SFLOAT);
+  // The Vulkan bridge needs the raw depth aspect and its native format. The
+  // linear R32 depth buffer is suitable for DLSS-RR, but cannot be mirrored.
+  m_dlss->setResource(GsDlss::RESOURCE_DEPTH, m_gBuffers.getDepthImage(), m_gBuffers.getDepthImageView(), m_depthFormat);
 }
 
 void VkViewer::updateDlssRRDescriptorSet()

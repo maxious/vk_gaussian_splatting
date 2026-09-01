@@ -715,6 +715,26 @@ void VkViewer::renderRtxFrame(FrameRenderContext& ctx)
     return;
 
 #ifdef WITH_DLSS_RR
+  if(m_dlssNeedsReinit)
+  {
+    if(m_dlssInitialized)
+    {
+      shutdownDlss();
+      initializeDlss();
+      if(m_dlssInitialized)
+        updateDlssDescriptorSet();
+    }
+    else if(m_dlssRRInitialized)
+    {
+      shutdownDlssRR();
+      initializeDlssRR();
+      if(m_dlssRRInitialized)
+        updateDlssRRDescriptorSet();
+    }
+    m_dlssNeedsReinit = false;
+    m_dlssRRNeedsReset = true;
+  }
+
   if(prmDlssEnabled && !m_dlssInitialized)
   {
     m_dlssEnabled = true;

@@ -544,6 +544,7 @@ protected:
   bool                        m_dlssRRInitialized = false;
   bool                        m_dlssEnabled       = false;  // DLSS Super Resolution / DLAA
   bool                        m_dlssInitialized   = false;
+  bool                        m_dlssNeedsReinit   = false;
   uint32_t                    m_dlssRRFrameIndex  = 0;
   bool                        m_dlssRRNeedsReset  = true;   // Reset temporal history
   

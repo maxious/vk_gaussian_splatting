@@ -427,7 +427,7 @@ void GsDlss::setResource(Resource resourceId, VkImage image, VkImageView imageVi
     return;
 
   VkImageSubresourceRange range = {};
-  range.aspectMask              = VK_IMAGE_ASPECT_COLOR_BIT;
+  range.aspectMask              = resourceId == RESOURCE_DEPTH ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
   range.layerCount              = 1;
   range.levelCount               = 1;
 

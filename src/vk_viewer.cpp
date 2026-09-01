@@ -680,6 +680,11 @@ void VkViewer::onResize(VkCommandBuffer cmd, const VkExtent2D& viewportSize)
   updateRtDescriptorSet();
   updateDescriptorSetPostProcessing();
   resetFrameCounter();
+
+#ifdef WITH_DLSS_RR
+  m_dlssNeedsReinit = m_dlssInitialized || m_dlssRRInitialized;
+  m_dlssRRNeedsReset = true;
+#endif
   
   // Invalidate sort cache on resize (projection changes)
   m_lastSortValid = false;
@@ -708,10 +713,14 @@ void VkViewer::onPreRender()
       m_viewSize = glm::vec2(xrExtent.width, xrExtent.height);
       NVVK_CHECK(m_gBuffers.update(cmd, xrExtent));
       updateKBuffers(xrExtent.width, xrExtent.height);  // GRTX: resize K-buffers
-      updateRtDescriptorSet();
-      updateDescriptorSetPostProcessing();
-      resetFrameCounter();
-      m_app->submitAndWaitTempCmdBuffer(cmd);
+       updateRtDescriptorSet();
+       updateDescriptorSetPostProcessing();
+       resetFrameCounter();
+#ifdef WITH_DLSS_RR
+       m_dlssNeedsReinit = m_dlssInitialized || m_dlssRRInitialized;
+       m_dlssRRNeedsReset = true;
+#endif
+       m_app->submitAndWaitTempCmdBuffer(cmd);
 
       // Skip rendering this frame to let descriptor sets stabilize
       m_xrResizedThisFrame = true;
