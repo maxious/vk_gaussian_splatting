@@ -34,6 +34,9 @@ shaderio::FrameInfo prmFrame{};
 RenderParameters    prmRender{};
 RasterParameters       prmRaster{};
 RtxParameters          prmRtx{};
+#ifdef WITH_DLSS_RR
+bool                    prmDlssEnabled = false;
+#endif
 StochasticParameters   prmStochastic{};
 PbrParameters          prmPbr{};
 
@@ -87,6 +90,10 @@ void resetRtxParameters()
 
 void registerCommandLineParameters(nvutils::ParameterRegistry* parameterRegistry)
 {
+#ifdef WITH_DLSS_RR
+  parameterRegistry->add({"dlss", "1=enable Vulkan DLSS Super Resolution in DLAA mode (also enables the DLSS5 bridge contract)"},
+                         &prmDlssEnabled);
+#endif
   // Scene - unified input that auto-detects based on extension
   parameterRegistry->add({"inputFile", "load a scene file (ply, spz, rad, sog, sog-xt meta.json/scene.json, lod-meta.json, 4dv, obj, glb, gltf, or metadata.json for depth video)"},
                          {".ply", ".spz", ".rad", ".sog", ".4dv", ".obj", ".glb", ".gltf", ".json"}, &prmScene.sceneToLoadFilename);

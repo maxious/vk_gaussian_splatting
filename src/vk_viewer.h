@@ -539,8 +539,11 @@ protected:
   // DLSS-RR denoiser
   std::unique_ptr<NgxContext> m_ngxContext;
   std::unique_ptr<GsDlssRR>   m_dlssRR;
+  std::unique_ptr<GsDlss>     m_dlss;
   bool                        m_dlssRREnabled     = false;  // User toggle
   bool                        m_dlssRRInitialized = false;
+  bool                        m_dlssEnabled       = false;  // DLSS Super Resolution / DLAA
+  bool                        m_dlssInitialized   = false;
   uint32_t                    m_dlssRRFrameIndex  = 0;
   bool                        m_dlssRRNeedsReset  = true;   // Reset temporal history
   
@@ -550,6 +553,9 @@ protected:
   void initializeDlssRR();
   void shutdownDlssRR();
   void updateDlssRRDescriptorSet();
+  void initializeDlss();
+  void shutdownDlss();
+  void updateDlssDescriptorSet();
 #endif
 
   // camera info for current frame, updated by onRender

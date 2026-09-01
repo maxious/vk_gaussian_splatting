@@ -24,6 +24,7 @@
 #include <vulkan/vulkan_core.h>
 #include <nvsdk_ngx_vk.h>
 #include <nvsdk_ngx_defs_dlssd.h>
+#include <nvsdk_ngx_helpers_vk.h>
 #include <glm/glm.hpp>
 #include <array>
 #include <filesystem>
@@ -36,6 +37,7 @@ std::string getNGXResultString(NVSDK_NGX_Result result);
 
 // Forward declaration
 class GsDlssRR;
+class GsDlss;
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // NgxContext - Manages NGX API initialization and DLSS-RR instance creation
@@ -91,6 +93,15 @@ public:
   };
 
   NVSDK_NGX_Result initDlssRR(const DlssRRInitInfo& initInfo, GsDlssRR& dlssrr);
+
+  struct DlssInitInfo
+  {
+    VkExtent2D                  inputSize  = {};
+    VkExtent2D                  outputSize = {};
+    NVSDK_NGX_PerfQuality_Value quality    = NVSDK_NGX_PerfQuality_Value_DLAA;
+  };
+
+  NVSDK_NGX_Result initDlss(const DlssInitInfo& initInfo, GsDlss& dlss);
 
   // Check if DLSS-RR is available
   static NVSDK_NGX_Result isDlssRRAvailable(VkInstance instance, VkPhysicalDevice physicalDevice);
@@ -160,6 +171,53 @@ private:
   VkExtent2D                                         m_inputSize   = {};
   VkExtent2D                                         m_outputSize  = {};
   std::array<NVSDK_NGX_Resource_VK, RESOURCE_COUNT>  m_resources   = {};
+};
+
+}  // namespace vk_viewer
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// GsDlss - DLSS Super Resolution wrapper. This also provides a DLAA contract
+// for the optional DLSS5 Vulkan bridge.
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+namespace vk_viewer {
+
+class GsDlss
+{
+public:
+  GsDlss() = default;
+  ~GsDlss();
+
+  void deinit();
+  bool isValid() const { return m_dlssHandle != nullptr; }
+
+  enum Resource
+  {
+    RESOURCE_COLOR_IN = 0,
+    RESOURCE_COLOR_OUT,
+    RESOURCE_MOTION_VECTORS,
+    RESOURCE_DEPTH,
+    RESOURCE_COUNT
+  };
+
+  void setResource(Resource resourceId, VkImage image, VkImageView imageView, VkFormat format);
+
+  NVSDK_NGX_Result evaluate(VkCommandBuffer  cmd,
+                            glm::uvec2       renderSize,
+                            glm::vec2        jitter,
+                            bool             reset = false);
+
+private:
+  friend class NgxContext;
+  NVSDK_NGX_Result init(VkDevice device, VkQueue queue, uint32_t queueFamilyIdx,
+                        NVSDK_NGX_Parameter* ngxParams, const NgxContext::DlssInitInfo& info);
+
+  VkDevice                                           m_device     = VK_NULL_HANDLE;
+  NVSDK_NGX_Parameter*                               m_ngxParams  = nullptr;
+  NVSDK_NGX_Handle*                                  m_dlssHandle = nullptr;
+  VkExtent2D                                         m_inputSize  = {};
+  VkExtent2D                                         m_outputSize = {};
+  std::array<NVSDK_NGX_Resource_VK, RESOURCE_COUNT> m_resources  = {};
 };
 
 }  // namespace vk_viewer

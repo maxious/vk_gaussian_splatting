@@ -877,6 +877,7 @@ void VkViewer::deinitAll()
 
 #ifdef WITH_DLSS_RR
   shutdownDlssRR();
+  shutdownDlss();
 #endif
 
   m_canCollectReadback = false;

@@ -175,6 +175,10 @@ struct RtxParameters
 
 // Parameters that control Raytracing (RTX)
 extern RtxParameters prmRtx;
+#ifdef WITH_DLSS_RR
+// Enables the Vulkan DLSS Super Resolution/DLAA contract used by the optional DLSS5 bridge.
+extern bool prmDlssEnabled;
+#endif
 
 // Parameters that control Compute Stochastic GS rendering
 struct StochasticParameters
