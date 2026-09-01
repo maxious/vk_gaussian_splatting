@@ -22,9 +22,9 @@ INFINIDEPTH_REPO = "ritianyu/InfiniDepth"
 CHECKPOINTS = [
     ("infinidepth.ckpt", "Main depth model"),
     ("infinidepth_gs.ckpt", "Gaussian splatting predictor"),
-    ("moge2.pt", "MoGe-2 metric depth"),
     ("skyseg.onnx", "Sky segmentation"),
 ]
+MOGE3_REPO = "Ruicheng/moge-3-vitl"
 
 try:
     import huggingface_hub
@@ -51,7 +51,9 @@ try:
             if "skyseg" not in filename:
                 raise
 
-    log("SUCCESS! All InfiniDepth checkpoints downloaded.")
+    log("Downloading MoGe-3 metric depth model (model.pt)...")
+    log(f"SUCCESS: {hf_hub_download(repo_id=MOGE3_REPO, filename='model.pt')}")
+    log("SUCCESS! All InfiniDepth and MoGe-3 checkpoints downloaded.")
 
 except Exception as e:
     log(f"ERROR: {e}")

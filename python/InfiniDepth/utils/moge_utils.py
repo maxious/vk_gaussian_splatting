@@ -5,16 +5,16 @@ from typing import Optional
 import torch
 
 
-_MOGE2_MODEL_CACHE: dict[tuple[str, str], torch.nn.Module] = {}
+_MOGE3_MODEL_CACHE: dict[tuple[str, str], torch.nn.Module] = {}
 
 
-def _get_moge2_model(pretrained_model_name_or_path: str, device: torch.device) -> torch.nn.Module:
+def _get_moge3_model(pretrained_model_name_or_path: str, device: torch.device) -> torch.nn.Module:
     cache_key = (pretrained_model_name_or_path, str(device))
-    if cache_key in _MOGE2_MODEL_CACHE:
-        return _MOGE2_MODEL_CACHE[cache_key]
+    if cache_key in _MOGE3_MODEL_CACHE:
+        return _MOGE3_MODEL_CACHE[cache_key]
 
     try:
-        from moge.model.v2 import MoGeModel
+        from moge.model.v3 import MoGeModel
     except ImportError as exc:
         raise ImportError(
             "MoGe is not installed. Please install it first: "
@@ -23,7 +23,7 @@ def _get_moge2_model(pretrained_model_name_or_path: str, device: torch.device) -
 
     model = MoGeModel.from_pretrained(pretrained_model_name_or_path).to(device)
     model.eval()
-    _MOGE2_MODEL_CACHE[cache_key] = model
+    _MOGE3_MODEL_CACHE[cache_key] = model
     return model
 
 
@@ -32,7 +32,7 @@ def _squeeze_hw(tensor: torch.Tensor, name: str) -> torch.Tensor:
         return tensor
     if tensor.ndim == 3 and tensor.shape[0] == 1:
         return tensor[0]
-    raise ValueError(f"Unexpected {name} shape from MoGe-2: {tuple(tensor.shape)}")
+    raise ValueError(f"Unexpected {name} shape from MoGe-3: {tuple(tensor.shape)}")
 
 
 def _squeeze_33(tensor: torch.Tensor, name: str) -> torch.Tensor:
@@ -40,7 +40,7 @@ def _squeeze_33(tensor: torch.Tensor, name: str) -> torch.Tensor:
         return tensor
     if tensor.ndim == 3 and tensor.shape[0] == 1 and tensor.shape[1:] == (3, 3):
         return tensor[0]
-    raise ValueError(f"Unexpected {name} shape from MoGe-2: {tuple(tensor.shape)}")
+    raise ValueError(f"Unexpected {name} shape from MoGe-3: {tuple(tensor.shape)}")
 
 
 def _normalized_intrinsics_to_pixel_intrinsics(
@@ -57,20 +57,20 @@ def _normalized_intrinsics_to_pixel_intrinsics(
 
 
 @torch.no_grad()
-def estimate_metric_depth_and_intrinsics_with_moge2(
+def estimate_metric_depth_and_intrinsics_with_moge3(
     image: torch.Tensor,
-    pretrained_model_name_or_path: str = "Ruicheng/moge-2-vitl-normal",
+    pretrained_model_name_or_path: str = "Ruicheng/moge-3-vitl",
 ) -> tuple[torch.Tensor, torch.Tensor, Optional[tuple[float, float, float, float]]]:
-    """Run MoGe-2 and return dense pred depth, valid mask, and optional pixel intrinsics."""
+    """Run MoGe-3 and return dense metric depth, valid mask, and pixel intrinsics."""
     if image.ndim != 4 or image.shape[0] != 1 or image.shape[1] != 3:
         raise ValueError(f"Expected image shape [1,3,H,W], got {tuple(image.shape)}")
 
     device = image.device
-    model = _get_moge2_model(pretrained_model_name_or_path, device)
+    model = _get_moge3_model(pretrained_model_name_or_path, device)
 
     output = model.infer(image[0], apply_mask=True)
     if "depth" not in output:
-        raise KeyError("MoGe-2 output missing key 'depth'.")
+        raise KeyError("MoGe-3 output missing key 'depth'.")
 
     depth_hw = _squeeze_hw(output["depth"].to(device=device, dtype=torch.float32), "depth")
     mask_hw = output.get("mask")
@@ -84,11 +84,11 @@ def estimate_metric_depth_and_intrinsics_with_moge2(
     valid_mask = mask_hw & torch.isfinite(depth_hw) & (depth_hw > 0)
     pred_depth = torch.where(valid_mask, depth_hw, torch.zeros_like(depth_hw))
 
-    moge2_intrinsics = None
+    moge3_intrinsics = None
     output_intrinsics = output.get("intrinsics")
     if output_intrinsics is not None:
         height, width = image.shape[-2:]
-        moge2_intrinsics = _normalized_intrinsics_to_pixel_intrinsics(
+        moge3_intrinsics = _normalized_intrinsics_to_pixel_intrinsics(
             output_intrinsics.to(device=device, dtype=torch.float32),
             height=height,
             width=width,
@@ -97,16 +97,16 @@ def estimate_metric_depth_and_intrinsics_with_moge2(
     return (
         pred_depth.unsqueeze(0).unsqueeze(0),
         valid_mask.to(torch.float32).unsqueeze(0).unsqueeze(0),
-        moge2_intrinsics,
+        moge3_intrinsics,
     )
 
 
 @torch.no_grad()
-def estimate_metric_depth_with_moge2(
+def estimate_metric_depth_with_moge3(
     image: torch.Tensor,
-    pretrained_model_name_or_path: str = "Ruicheng/moge-2-vitl-normal",
+    pretrained_model_name_or_path: str = "Ruicheng/moge-3-vitl",
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    pred_depth, valid_mask, _ = estimate_metric_depth_and_intrinsics_with_moge2(
+    pred_depth, valid_mask, _ = estimate_metric_depth_and_intrinsics_with_moge3(
         image=image,
         pretrained_model_name_or_path=pretrained_model_name_or_path,
     )
@@ -114,11 +114,11 @@ def estimate_metric_depth_with_moge2(
 
 
 @torch.no_grad()
-def estimate_camera_intrinsics_with_moge2(
+def estimate_camera_intrinsics_with_moge3(
     image: torch.Tensor,
-    pretrained_model_name_or_path: str = "Ruicheng/moge-2-vitl-normal",
+    pretrained_model_name_or_path: str = "Ruicheng/moge-3-vitl",
 ) -> Optional[tuple[float, float, float, float]]:
-    _, _, intrinsics = estimate_metric_depth_and_intrinsics_with_moge2(
+    _, _, intrinsics = estimate_metric_depth_and_intrinsics_with_moge3(
         image=image,
         pretrained_model_name_or_path=pretrained_model_name_or_path,
     )

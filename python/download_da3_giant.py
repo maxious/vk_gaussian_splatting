@@ -7,7 +7,7 @@ The checkpoints are cached in ~/.cache/huggingface/hub/
 Required checkpoints:
 - infinidepth.ckpt (~1.5GB) - Main depth model
 - infinidepth_gs.ckpt (~600MB) - Gaussian splatting predictor
-- moge2.pt (~400MB) - MoGe-2 for metric depth
+- MoGe-3 model (~1.5GB) - downloaded from Ruicheng/moge-3-vitl
 - skyseg.onnx (~40MB) - Optional sky segmentation
 
 Usage:
@@ -47,9 +47,9 @@ INFINIDEPTH_REPO = "ritianyu/InfiniDepth"
 CHECKPOINTS = [
     ("infinidepth.ckpt", "Main depth model (~1.5GB)"),
     ("infinidepth_gs.ckpt", "Gaussian splatting predictor (~600MB)"),
-    ("moge2.pt", "MoGe-2 for metric depth (~400MB)"),
     ("skyseg.onnx", "Sky segmentation (~40MB, optional)"),
 ]
+MOGE3_REPO = "Ruicheng/moge-3-vitl"
 
 try:
     from huggingface_hub import hf_hub_download
@@ -73,10 +73,14 @@ try:
                 print("  This checkpoint is required for InfiniDepth to work.")
                 raise
 
+    print("Downloading MoGe-3 model (model.pt)...")
+    moge_path = hf_hub_download(repo_id=MOGE3_REPO, filename="model.pt")
+    print(f"  SUCCESS: {moge_path}")
+
     print()
     print("=" * 60)
     print("SUCCESS!")
-    print("InfiniDepth checkpoints downloaded and cached.")
+    print("InfiniDepth and MoGe-3 checkpoints downloaded and cached.")
     print("=" * 60)
     print()
     print("You can now run the Gaussian export pipeline:")

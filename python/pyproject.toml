@@ -156,7 +156,7 @@ infini_depth = [
     "protobuf>=3.20.2",
     "moviepy==1.0.3",
     "scikit-learn>=1.3.0",
-    "moge @ git+https://github.com/microsoft/MoGe.git",
+    "moge @ git+https://github.com/microsoft/MoGe.git@74fbce054ebed49800de42d0ad0e83495065719a",
 ]
 
 unisharp = [

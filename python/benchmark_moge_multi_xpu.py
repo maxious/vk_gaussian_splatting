@@ -249,7 +249,7 @@ def print_comparison(single: BenchmarkResult, multi: BenchmarkResult):
 def main():
     parser = argparse.ArgumentParser(description="Benchmark MoGe multi-XPU performance")
     parser.add_argument("--video", type=Path, required=True, help="Path to video file")
-    parser.add_argument("--model-id", default="Ruicheng/moge-2-vitl-normal", help="MoGe model ID")
+    parser.add_argument("--model-id", default="Ruicheng/moge-3-vitl", help="MoGe-3 model ID")
     parser.add_argument("--max-frames", type=int, default=20, help="Maximum frames to process")
     parser.add_argument("--target-width", type=int, default=640, help="Target frame width")
     parser.add_argument("--target-height", type=int, default=480, help="Target frame height")

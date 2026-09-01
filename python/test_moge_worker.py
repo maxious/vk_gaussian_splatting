@@ -37,7 +37,7 @@ def test_worker_pool():
     pool = DeviceWorkerPool(
         worker_class=MoGEDeviceWorker,
         device_spec="xpu:0,1",
-        worker_kwargs={"model_id": "Ruicheng/moge-2-vitl-normal"},
+        worker_kwargs={"model_id": "Ruicheng/moge-3-vitl"},
     )
 
     print(f"Pool ready with devices: {pool.devices}")

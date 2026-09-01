@@ -19,7 +19,6 @@ INFINIDEPTH_MODELS = {
     "depthsensor": "infinidepth_depthsensor.ckpt",
     "gs": "infinidepth_gs.ckpt",
     "depthsensor_gs": "infinidepth_depthsensor_gs.ckpt",
-    "moge2": "moge2.pt",
     "skyseg": "skyseg.onnx",
 }
 
@@ -54,7 +53,7 @@ class InfiniDepthGaussianProcessor(GaussianProcessor):
         cy_org: float | None = None,
         depth_model_path: str | Path | None = None,
         gs_model_path: str | Path | None = None,
-        moge2_pretrained: str | Path | None = None,
+        moge3_pretrained: str | Path | None = None,
         sky_model_ckpt_path: str | Path | None = None,
         infinidepth_root: str | Path | None = None,
         debug_export_ply_dir: str | Path | None = None,
@@ -89,11 +88,10 @@ class InfiniDepthGaussianProcessor(GaussianProcessor):
             or os.environ.get("INFINIDEPTH_GS_CKPT")
             or "checkpoints/gs/infinidepth_gs.ckpt"
         )
-        self.moge2_pretrained = self._resolve_checkpoint_path(
-            moge2_pretrained
-            or os.environ.get("INFINIDEPTH_MOGE2_CKPT")
-            or "checkpoints/moge-2-vitl-normal/model.pt"
+        moge3_pretrained = (
+            moge3_pretrained or os.environ.get("INFINIDEPTH_MOGE3_MODEL") or "Ruicheng/moge-3-vitl"
         )
+        self.moge3_pretrained = self._resolve_moge_pretrained(moge3_pretrained)
         self.sky_model_ckpt_path = self._resolve_checkpoint_path(
             sky_model_ckpt_path
             or os.environ.get("INFINIDEPTH_SKYSEG_CKPT")
@@ -148,6 +146,13 @@ class InfiniDepthGaussianProcessor(GaussianProcessor):
         if self.infinidepth_root is not None:
             return (self.infinidepth_root / p).resolve()
         return cwd_candidate.resolve()
+
+    def _resolve_moge_pretrained(self, pretrained: str | Path) -> str:
+        """Keep Hugging Face model IDs intact while resolving local checkpoints."""
+        candidate = Path(pretrained).expanduser()
+        if candidate.exists() or candidate.is_absolute():
+            return str(self._resolve_checkpoint_path(candidate))
+        return str(pretrained)
 
     def _ensure_infinidepth_imports(self) -> None:
         if self._build_model is not None:
@@ -253,12 +258,6 @@ class InfiniDepthGaussianProcessor(GaussianProcessor):
             self.gs_model_path = _download_infinidepth_checkpoint(
                 INFINIDEPTH_MODELS["gs"], cache_dir
             )
-        if not self.moge2_pretrained.exists():
-            logger.info("Downloading MoGe-2 model from HuggingFace...")
-            self.moge2_pretrained = _download_infinidepth_checkpoint(
-                INFINIDEPTH_MODELS["moge2"], cache_dir
-            )
-
         resolved_device = self._resolve_device()
         self._device = self._torch.device(resolved_device)
 
@@ -377,13 +376,13 @@ class InfiniDepthGaussianProcessor(GaussianProcessor):
             else:
                 logger.warning(f"Custom mask not found: {mask_path}, skipping")
 
-        gt_depth, prompt_depth, gt_depth_mask, _, moge2_intrinsics = (
+        gt_depth, prompt_depth, gt_depth_mask, _, moge3_intrinsics = (
             self._prepare_metric_depth_inputs(  # type: ignore[operator]
                 input_depth_path=None,
                 input_size=self.input_size,
                 image=image,
                 device=self._device,
-                moge2_pretrained=str(self.moge2_pretrained),
+                moge3_pretrained=self.moge3_pretrained,
             )
         )
 
@@ -395,8 +394,8 @@ class InfiniDepthGaussianProcessor(GaussianProcessor):
             org_h=org_h,
             org_w=org_w,
             image=image,
-            moge2_pretrained=str(self.moge2_pretrained),
-            moge2_intrinsics=moge2_intrinsics,
+            moge3_pretrained=self.moge3_pretrained,
+            moge3_intrinsics=moge3_intrinsics,
         )
 
         gt = self._depth_to_disparity(gt_depth)  # type: ignore[operator]

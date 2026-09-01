@@ -12,13 +12,13 @@ from InfiniDepth.gs import Gaussians
 
 from .io_utils import load_depth
 from .moge_utils import (
-    estimate_camera_intrinsics_with_moge2,
-    estimate_metric_depth_and_intrinsics_with_moge2,
+    estimate_camera_intrinsics_with_moge3,
+    estimate_metric_depth_and_intrinsics_with_moge3,
 )
 from .vis_utils import build_sky_model, run_skyseg
 
 
-DEPTH_SOURCES = ("auto", "gt_depth", "moge2")
+DEPTH_SOURCES = ("auto", "gt_depth", "moge3")
 OUTPUT_RESOLUTION_MODES = ("upsample", "original", "specific")
 
 
@@ -87,7 +87,9 @@ def resolve_output_size_from_mode(
         h_out, w_out = int(h * upsample_ratio), int(w * upsample_ratio)
 
     if h_out <= 0 or w_out <= 0:
-        raise ValueError(f"Invalid output size ({h_out}, {w_out}). Height and width must be positive.")
+        raise ValueError(
+            f"Invalid output size ({h_out}, {w_out}). Height and width must be positive."
+        )
     return h_out, w_out
 
 
@@ -110,12 +112,14 @@ def prepare_metric_depth_inputs(
     input_size: tuple[int, int],
     image: torch.Tensor,
     device: torch.device,
-    moge2_pretrained: str,
+    moge3_pretrained: str,
     depth_load_kwargs: Optional[dict] = None,
-    moge2_kwargs: Optional[dict] = None,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, bool, Optional[tuple[float, float, float, float]]]:
+    moge3_kwargs: Optional[dict] = None,
+) -> tuple[
+    torch.Tensor, torch.Tensor, torch.Tensor, bool, Optional[tuple[float, float, float, float]]
+]:
     depth_load_kwargs = depth_load_kwargs or {}
-    moge2_kwargs = moge2_kwargs or {}
+    moge3_kwargs = moge3_kwargs or {}
 
     if input_depth_path is not None and os.path.exists(input_depth_path):
         gt_depth, prompt_depth, gt_depth_mask = load_depth(
@@ -128,15 +132,15 @@ def prepare_metric_depth_inputs(
         gt_depth_mask = gt_depth_mask.to(device)
         return gt_depth, prompt_depth, gt_depth_mask, True, None
 
-    pred_depth, gt_depth_mask, moge2_intrinsics = estimate_metric_depth_and_intrinsics_with_moge2(
+    pred_depth, gt_depth_mask, moge3_intrinsics = estimate_metric_depth_and_intrinsics_with_moge3(
         image=image,
-        pretrained_model_name_or_path=moge2_pretrained,
-        **moge2_kwargs,
+        pretrained_model_name_or_path=moge3_pretrained,
+        **moge3_kwargs,
     )
     gt_depth = pred_depth.clone().to(device)
     prompt_depth = pred_depth.clone().to(device)
     gt_depth_mask = gt_depth_mask.to(device)
-    return gt_depth, prompt_depth, gt_depth_mask, False, moge2_intrinsics
+    return gt_depth, prompt_depth, gt_depth_mask, False, moge3_intrinsics
 
 
 def resolve_camera_intrinsics_for_inference(
@@ -147,35 +151,35 @@ def resolve_camera_intrinsics_for_inference(
     org_h: int,
     org_w: int,
     image: torch.Tensor,
-    moge2_pretrained: str,
-    moge2_intrinsics: Optional[tuple[float, float, float, float]] = None,
+    moge3_pretrained: str,
+    moge3_intrinsics: Optional[tuple[float, float, float, float]] = None,
 ) -> tuple[float, float, float, float, str]:
     intrinsics_source = "user"
     fallback_intrinsics = None
 
     if has_missing_intrinsics(fx_org, fy_org, cx_org, cy_org):
-        if moge2_intrinsics is None:
+        if moge3_intrinsics is None:
             try:
-                moge2_intrinsics = estimate_camera_intrinsics_with_moge2(
+                moge3_intrinsics = estimate_camera_intrinsics_with_moge3(
                     image=image,
-                    pretrained_model_name_or_path=moge2_pretrained,
+                    pretrained_model_name_or_path=moge3_pretrained,
                 )
             except Exception as exc:
-                print(f"[Warning] Failed to estimate intrinsics with MoGe-2: {exc}")
+                print(f"[Warning] Failed to estimate intrinsics with MoGe-3: {exc}")
 
-        if moge2_intrinsics is not None:
+        if moge3_intrinsics is not None:
             _, _, h, w = image.shape
             fallback_intrinsics = scale_intrinsics(
-                fx=moge2_intrinsics[0],
-                fy=moge2_intrinsics[1],
-                cx=moge2_intrinsics[2],
-                cy=moge2_intrinsics[3],
+                fx=moge3_intrinsics[0],
+                fy=moge3_intrinsics[1],
+                cx=moge3_intrinsics[2],
+                cy=moge3_intrinsics[3],
                 org_h=h,
                 org_w=w,
                 h=org_h,
                 w=org_w,
             )
-            intrinsics_source = "moge2"
+            intrinsics_source = "moge3"
         else:
             intrinsics_source = "default"
 
@@ -242,13 +246,17 @@ def run_optional_sampling_sky_mask(
         return None
 
     if not os.path.exists(sky_model_ckpt_path):
-        print(f"[Warning] Sky segmentation checkpoint not found: {sky_model_ckpt_path}. Skip GS sky filtering.")
+        print(
+            f"[Warning] Sky segmentation checkpoint not found: {sky_model_ckpt_path}. Skip GS sky filtering."
+        )
         return None
 
     try:
         sky_model = build_sky_model(model_path=sky_model_ckpt_path)
     except Exception as exc:
-        print(f"[Warning] Failed to initialize sky segmentation model: {exc}. Skip GS sky filtering.")
+        print(
+            f"[Warning] Failed to initialize sky segmentation model: {exc}. Skip GS sky filtering."
+        )
         return None
 
     batch_masks = []
@@ -357,11 +365,15 @@ def build_camera_matrices(
     device: torch.device,
 ) -> tuple[float, float, float, float, torch.Tensor, torch.Tensor]:
     fx, fy, cx, cy = scale_intrinsics(fx_org, fy_org, cx_org, cy_org, org_h, org_w, h, w)
-    intrinsics = torch.tensor(
-        [[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]],
-        dtype=torch.float32,
-        device=device,
-    ).unsqueeze(0).expand(batch, -1, -1)
+    intrinsics = (
+        torch.tensor(
+            [[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]],
+            dtype=torch.float32,
+            device=device,
+        )
+        .unsqueeze(0)
+        .expand(batch, -1, -1)
+    )
     extrinsics = torch.eye(4, dtype=torch.float32, device=device).unsqueeze(0).expand(batch, -1, -1)
     return fx, fy, cx, cy, intrinsics, extrinsics
 
@@ -387,7 +399,13 @@ def filter_gaussians_by_depth_ratio(
         scales=pixel_gaussians.scales[:, near_mask, :],
         rotations=pixel_gaussians.rotations[:, near_mask, :],
     )
-    return filtered_gaussians, num_filtered, num_kept, float(depth_threshold.item()), float(max_depth.item())
+    return (
+        filtered_gaussians,
+        num_filtered,
+        num_kept,
+        float(depth_threshold.item()),
+        float(max_depth.item()),
+    )
 
 
 def filter_gaussians_by_min_opacity(pixel_gaussians: Gaussians, min_opacity: float) -> Gaussians:
@@ -430,7 +448,9 @@ def filter_gaussians_by_statistical_outlier(
     )
 
     if len(inlier_indices) == 0:
-        print("[Warning] Statistical outlier filtering removed all gaussians. Keep original gaussians.")
+        print(
+            "[Warning] Statistical outlier filtering removed all gaussians. Keep original gaussians."
+        )
         return pixel_gaussians, 0, num_points
 
     keep = torch.zeros((num_points,), dtype=torch.bool, device=pixel_gaussians.means.device)

@@ -312,7 +312,7 @@ The `python/offline/` directory contains tools for generating Gaussian Splats fr
 
 **Key Features:**
 - **DA3-GIANT**: Default model for metric depth estimation and splat generation.
-- **MoGe**: Metric depth + normals model with dual XPU support (see below).
+- **MoGe-3**: Metric depth + normals model with dual XPU support (see below).
 - **Apple SHARP**: Integrated support for Apple's SHARP model (vendored in `python/sharp`).
 - **FreeTimeGS**: Generates 4D Gaussian Splats with motion vectors (requires `cupy` or `faiss-gpu`).
 - **Pruning**: Opacity-based pruning to reduce file size.
@@ -369,13 +369,13 @@ uv run --extra xpu python benchmark_moge_multi_xpu.py \
 # Backend server with dual XPU
 export VIDEO_DEPTH_MULTI_DEVICE=1
 export VIDEO_DEPTH_DEVICE_SPEC=xpu:0,1
-export VIDEO_DEPTH_MODEL_ID=Ruicheng/moge-2-vitl-normal
+export VIDEO_DEPTH_MODEL_ID=Ruicheng/moge-3-vitl
 uv run --extra xpu --extra backend uvicorn backend.main:app --port 8000
 
 # Offline processing with dual XPU
 uv run --extra xpu python -m offline.cli images \
   --input ./frames/ --output ./ply_output/ \
-  --model "Ruicheng/moge-2-vitl-normal" --mode frames \
+  --model "Ruicheng/moge-3-vitl" --mode frames \
   --use-multi-device --device-spec xpu:0,1
 ```
 

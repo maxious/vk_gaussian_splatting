@@ -109,10 +109,10 @@ uv run --extra cuda python -m offline.cli depth \
   --input video.mp4 --output ./depth_output/ \
   --model "depth-anything/DA3METRIC-LARGE" --device-spec cuda
 
-# Using MoGe model (produces depth + normals side-by-side)
+# Using MoGe-3 model (produces depth + normals side-by-side)
 uv run --extra cuda python -m offline.cli depth \
   --input video.mp4 --output ./depth_output/ \
-  --model "Ruicheng/moge-2-vitl-normal" --device-spec cuda
+  --model "Ruicheng/moge-3-vitl" --device-spec cuda
 ```
 
 Output:
@@ -127,7 +127,7 @@ Convert images or video to Gaussian Splatting PLY files:
 # Export images to per-frame PLYs
 uv run --extra cuda python -m offline.cli images \
   --input ./images/ --output ./ply_output/ \
-  --model "Ruicheng/moge-2-vitl-normal" --mode frames
+  --model "Ruicheng/moge-3-vitl" --mode frames
 
 # Export video to per-frame PLYs
 uv run --extra cuda python -m offline.cli export \
