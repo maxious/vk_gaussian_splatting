@@ -44,8 +44,8 @@ if [ ! -f "${BINARY_DIR}/vk_viewer" ]; then
 fi
 
 # Source Vulkan SDK
-if [ -f /opt/vulkan/1.4.350.1/setup-env.sh ]; then
-  source /opt/vulkan/1.4.350.1/setup-env.sh
+if [ -f /opt/vulkan/1.4.357.0/setup-env.sh ]; then
+  source /opt/vulkan/1.4.357.0/setup-env.sh
 fi
 
 # Run the viewer with PBR pipeline and envmap

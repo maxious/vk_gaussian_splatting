@@ -35,7 +35,7 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(cmake/VulkanSDK.cmake)
 
 # Override Slang version before NvproCore2 loads it
-set(Slang_VERSION "2025.24.3" CACHE STRING "Slang version" FORCE)
+set(Slang_VERSION "2026.16.1" CACHE STRING "Slang version" FORCE)
 
 find_package(NvproCore2 REQUIRED)
 
@@ -81,7 +81,7 @@ if(ENABLE_OPENXR)
     FetchContent_Declare(
       OpenXR-SDK
       GIT_REPOSITORY https://github.com/KhronosGroup/OpenXR-SDK.git
-      GIT_TAG        release-1.1.54
+      GIT_TAG        release-1.1.62
     )
     set(BUILD_ALL_EXTENSIONS ON CACHE BOOL "" FORCE)
     set(BUILD_LOADER ON CACHE BOOL "" FORCE)

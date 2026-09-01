@@ -175,8 +175,8 @@ echo "  Points: ~${N_POINTS} (OK >= 1000)"
 echo "[7/7] Visual verification..."
 VIEWER="${BIN}/vk_viewer"
 if [ -f "$VIEWER" ]; then
-    if [ -f /opt/vulkan/1.4.350.1/setup-env.sh ]; then
-        source /opt/vulkan/1.4.350.1/setup-env.sh 2>/dev/null || true
+    if [ -f /opt/vulkan/1.4.357.0/setup-env.sh ]; then
+        source /opt/vulkan/1.4.357.0/setup-env.sh 2>/dev/null || true
     fi
     if "${VIEWER}" --inputFile "$TMP_SPLAT" \
         --screenshotDelay 3.0 --screenshot "$TMP_PNG" \
