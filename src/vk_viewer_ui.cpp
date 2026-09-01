@@ -413,14 +413,14 @@ void VkViewerUI::onUIMenu()
     {
       prmScene.sceneToLoadFilename = nvgui::windowOpenFileDialog(
           m_app->getWindowHandle(), "Load splat file",
-          "All Files|*.ply;*.spz;*.rad;*.sog;*.4dv;*.splat|PLY Files|*.ply|SPZ files|*.spz|RAD files|*.rad|SOG files|*.sog|4DV files|*.4dv|Splat files|*.splat");
+          "All Files|*.ply;*.spz;*.rad;*.sog;*.4dv;*.splat;*.json|PLY Files|*.ply|SPZ files|*.spz|RAD files|*.rad|SOG files|*.sog|SOG-XT files|*.json|4DV files|*.4dv|Splat files|*.splat");
       prmScene.addSceneToExisting = false;
     }
     if(ImGui::MenuItem(ICON_MS_ADD " Add file", ""))
     {
       prmScene.sceneToLoadFilename = nvgui::windowOpenFileDialog(
           m_app->getWindowHandle(), "Add splat file",
-          "All Files|*.ply;*.spz;*.rad;*.sog;*.4dv;*.splat|PLY Files|*.ply|SPZ files|*.spz|RAD files|*.rad|SOG files|*.sog|4DV files|*.4dv|Splat files|*.splat");
+          "All Files|*.ply;*.spz;*.rad;*.sog;*.4dv;*.splat;*.json|PLY Files|*.ply|SPZ files|*.spz|RAD files|*.rad|SOG files|*.sog|SOG-XT files|*.json|4DV files|*.4dv|Splat files|*.splat");
       prmScene.addSceneToExisting = true;
     }
     if(ImGui::MenuItem(ICON_MS_FOLDER_OPEN " Load from Resources...", ""))
@@ -904,6 +904,21 @@ void VkViewerUI::onUIRender()
         if(LccLoader::canLoad(prmScene.sceneToLoadFilename))
         {
           // Store the pending filename for when load completes
+          m_pendingLoadFilename = prmScene.sceneToLoadFilename;
+          m_splatSetPending.clear();
+          if(!m_splatLoader.loadScene(prmScene.sceneToLoadFilename, m_splatSetPending))
+          {
+            LOGE("Error: cannot start scene load while loader is not ready status=%d\n",
+                 static_cast<int>(m_splatLoader.getStatus()));
+          }
+          else
+          {
+            ImGui::OpenPopup("Loading");
+          }
+        }
+        else if(std::filesystem::exists(prmScene.sceneToLoadFilename / "meta.json"))
+        {
+          // SOG-XT container directory (handled by the async loader)
           m_pendingLoadFilename = prmScene.sceneToLoadFilename;
           m_splatSetPending.clear();
           if(!m_splatLoader.loadScene(prmScene.sceneToLoadFilename, m_splatSetPending))
@@ -1434,7 +1449,7 @@ void VkViewerUI::guiDrawRadianceFieldsTree()
   {
     prmScene.sceneToLoadFilename =
         nvgui::windowOpenFileDialog(m_app->getWindowHandle(), "Add splat file",
-                                    "All Files|*.ply;*.spz;*.rad;*.sog;*.4dv;*.splat|PLY Files|*.ply|SPZ files|*.spz|RAD files|*.rad|SOG files|*.sog|4DV files|*.4dv|Splat files|*.splat");
+                                    "All Files|*.ply;*.spz;*.rad;*.sog;*.4dv;*.splat;*.json|PLY Files|*.ply|SPZ files|*.spz|RAD files|*.rad|SOG files|*.sog|SOG-XT files|*.json|4DV files|*.4dv|Splat files|*.splat");
     prmScene.addSceneToExisting = true;  // Add to existing instead of replacing
   }
   nvgui::tooltip("Add radiance field to scene");

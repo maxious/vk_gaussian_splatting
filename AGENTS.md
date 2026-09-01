@@ -117,11 +117,68 @@ The script:
 - **RTX**: `vk_viewer_rtx.cpp` (ray tracing pipeline)
 - **UI**: `vk_viewer_ui.cpp` (ImGui-based)
 - **Video Export**: `video_renderer.cpp`, `camera_trajectory.cpp`
-- **Scene Loading**: `splat_loader_async.cpp`, `sog_loader.cpp`, `splat_set.cpp`
+- **Scene Loading**: `splat_loader_async.cpp`, `sog_loader.cpp`, `sogxt_loader.cpp`, `splat_set.cpp`
 - **Depth Video**: `vk_viewer_video.cpp`, `depth_video_loader.cpp`
 - **Vulkan Video Decoder** (PoC): `vulkan_video_decoder.cpp` - GPU-accelerated H.265 decoding
 - **TRON PBR Pipeline**: `shaders/pbr_shading.h.slang` - Ray-traced PBR relighting (--pipeline 2 + --pbrEnabled 1)
 - **Compute Stochastic GS**: `vk_viewer_stochasticgs.cpp` - Sorting-free stochastic rasterization (--pipeline 6)
+
+### SOG-XT Container Format (KISS-GS)
+
+SOG-XT is the container format from the KISS-GS paper (arXiv:2608.26948,
+https://fraunhoferhhi.github.io/KISS-GS/). It extends SOG by storing a scene
+as a directory of ordinary lossless WebP planes plus a `meta.json` (v3)
+manifest. Key differences from SOG:
+
+- Positions stored as a **coarse/high byte** plane (`means_bytes_1.webp`) and a
+  **detail/low byte** plane (`means_bytes_0.webp`) after a signed-log remap.
+- View-dependent color uses a **2D-sorted codebook**: `f_rest_centroids.webp`
+  (a 3x5 tiled grid of 176x176 RGB tiles = 45 SH coefficients per centroid)
+  indexed by a UV label plane `f_rest_labels.webp`.
+- Per-attribute `mins`/`maxs` ranges carried in `meta.json` with
+  `normalize: "observed-minmax"` (the reference decoder rescales each plane by
+  its own observed byte range).
+- The full garden sample (Mip-NeRF 360, 256k splats) is shipped in the repo at
+  `tests/fixtures/sog_xt_garden/` and `_downloaded_resources/sog_xt_garden/`.
+
+**CLI / Loading:**
+```bash
+# Load a SOG-XT container directory (or its meta.json / scene.json)
+./vk_viewer --inputFile path/to/container_dir \
+  --screenshotDelay 3.0 --screenshot /tmp/out.png --size 800 600 --validation 0
+```
+
+**Python Encoder** (`python/sogs/sogxt_encoder.py`):
+```bash
+cd python
+uv run python -m sogs.sogxt_encoder \
+  --input scene.ply --output container_dir --sh-codebook-side 176
+```
+Options: `--sh-codebook-side` (codebook grid side, clamped to [16,256]),
+`--grid-side` (attribute image grid side), `--iterations` (k-means iters).
+Reusable helpers: `morton_order_sort`, `run_sogxt_compression`, `read_ply`.
+Container output round-trips through the reference `decode_sogxt.py` and the
+C++ `SogXtLoader`.
+
+**Python Tests:**
+```bash
+cd python
+uv run --extra dev pytest tests/test_sogxt_encoder.py -v
+```
+
+**C++ Decoder** (`src/sogxt_loader.h/cpp`): `SogXtLoader::load()` accepts a
+container directory, `meta.json`, or `scene.json`; parses the v3 manifest,
+decodes the WebP planes (parallel), reconstructs positions (inverse signed
+log), opacities (logit), scales (log), quats, base color and 45 SH coefficients
+via the UV codebook lookup, applies the active mask, and converts RDF->RUB.
+
+**C++ Tests:**
+```bash
+cmake --build build --target unit_tests --config Release
+_bin/Release/unit_tests.exe --test-suite=SogXtLoader
+```
+
+Requires: WebP (already linked for SOG support).
 
 ### Compute Stochastic GS Mode
 

@@ -34,6 +34,7 @@
 //
 #include "splat_loader_async.h"
 #include "sog_loader.h"
+#include "sogxt_loader.h"
 #include "supersplat_client.h"
 #include "lod_loader.h"
 #include "fourdv_loader.h"
@@ -450,6 +451,23 @@ bool SplatLoaderAsync::innerLoad(std::filesystem::path filename, SplatSet& outpu
       LOGI("LOD scene loaded in %lldms (%zu splats)\n", loadTime, output.size());
     }
     return success;
+  }
+
+  // SOG-XT container (KISS-GS format: directory with meta.json/scene.json manifest)
+  // Try SogXtLoader first: it validates format: "sog-xt" in meta.json.
+  if(std::filesystem::is_directory(filename) || filename.filename() == "scene.json"
+     || filename.filename() == "meta.json")
+  {
+    SplatSet xtOutput;
+    bool     isSogXt = SogXtLoader::load(filename, xtOutput, [this](float progress) { setProgress(progress); });
+    if(isSogXt)
+    {
+      output = std::move(xtOutput);
+      auto      endTime  = std::chrono::high_resolution_clock::now();
+      long long loadTime = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
+      LOGI("SOG-XT container loaded in %lldms (%zu splats)\n", loadTime, output.size());
+      return true;
+    }
   }
 
   // SOG format (bundled .sog or unbundled meta.json)

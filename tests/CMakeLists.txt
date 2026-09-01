@@ -12,6 +12,7 @@ add_executable(unit_tests
     test_stochastic_rendering.cpp
     test_pbr_helpers.cpp
     test_ply_material.cpp
+    test_sogxt_loader.cpp
 )
 
 if(NOT WIN32)
@@ -28,6 +29,7 @@ target_sources(unit_tests PRIVATE
     ../src/npz_loader.cpp
     ../src/lod_loader.cpp
     ../src/sog_loader.cpp
+    ../src/sogxt_loader.cpp
 )
 
 if(NOT WIN32)
@@ -61,6 +63,11 @@ target_link_libraries(unit_tests PRIVATE zlib)
 
 # Link webp for sog_loader
 target_link_libraries(unit_tests PRIVATE webp)
+
+# SOG-XT fixture dir
+target_compile_definitions(unit_tests PRIVATE
+    SOGXT_TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+)
 
 # C++20 required
 target_compile_features(unit_tests PRIVATE cxx_std_20)
