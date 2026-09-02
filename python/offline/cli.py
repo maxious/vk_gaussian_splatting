@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import sys
 from pathlib import Path
 
 from .exporters import (
@@ -213,6 +212,37 @@ def main():
         help="Negate Y coordinates to flip the coordinate system (useful for SHARP models). Only use if input PLYs weren't already flipped.",
     )
     postprocess_parser.add_argument("-v", "--verbose", action="store_true")
+
+    zipsplat_parser = subparsers.add_parser(
+        "zipsplat",
+        help="Convert a 4DAnyone multi-view result into per-timestamp ZipSplat PLYs",
+    )
+    zipsplat_parser.add_argument(
+        "--input",
+        "-i",
+        type=Path,
+        required=True,
+        help="4DAnyone fdanyone/<clip> result directory",
+    )
+    zipsplat_parser.add_argument(
+        "--output",
+        "-o",
+        type=Path,
+        required=True,
+        help="Output directory for per-timestamp PLY files",
+    )
+    zipsplat_parser.add_argument(
+        "--weights", default="zipsplat", help="ZipSplat weights name or path"
+    )
+    zipsplat_parser.add_argument("--frame-skip", type=int, default=1)
+    zipsplat_parser.add_argument("--max-frames", type=int, default=None)
+    zipsplat_parser.add_argument(
+        "--compression-ratio",
+        type=float,
+        default=None,
+        help="Optional ZipSplat query-sampling ratio in (0, 1]",
+    )
+    zipsplat_parser.add_argument("-v", "--verbose", action="store_true")
 
     omnimatte_parser = subparsers.add_parser(
         "omnimatte", help="OmnimatteZero: Background Generation & Object Extraction"
@@ -426,6 +456,18 @@ def main():
             ply_pattern=args.pattern,
             flip_y=getattr(args, "flip_y", False),
             format=args.format,
+        )
+
+    elif args.command == "zipsplat":
+        from .processors.zipsplat import export_4danyone_with_zipsplat
+
+        export_4danyone_with_zipsplat(
+            args.input,
+            args.output,
+            weights=args.weights,
+            max_frames=args.max_frames,
+            frame_skip=args.frame_skip,
+            compression_ratio=args.compression_ratio,
         )
 
     elif args.command == "omnimatte":

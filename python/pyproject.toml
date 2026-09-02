@@ -111,6 +111,11 @@ matrix3d = [
     "sentencepiece>=0.2",
 ]
 
+# ZipSplat multi-view feed-forward 3DGS inference (CUDA only).
+zipsplat = [
+    "zipsplat @ git+https://github.com/cvg/ZipSplat.git",
+]
+
 # Diffusion repair models (Qwen-Image-Edit, FLUX.2 Klein with LoRAs)
 # Supports GGUF quantized models from ComfyUI for low VRAM usage
 diffusion-repair = [

@@ -150,6 +150,29 @@ uv run --extra cuda python -m offline.cli images \
   --model "depth-anything/DA3-GIANT" --mode freetimegs-delta-int8
 ```
 
+### 4. 4DAnyone + ZipSplat prototype
+
+After running 4DAnyone, use its generated synchronized views to create one
+static ZipSplat scene per timestamp:
+
+```bash
+uv sync --extra cuda --extra zipsplat
+uv run --extra cuda --extra zipsplat python -m offline.cli zipsplat \
+  --input /path/to/data/fdanyone/<clip> \
+  --output ./zipsplat_frames \
+  --frame-skip 1
+
+uv run --extra cuda python -m offline.cli postprocess \
+  --input ./zipsplat_frames \
+  --output ./scene_4d.4dv \
+  --fps 25 \
+  --format 4dv
+```
+
+The input must contain `videos/dense/*.mp4`. This is a prototype: ZipSplat
+does not estimate temporal motion, so the final motion is derived by the
+existing FreeTimeGS matcher. The released ZipSplat weights are CC BY-NC 4.0.
+
 ## Environment Variables
 
 | Variable | Description | Default |
