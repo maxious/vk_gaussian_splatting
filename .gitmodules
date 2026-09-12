@@ -14,3 +14,7 @@
 [submodule "3rdparty/free-splatter"]
 	path = 3rdparty/free-splatter
 	url = https://github.com/localai-org/free-splatter.cpp.git
+[submodule "python/4danyone_git"]
+	path = python/4danyone_git
+	url = https://github.com/maxious/4danyone.git
+	branch = low-vram
