@@ -160,6 +160,11 @@ def main():
         help="Enable sky segmentation to remove sky regions (InfiniDepth only)",
     )
     export_parser.add_argument(
+        "--color-correct",
+        action="store_true",
+        help="Apply trajectory-consensus per-frame affine color correction to reduce temporal flicker (mined from FreeTimeGS++)",
+    )
+    export_parser.add_argument(
         "--device",
         type=str,
         default="auto",
@@ -211,6 +216,11 @@ def main():
         "--flip-y",
         action="store_true",
         help="Negate Y coordinates to flip the coordinate system (useful for SHARP models). Only use if input PLYs weren't already flipped.",
+    )
+    postprocess_parser.add_argument(
+        "--color-correct",
+        action="store_true",
+        help="Apply trajectory-consensus per-frame affine color correction to reduce temporal flicker (mined from FreeTimeGS++)",
     )
     postprocess_parser.add_argument("-v", "--verbose", action="store_true")
 
@@ -314,6 +324,11 @@ def main():
         help="Enable sky segmentation to remove sky regions (InfiniDepth only)",
     )
     images_parser.add_argument(
+        "--color-correct",
+        action="store_true",
+        help="Apply trajectory-consensus per-frame affine color correction to reduce temporal flicker (mined from FreeTimeGS++)",
+    )
+    images_parser.add_argument(
         "--flip-y",
         action="store_true",
         help="Negate Y coordinates to flip the coordinate system (useful for SHARP models). If using postprocess afterward, don't flip there too.",
@@ -415,6 +430,7 @@ def main():
             extract_audio=getattr(args, "extract_audio", False),
             resume_processing=getattr(args, "resume_processing", True),
             enable_skyseg=getattr(args, "enable_skyseg", False),
+            color_correction=getattr(args, "color_correct", False),
         )
 
     elif args.command == "postprocess":
@@ -426,6 +442,7 @@ def main():
             ply_pattern=args.pattern,
             flip_y=getattr(args, "flip_y", False),
             format=args.format,
+            color_correction=getattr(args, "color_correct", False),
         )
 
     elif args.command == "omnimatte":
@@ -477,6 +494,7 @@ def main():
             refine_boundaries=getattr(args, "refine_boundaries", False),
             boundary_min_angle=getattr(args, "boundary_min_angle", 3.0),
             enable_skyseg=getattr(args, "enable_skyseg", False),
+            color_correction=getattr(args, "color_correct", False),
         )
 
 

@@ -357,6 +357,7 @@ def compute_motion_vectors_cuda(
     window_size: int = 3,
     opacity_weight: float = 0.1,
     all_flows: Optional[List[np.ndarray]] = None,
+    color_correction: bool = False,
 ):
     """
     Compute motion vectors using CUDA for matching.
@@ -369,6 +370,8 @@ def compute_motion_vectors_cuda(
         window_size: Number of frames to search forward
         opacity_weight: Weight for opacity in matching (0=disabled, 0.1-0.5 typical)
         all_flows: Optional list of (N_i, 3) flow vectors per frame
+        color_correction: Apply trajectory-consensus per-frame affine color
+            correction (mined from FreeTimeGS++) before fitting attributes.
     """
     if len(frames) < 2:
         # Fallback for single frame
@@ -461,6 +464,11 @@ def compute_motion_vectors_cuda(
         n_trajectories=n_trajectories,
     )
 
+    if color_correction:
+        from .color_correction import correct_trajectory_colors
+
+        traj_data = correct_trajectory_colors(traj_data)
+
     return fit_trajectories(traj_data)
 
 
@@ -474,6 +482,7 @@ def compute_motion_vectors_delta_compression_cuda(
     window_size: int = 3,
     opacity_weight: float = 0.1,
     all_flows: Optional[List[np.ndarray]] = None,
+    color_correction: bool = False,
 ) -> tuple[
     np.ndarray,
     np.ndarray,
@@ -501,6 +510,8 @@ def compute_motion_vectors_delta_compression_cuda(
         window_size: Number of frames to search forward
         opacity_weight: Weight for opacity in matching (0=disabled, 0.1-0.5 typical)
         all_flows: Optional list of (N_i, 3) flow vectors per frame
+        color_correction: Apply trajectory-consensus per-frame affine color
+            correction (mined from FreeTimeGS++) before fitting attributes.
     """
     if len(frames) < 2:
         # Fallback for single frame
@@ -595,6 +606,11 @@ def compute_motion_vectors_delta_compression_cuda(
     )
 
     from .motion_tracking_cpu import fit_trajectories_delta_compression
+
+    if color_correction:
+        from .color_correction import correct_trajectory_colors
+
+        traj_data = correct_trajectory_colors(traj_data)
 
     logger.info("Computing delta-compressed temporal encoding...")
     results = fit_trajectories_delta_compression(

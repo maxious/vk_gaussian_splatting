@@ -189,6 +189,7 @@ def export_video_to_gaussian_plys(
     extract_audio: bool = False,
     resume_processing: bool = True,
     enable_skyseg: bool = False,
+    color_correction: bool = False,
 ) -> None:
     """Convert video to Gaussian PLY files.
 
@@ -510,7 +511,9 @@ def export_video_to_gaussian_plys(
 
     logger.info("Computing motion vectors (GPU-accelerated with cuTile)...")
     (means, scales, rotations, colors, opacities, motion, time_center, time_scale) = (
-        compute_motion_vectors_cuda(all_frames, fps, all_flows=all_flows)
+        compute_motion_vectors_cuda(
+            all_frames, fps, all_flows=all_flows, color_correction=color_correction
+        )
     )
 
     # Zero out motion for static splats (motion magnitude <= 0.001)
@@ -573,6 +576,7 @@ def postprocess_plys_to_freetimegs(
     ply_pattern: str = "frame_*.ply",
     flip_y: bool = False,
     format: str = "ply",
+    color_correction: bool = False,
 ) -> None:
     """Postprocess existing per-frame PLY files to a single FreeTimeGS PLY.
 
@@ -608,7 +612,12 @@ def postprocess_plys_to_freetimegs(
 
     logger.info("Computing motion vectors (GPU-accelerated with cuTile)...")
     (means, scales, rotations, colors, opacities, motion, time_center, time_scale) = (
-        compute_motion_vectors_cuda(frames, fps, max_match_distance=max_match_distance)
+        compute_motion_vectors_cuda(
+            frames,
+            fps,
+            max_match_distance=max_match_distance,
+            color_correction=color_correction,
+        )
     )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -675,6 +684,7 @@ def export_images_to_gaussian_plys(
     refine_boundaries: bool = False,
     boundary_min_angle: float = 3.0,
     enable_skyseg: bool = False,
+    color_correction: bool = False,
 ) -> None:
     """Process images with DA3 and export to Gaussian PLY files.
 
@@ -917,6 +927,7 @@ def export_images_to_gaussian_plys(
             compression_ratio_target=compression_ratio,
             use_int8=use_int8,
             all_flows=all_flows,
+            color_correction=color_correction,
         )
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -968,7 +979,7 @@ def export_images_to_gaussian_plys(
 
         logger.info("Computing motion vectors (GPU-accelerated with cuTile)...")
         (means, scales, rotations, colors, opacities, motion, time_center, time_scale) = (
-            compute_motion_vectors_cuda(frames, fps)
+            compute_motion_vectors_cuda(frames, fps, color_correction=color_correction)
         )
 
     # Zero out motion for static splats (motion magnitude <= 0.001)

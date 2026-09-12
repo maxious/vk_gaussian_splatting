@@ -655,12 +655,17 @@ def compute_motion_vectors(
     max_match_distance: float | None = None,
     match_distance_ratio: float = 0.02,
     window_size: int = 3,
+    color_correction: bool = False,
 ) -> tuple[
     np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray
 ]:
     """CPU-accelerated motion vector computation.
 
     Uses FAISS for matching and NumPy for trajectory fitting.
+
+    Args:
+        color_correction: Apply trajectory-consensus per-frame affine color
+            correction (mined from FreeTimeGS++) before fitting attributes.
     """
     if len(frames) < 2:
         frame = frames[0]
@@ -692,6 +697,11 @@ def compute_motion_vectors(
         )
 
     traj_data = build_trajectories(frames, max_match_distance, window_size=window_size)
+
+    if color_correction:
+        from .color_correction import correct_trajectory_colors
+
+        traj_data = correct_trajectory_colors(traj_data)
 
     return fit_trajectories(traj_data)
 
