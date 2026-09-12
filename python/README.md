@@ -109,10 +109,10 @@ uv run --extra cuda python -m offline.cli depth \
   --input video.mp4 --output ./depth_output/ \
   --model "depth-anything/DA3METRIC-LARGE" --device-spec cuda
 
-# Using MoGe model (produces depth + normals side-by-side)
+# Using MoGe-3 model (produces depth + normals side-by-side)
 uv run --extra cuda python -m offline.cli depth \
   --input video.mp4 --output ./depth_output/ \
-  --model "Ruicheng/moge-2-vitl-normal" --device-spec cuda
+  --model "Ruicheng/moge-3-vitl" --device-spec cuda
 ```
 
 Output:
@@ -127,7 +127,7 @@ Convert images or video to Gaussian Splatting PLY files:
 # Export images to per-frame PLYs
 uv run --extra cuda python -m offline.cli images \
   --input ./images/ --output ./ply_output/ \
-  --model "Ruicheng/moge-2-vitl-normal" --mode frames
+  --model "Ruicheng/moge-3-vitl" --mode frames
 
 # Export video to per-frame PLYs
 uv run --extra cuda python -m offline.cli export \
@@ -149,6 +149,29 @@ uv run --extra cuda python -m offline.cli images \
   --input ./images/ --output scene_4d_high_compression.ply \
   --model "depth-anything/DA3-GIANT" --mode freetimegs-delta-int8
 ```
+
+### 4. 4DAnyone + ZipSplat prototype
+
+After running 4DAnyone, use its generated synchronized views to create one
+static ZipSplat scene per timestamp:
+
+```bash
+uv sync --extra cuda --extra zipsplat
+uv run --extra cuda --extra zipsplat python -m offline.cli zipsplat \
+  --input /path/to/data/fdanyone/<clip> \
+  --output ./zipsplat_frames \
+  --frame-skip 1
+
+uv run --extra cuda python -m offline.cli postprocess \
+  --input ./zipsplat_frames \
+  --output ./scene_4d.4dv \
+  --fps 25 \
+  --format 4dv
+```
+
+The input must contain `videos/dense/*.mp4`. This is a prototype: ZipSplat
+does not estimate temporal motion, so the final motion is derived by the
+existing FreeTimeGS matcher. The released ZipSplat weights are CC BY-NC 4.0.
 
 ## Environment Variables
 

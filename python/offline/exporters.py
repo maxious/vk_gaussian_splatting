@@ -417,6 +417,7 @@ def export_video_to_gaussian_plys(
             device=device,
             input_size=(aligned_height, aligned_width),
             enable_skyseg_model=enable_skyseg,
+            moge3_pretrained=model_id if "moge" in model_id.lower() and "/" in model_id else None,
         )
 
     all_frames: list[GaussianFrame] = []
@@ -839,6 +840,7 @@ def export_images_to_gaussian_plys(
             device=device,
             input_size=(aligned_height, aligned_width),
             enable_skyseg_model=enable_skyseg,
+            moge3_pretrained=model_id if "moge" in model_id.lower() and "/" in model_id else None,
         )
 
     if isinstance(processor, InfiniDepthGaussianProcessor):

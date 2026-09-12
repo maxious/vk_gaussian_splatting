@@ -9,7 +9,7 @@ import numpy as np
 import torch
 
 from common.device_worker_pool import DeviceWorker
-from InfiniDepth.utils.moge_utils import estimate_metric_depth_and_intrinsics_with_moge2
+from InfiniDepth.utils.moge_utils import estimate_metric_depth_and_intrinsics_with_moge3
 
 
 def _depth_to_disparity(depth: torch.Tensor) -> torch.Tensor:
@@ -45,6 +45,11 @@ class InfiniDepthDeviceWorker(DeviceWorker[np.ndarray, tuple[np.ndarray, float, 
         self.process_res = int(process_res)
 
     def _resolve_model_path(self) -> tuple[Optional[str], Optional[str]]:
+        requested_moge = (
+            self.model_id
+            if self.model_id and "/" in self.model_id and "moge" in self.model_id.strip().lower()
+            else None
+        )
         if self.model_id and self.model_id.strip().lower() not in {
             "infinidepth",
             "infini_depth",
@@ -53,20 +58,20 @@ class InfiniDepthDeviceWorker(DeviceWorker[np.ndarray, tuple[np.ndarray, float, 
             None,
         }:
             candidate = Path(self.model_id).expanduser()
-            if not candidate.exists():
+            if candidate.exists():
+                return str(candidate), None
+            if not requested_moge:
                 raise FileNotFoundError(
                     f"InfiniDepth checkpoint not found at '{candidate}'. "
                     "Set VIDEO_DEPTH_MODEL_ID to a local checkpoint .pth path."
                 )
-            return str(candidate), None
 
         from huggingface_hub import snapshot_download
 
         try:
             cache_dir = snapshot_download("ritianyu/InfiniDepth", allow_patterns=["*.ckpt"])
             model_path = Path(cache_dir) / "infinidepth.ckpt"
-            moge_path = Path(cache_dir) / "moge2.pt"
-            return str(model_path), str(moge_path) if moge_path.exists() else None
+            return str(model_path), requested_moge
         except Exception:
             return None, None
 
@@ -182,8 +187,8 @@ class InfiniDepthDeviceWorker(DeviceWorker[np.ndarray, tuple[np.ndarray, float, 
         target_device = torch.device(self.device)
         image = image.permute(2, 0, 1).unsqueeze(0).to(target_device, non_blocking=True)
 
-        moge_path = self.moge_path if self.moge_path else "Ruicheng/moge-2-vitl-normal"
-        pred_depth_moge, gt_depth_mask, _ = estimate_metric_depth_and_intrinsics_with_moge2(
+        moge_path = self.moge_path if self.moge_path else "Ruicheng/moge-3-vitl"
+        pred_depth_moge, gt_depth_mask, _ = estimate_metric_depth_and_intrinsics_with_moge3(
             image=image,
             pretrained_model_name_or_path=moge_path,
         )

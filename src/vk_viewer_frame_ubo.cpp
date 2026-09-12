@@ -227,7 +227,7 @@ void VkViewer::updateAndUploadFrameInfoUBO(VkCommandBuffer  cmd,
   s_prevProjMatrix                  = proj;
 
   // Compute DLSS jitter for temporal anti-aliasing
-  if(m_dlssRREnabled && m_dlssRRInitialized)
+  if((m_dlssRREnabled && m_dlssRRInitialized) || (m_dlssEnabled && m_dlssInitialized))
   {
     // Halton sequence for temporal jitter
     auto halton = [](int index, int base) -> float {

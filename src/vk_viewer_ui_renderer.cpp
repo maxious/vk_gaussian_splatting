@@ -243,6 +243,48 @@ void VkViewerUI::guiDrawRendererProperties()
   PE::end();
 
 #ifdef WITH_DLSS_RR
+  PE::begin("## DLSS Super Resolution");
+  if(PE::Checkbox("Enable DLSS Neural Rendering", &m_dlssEnabled,
+                  "Enable the Vulkan DLSS Super Resolution contract used by the optional DLSS5 bridge.\n"
+                  "Runs in DLAA mode at the current viewport resolution."))
+  {
+    if(m_dlssEnabled)
+    {
+      // DLSS-RR and DLSS SR share the output image and cannot run together.
+      if(m_dlssRREnabled)
+      {
+        m_dlssRREnabled = false;
+        shutdownDlssRR();
+      }
+      initializeDlss();
+      if(m_dlssInitialized)
+      {
+        updateDlssDescriptorSet();
+        m_requestUpdateShaders = true;
+      }
+      else
+      {
+        m_dlssEnabled = false;
+      }
+    }
+    else if(m_dlssInitialized)
+    {
+      shutdownDlss();
+      m_requestUpdateShaders = true;
+    }
+    m_dlssRRNeedsReset = true;
+  }
+  ImGui::BeginDisabled(!m_dlssEnabled || !m_dlssInitialized);
+  PE::Text("Mode", "DLAA (same-size input/output)");
+  if(PE::entry("Reset History", [&]() { return ImGui::Button("Reset##DLSS"); },
+               "Reset DLSS temporal history"))
+  {
+    m_dlssRRNeedsReset = true;
+  }
+  PE::Text("Status", m_dlssInitialized ? "Active" : "Disabled");
+  ImGui::EndDisabled();
+  PE::end();
+
   PE::begin("## DLSS-RR Denoising");
   bool wasEnabled = m_dlssRREnabled;
   (void)wasEnabled; // Suppress unused warning
@@ -252,6 +294,11 @@ void VkViewerUI::guiDrawRendererProperties()
   {
     if(m_dlssRREnabled && !m_dlssRRInitialized)
     {
+      if(m_dlssEnabled)
+      {
+        m_dlssEnabled = false;
+        shutdownDlss();
+      }
       initializeDlssRR();
       if(m_dlssRRInitialized)
       {

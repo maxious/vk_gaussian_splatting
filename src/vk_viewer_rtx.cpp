@@ -727,6 +727,8 @@ void VkViewer::updateKBuffers(uint32_t width, uint32_t height)
   {
     m_alloc.destroyBuffer(m_kBufferId);
   }
+  m_kBufferDist = {};
+  m_kBufferId = {};
 
   // Calculate buffer sizes: PAYLOAD_ARRAY_SIZE * width * height elements
   const uint32_t numRays = width * height;

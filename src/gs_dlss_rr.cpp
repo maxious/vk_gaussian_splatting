@@ -171,6 +171,14 @@ NVSDK_NGX_Result NgxContext::initDlssRR(const DlssRRInitInfo& initInfo, GsDlssRR
   return dlssrr.init(m_device, m_queue, m_queueFamilyIdx, m_ngxParams, initInfo);
 }
 
+NVSDK_NGX_Result NgxContext::initDlss(const DlssInitInfo& initInfo, GsDlss& dlss)
+{
+  if(!m_device || !m_ngxParams)
+    return NVSDK_NGX_Result_FAIL_NotInitialized;
+
+  return dlss.init(m_device, m_queue, m_queueFamilyIdx, m_ngxParams, initInfo);
+}
+
 NVSDK_NGX_Result NgxContext::isDlssRRAvailable(VkInstance instance, VkPhysicalDevice physicalDevice)
 {
   NVSDK_NGX_FeatureDiscoveryInfo info   = {};
@@ -330,6 +338,128 @@ void GsDlssRR::setResource(Resource resourceId, VkImage image, VkImageView image
 void GsDlssRR::resetResource(Resource resourceId)
 {
   m_resources[resourceId] = {};
+}
+
+GsDlss::~GsDlss()
+{
+  deinit();
+}
+
+void GsDlss::deinit()
+{
+  if(m_dlssHandle)
+  {
+    NVSDK_NGX_VULKAN_ReleaseFeature(m_dlssHandle);
+    m_dlssHandle = nullptr;
+  }
+
+  m_device    = VK_NULL_HANDLE;
+  m_ngxParams = nullptr;
+  m_resources.fill({});
+}
+
+NVSDK_NGX_Result GsDlss::init(VkDevice device, VkQueue queue, uint32_t queueFamilyIdx,
+                               NVSDK_NGX_Parameter* ngxParams, const NgxContext::DlssInitInfo& info)
+{
+  if(m_dlssHandle)
+    return NVSDK_NGX_Result_FAIL_FeatureAlreadyExists;
+
+  m_device     = device;
+  m_ngxParams  = ngxParams;
+  m_inputSize  = info.inputSize;
+  m_outputSize = info.outputSize;
+  m_resources.fill({.Resource = {.ImageViewInfo = {}}});
+
+  NVSDK_NGX_DLSS_Create_Params dlssParams = {};
+  dlssParams.Feature.InWidth              = m_inputSize.width;
+  dlssParams.Feature.InHeight             = m_inputSize.height;
+  dlssParams.Feature.InTargetWidth        = m_outputSize.width;
+  dlssParams.Feature.InTargetHeight       = m_outputSize.height;
+  dlssParams.InFeatureCreateFlags = NVSDK_NGX_DLSS_Feature_Flags_IsHDR | NVSDK_NGX_DLSS_Feature_Flags_MVLowRes;
+  dlssParams.Feature.InPerfQualityValue   = info.quality;
+
+  const uint32_t creationNodeMask   = 0x1;
+  const uint32_t visibilityNodeMask = 0x1;
+
+  VkCommandPoolCreateInfo poolInfo = {VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+  poolInfo.flags                   = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+  poolInfo.queueFamilyIndex        = queueFamilyIdx;
+
+  VkCommandPool cmdPool = VK_NULL_HANDLE;
+  VkCommandBuffer cmd   = VK_NULL_HANDLE;
+  NVVK_CHECK(vkCreateCommandPool(device, &poolInfo, nullptr, &cmdPool));
+
+  VkCommandBufferAllocateInfo allocInfo = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+  allocInfo.commandPool                 = cmdPool;
+  allocInfo.level                       = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+  allocInfo.commandBufferCount          = 1;
+  NVVK_CHECK(vkAllocateCommandBuffers(device, &allocInfo, &cmd));
+
+  VkCommandBufferBeginInfo beginInfo = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+  beginInfo.flags                    = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+  NVVK_CHECK(vkBeginCommandBuffer(cmd, &beginInfo));
+
+  NVSDK_NGX_Result result = NGX_VULKAN_CREATE_DLSS_EXT1(device, cmd, creationNodeMask, visibilityNodeMask,
+                                                        &m_dlssHandle, ngxParams, &dlssParams);
+
+  NVVK_CHECK(vkEndCommandBuffer(cmd));
+  VkSubmitInfo submitInfo       = {VK_STRUCTURE_TYPE_SUBMIT_INFO};
+  submitInfo.commandBufferCount = 1;
+  submitInfo.pCommandBuffers    = &cmd;
+  NVVK_CHECK(vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE));
+  NVVK_CHECK(vkQueueWaitIdle(queue));
+  vkDestroyCommandPool(device, cmdPool, nullptr);
+
+  if(NVSDK_NGX_FAILED(result))
+  {
+    m_dlssHandle = nullptr;
+    return result;
+  }
+
+  LOGI("DLSS Super Resolution initialized: input %dx%d -> output %dx%d\n", m_inputSize.width, m_inputSize.height,
+       m_outputSize.width, m_outputSize.height);
+  return NVSDK_NGX_Result_Success;
+}
+
+void GsDlss::setResource(Resource resourceId, VkImage image, VkImageView imageView, VkFormat format)
+{
+  if(!m_dlssHandle)
+    return;
+
+  VkImageSubresourceRange range = {};
+  range.aspectMask              = resourceId == RESOURCE_DEPTH ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
+  range.layerCount              = 1;
+  range.levelCount               = 1;
+
+  const VkExtent2D size = resourceId == RESOURCE_COLOR_OUT ? m_outputSize : m_inputSize;
+  const bool       readWrite = resourceId == RESOURCE_COLOR_OUT;
+  m_resources[resourceId] = NVSDK_NGX_Create_ImageView_Resource_VK(imageView, image, range, format, size.width,
+                                                                    size.height, readWrite);
+}
+
+NVSDK_NGX_Result GsDlss::evaluate(VkCommandBuffer cmd, glm::uvec2 renderSize, glm::vec2 jitter, bool reset)
+{
+  if(!m_dlssHandle)
+    return NVSDK_NGX_Result_FAIL_NotInitialized;
+
+  auto getResource = [this](Resource resourceId) -> NVSDK_NGX_Resource_VK* {
+    return m_resources[resourceId].Resource.ImageViewInfo.ImageView ? &m_resources[resourceId] : nullptr;
+  };
+
+  NVSDK_NGX_VK_DLSS_Eval_Params params = {};
+  params.Feature.pInColor         = getResource(RESOURCE_COLOR_IN);
+  params.Feature.pInOutput        = getResource(RESOURCE_COLOR_OUT);
+  params.pInMotionVectors         = getResource(RESOURCE_MOTION_VECTORS);
+  params.pInDepth                 = getResource(RESOURCE_DEPTH);
+  params.InJitterOffsetX          = -jitter.x;
+  params.InJitterOffsetY          = -jitter.y;
+  params.InMVScaleX               = 1.0f;
+  params.InMVScaleY               = 1.0f;
+  params.InRenderSubrectDimensions.Width  = renderSize.x;
+  params.InRenderSubrectDimensions.Height = renderSize.y;
+  params.InReset                  = reset ? 1 : 0;
+
+  return NGX_VULKAN_EVALUATE_DLSS_EXT(cmd, m_dlssHandle, m_ngxParams, &params);
 }
 
 NVSDK_NGX_Result GsDlssRR::denoise(VkCommandBuffer  cmd,

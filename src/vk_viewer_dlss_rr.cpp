@@ -93,7 +93,7 @@ void VkViewer::shutdownDlssRR()
     m_dlssRR.reset();
   }
 
-  if(m_ngxContext)
+  if(m_ngxContext && !m_dlssInitialized)
   {
     m_ngxContext->deinit();
     m_ngxContext.reset();
@@ -101,6 +101,85 @@ void VkViewer::shutdownDlssRR()
 
   m_dlssRRInitialized = false;
   m_dlssRRFrameIndex  = 0;
+}
+
+void VkViewer::initializeDlss()
+{
+  if(m_dlssInitialized)
+    return;
+
+  if(!m_ngxContext)
+  {
+    m_ngxContext = std::make_unique<NgxContext>();
+    NgxContext::InitInfo initInfo = {};
+    initInfo.instance        = m_app->getInstance();
+    initInfo.physicalDevice  = m_app->getPhysicalDevice();
+    initInfo.device          = m_device;
+    initInfo.queue           = m_app->getQueue(0).queue;
+    initInfo.queueFamilyIdx  = m_app->getQueue(0).familyIndex;
+    initInfo.applicationPath = nvutils::getExecutablePath().parent_path();
+
+    NVSDK_NGX_Result result = m_ngxContext->init(initInfo);
+    if(NVSDK_NGX_FAILED(result))
+    {
+      LOGE("Failed to initialize NGX context for DLSS: %s\n", getNGXResultString(result).c_str());
+      m_ngxContext.reset();
+      return;
+    }
+  }
+
+  m_dlss = std::make_unique<GsDlss>();
+  NgxContext::DlssInitInfo initInfo = {};
+  initInfo.inputSize  = {static_cast<uint32_t>(m_viewSize.x), static_cast<uint32_t>(m_viewSize.y)};
+  initInfo.outputSize = initInfo.inputSize;
+  initInfo.quality    = NVSDK_NGX_PerfQuality_Value_DLAA;
+
+  const NVSDK_NGX_Result result = m_ngxContext->initDlss(initInfo, *m_dlss);
+  if(NVSDK_NGX_FAILED(result))
+  {
+    LOGE("Failed to initialize DLSS Super Resolution: %s\n", getNGXResultString(result).c_str());
+    m_dlss.reset();
+    if(!m_dlssRRInitialized)
+      m_ngxContext.reset();
+    return;
+  }
+
+  m_dlssInitialized  = true;
+  m_dlssRRNeedsReset  = true;
+  m_dlssRRFrameIndex  = 0;
+  LOGI("DLSS Super Resolution initialized in DLAA mode\n");
+}
+
+void VkViewer::shutdownDlss()
+{
+  if(m_dlss)
+  {
+    m_dlss->deinit();
+    m_dlss.reset();
+  }
+
+  m_dlssInitialized = false;
+  if(m_ngxContext && !m_dlssRRInitialized)
+  {
+    m_ngxContext->deinit();
+    m_ngxContext.reset();
+  }
+}
+
+void VkViewer::updateDlssDescriptorSet()
+{
+  if(!m_dlssInitialized || !m_dlss || !m_dlss->isValid())
+    return;
+
+  m_dlss->setResource(GsDlss::RESOURCE_COLOR_IN, m_gBuffers.getColorImage(COLOR_MAIN),
+                      m_gBuffers.getColorImageView(COLOR_MAIN), m_colorFormat);
+  m_dlss->setResource(GsDlss::RESOURCE_COLOR_OUT, m_gBuffers.getColorImage(COLOR_DLSS_OUTPUT),
+                      m_gBuffers.getColorImageView(COLOR_DLSS_OUTPUT), m_colorFormat);
+  m_dlss->setResource(GsDlss::RESOURCE_MOTION_VECTORS, m_gBuffers.getColorImage(COLOR_MOTION),
+                      m_gBuffers.getColorImageView(COLOR_MOTION), VK_FORMAT_R16G16_SFLOAT);
+  // The Vulkan bridge needs the raw depth aspect and its native format. The
+  // linear R32 depth buffer is suitable for DLSS-RR, but cannot be mirrored.
+  m_dlss->setResource(GsDlss::RESOURCE_DEPTH, m_gBuffers.getDepthImage(), m_gBuffers.getDepthImageView(), m_depthFormat);
 }
 
 void VkViewer::updateDlssRRDescriptorSet()

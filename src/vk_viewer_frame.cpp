@@ -714,6 +714,36 @@ void VkViewer::renderRtxFrame(FrameRenderContext& ctx)
   if(prmRtx.temporalSampling && !updateFrameCounter())
     return;
 
+#ifdef WITH_DLSS_RR
+  if(m_dlssNeedsReinit)
+  {
+    if(m_dlssInitialized)
+    {
+      shutdownDlss();
+      initializeDlss();
+      if(m_dlssInitialized)
+        updateDlssDescriptorSet();
+    }
+    else if(m_dlssRRInitialized)
+    {
+      shutdownDlssRR();
+      initializeDlssRR();
+      if(m_dlssRRInitialized)
+        updateDlssRRDescriptorSet();
+    }
+    m_dlssNeedsReinit = false;
+    m_dlssRRNeedsReset = true;
+  }
+
+  if(prmDlssEnabled && !m_dlssInitialized)
+  {
+    m_dlssEnabled = true;
+    initializeDlss();
+    if(m_dlssInitialized)
+      updateDlssDescriptorSet();
+  }
+#endif
+
   collectReadBackValuesIfNeeded();
 
   prmFrame.multiviewEnabled = 0;
@@ -722,7 +752,38 @@ void VkViewer::renderRtxFrame(FrameRenderContext& ctx)
   raytrace(ctx.cmd);
 
 #ifdef WITH_DLSS_RR
-  if(m_dlssRREnabled && m_dlssRRInitialized && m_dlssRR && m_dlssRR->isValid())
+  if(m_dlssEnabled && m_dlssInitialized && m_dlss && m_dlss->isValid())
+  {
+    nvvk::cmdImageMemoryBarrier(ctx.cmd, {m_gBuffers.getColorImage(COLOR_MAIN),
+                                          VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL});
+    nvvk::cmdImageMemoryBarrier(ctx.cmd, {m_gBuffers.getColorImage(COLOR_DLSS_OUTPUT),
+                                          VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL});
+
+    glm::uvec2 renderSize = glm::uvec2(m_viewSize.x, m_viewSize.y);
+    NVSDK_NGX_Result result = m_dlss->evaluate(ctx.cmd, renderSize, prmFrame.dlssJitter, m_dlssRRNeedsReset);
+    if(NVSDK_NGX_SUCCEED(result))
+    {
+      VkImageCopy copyRegion = {};
+      copyRegion.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+      copyRegion.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+      copyRegion.extent = {static_cast<uint32_t>(m_viewSize.x), static_cast<uint32_t>(m_viewSize.y), 1};
+
+      nvvk::cmdImageMemoryBarrier(ctx.cmd, {m_gBuffers.getColorImage(COLOR_DLSS_OUTPUT),
+                                            VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL});
+      nvvk::cmdImageMemoryBarrier(ctx.cmd, {m_gBuffers.getColorImage(COLOR_MAIN),
+                                            VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL});
+      vkCmdCopyImage(ctx.cmd, m_gBuffers.getColorImage(COLOR_DLSS_OUTPUT), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                     m_gBuffers.getColorImage(COLOR_MAIN), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
+      nvvk::cmdImageMemoryBarrier(ctx.cmd, {m_gBuffers.getColorImage(COLOR_MAIN),
+                                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL});
+    }
+
+    if(NVSDK_NGX_FAILED(result))
+      LOGW("DLSS Super Resolution evaluate failed: %s\n", getNGXResultString(result).c_str());
+    m_dlssRRNeedsReset = false;
+    m_dlssRRFrameIndex++;
+  }
+  else if(m_dlssRREnabled && m_dlssRRInitialized && m_dlssRR && m_dlssRR->isValid())
   {
     nvvk::cmdImageMemoryBarrier(ctx.cmd, {m_gBuffers.getColorImage(COLOR_MAIN),
                                           VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL});

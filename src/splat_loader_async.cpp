@@ -25,6 +25,13 @@
 #include <cstring>
 #include <filesystem>
 
+#ifdef _WIN32
+#include <winsock2.h>
+#include <windows.h>
+#include <winhttp.h>
+#pragma comment(lib, "winhttp.lib")
+#endif
+
 #include <nvutils/logger.hpp>
 
 #include "splat_loader_fast.h"
@@ -92,6 +99,70 @@ using ProgressCallback = std::function<void(size_t downloaded, size_t total)>;
 
 bool downloadFile(const std::string& url, const std::filesystem::path& destPath, ProgressCallback callback = nullptr)
 {
+#ifdef _WIN32
+  std::wstring wideUrl(url.begin(), url.end());
+  URL_COMPONENTS parts = {};
+  parts.dwStructSize = sizeof(parts);
+  wchar_t host[256] = {};
+  wchar_t path[4096] = {};
+  wchar_t extra[4096] = {};
+  parts.lpszHostName = host;
+  parts.dwHostNameLength = static_cast<DWORD>(std::size(host));
+  parts.lpszUrlPath = path;
+  parts.dwUrlPathLength = static_cast<DWORD>(std::size(path));
+  parts.lpszExtraInfo = extra;
+  parts.dwExtraInfoLength = static_cast<DWORD>(std::size(extra));
+  if(!WinHttpCrackUrl(wideUrl.c_str(), static_cast<DWORD>(wideUrl.size()), 0, &parts))
+    return false;
+
+  HINTERNET session = WinHttpOpen(L"vk_viewer/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+                                  WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+  HINTERNET connection = session ? WinHttpConnect(session, host, parts.nPort, 0) : nullptr;
+  std::wstring requestPath(path, parts.dwUrlPathLength);
+  requestPath.append(extra, parts.dwExtraInfoLength);
+  DWORD flags = parts.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0;
+  HINTERNET request = connection ? WinHttpOpenRequest(connection, L"GET", requestPath.c_str(), nullptr,
+                                                       WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags)
+                                 : nullptr;
+  bool success = request && WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+                                                WINHTTP_NO_REQUEST_DATA, 0, 0, 0)
+                 && WinHttpReceiveResponse(request, nullptr);
+  DWORD status = 0;
+  DWORD statusSize = sizeof(status);
+  success = success && WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                                            WINHTTP_HEADER_NAME_BY_INDEX, &status, &statusSize,
+                                            WINHTTP_NO_HEADER_INDEX) && status == 200;
+  if(success)
+  {
+    DWORD total = 0;
+    DWORD totalSize = sizeof(total);
+    WinHttpQueryHeaders(request, WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER,
+                        WINHTTP_HEADER_NAME_BY_INDEX, &total, &totalSize, WINHTTP_NO_HEADER_INDEX);
+    std::ofstream outFile(destPath, std::ios::binary);
+    if(!outFile)
+      success = false;
+    DWORD available = 0;
+    size_t downloaded = 0;
+    while(success && WinHttpQueryDataAvailable(request, &available) && available > 0)
+    {
+      std::vector<uint8_t> buffer(available);
+      DWORD received = 0;
+      if(!WinHttpReadData(request, buffer.data(), available, &received))
+      {
+        success = false;
+        break;
+      }
+      outFile.write(reinterpret_cast<const char*>(buffer.data()), received);
+      downloaded += received;
+      if(callback)
+        callback(downloaded, total);
+    }
+  }
+  if(request) WinHttpCloseHandle(request);
+  if(connection) WinHttpCloseHandle(connection);
+  if(session) WinHttpCloseHandle(session);
+  return success;
+#else
   ix::HttpClient httpClient;
   auto           args = httpClient.createRequest(url, ix::HttpClient::kGet);
 
@@ -131,6 +202,7 @@ bool downloadFile(const std::string& url, const std::filesystem::path& destPath,
   }
 
   return true;
+#endif
 }
 }  // namespace
 

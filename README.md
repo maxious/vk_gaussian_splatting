@@ -20,6 +20,20 @@ This fork adds the following features to the original NVIDIA sample.
 
 ### AI Upscaling
 - **NVIDIA DLSS Ray Reconstruction (DLSS-RR)** - AI-powered ray reconstruction for enhanced image quality with the ray tracing pipelines
+- **DLSS Super Resolution / DLAA** - Vulkan NGX path used by the optional DLSS5 neural-rendering bridge
+
+#### DLSS5 Neural Rendering (experimental)
+
+The application exposes `--dlss 1` and the **Enable DLSS Neural Rendering** checkbox in the renderer properties. This runs a native Vulkan NGX Super Resolution evaluation in DLAA mode at the current viewport size. It is intentionally limited to the 3DGRT pipeline and is mutually exclusive with DLSS-RR.
+
+The DLSS5 neural pass itself is not bundled. It requires the optional community bridge as a ReShade add-on:
+
+1. Obtain `dlss5-bridge.addon64` from [NIGos/dlss5-bridge](https://github.com/NIGos/dlss5-bridge/releases). Its Vulkan mirror is enabled by default (`vk_mirror=1`).
+2. Install ReShade with Vulkan add-on support and place `dlss5-bridge.addon64` in ReShade's `AddonPath`.
+3. Place the legally obtained `renodx-dlss5.addon64`, `nvngx_dlssnr.dll`, and `nvngx_dlss.dll` where ReShade can discover them. The neural-rendering add-on is closed-source and is not distributed by this project.
+4. Run `vk_viewer --pipeline 2 --dlss 1`, then inspect `dlss5-bridge.log` and the ReShade overlay. Disable DLSS Frame Generation if present; the bridge does not support it.
+
+Without the bridge and add-on, `--dlss 1` still exercises the standard Vulkan DLAA path and safely falls back through normal NGX errors when the runtime is unavailable.
 
 ### Video Export
 - **Video Rendering** - Export camera trajectory animations to MP4 video files
