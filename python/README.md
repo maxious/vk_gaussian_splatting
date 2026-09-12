@@ -169,6 +169,21 @@ uv run --extra cuda python -m offline.cli postprocess \
   --format 4dv
 ```
 
+The 4DAnyone source is vendored as the `python/4danyone_git` submodule
+(`maxious/4danyone` @ `low-vram`, an Apache-2.0 fork of `offreal/4danyone`). The
+fork adds a `FDANYONE_LOW_VRAM=1` mode so generation fits GPUs with <32 GiB
+(validated on a 16 GiB RTX 5080 with `--views_per_layer 4`):
+
+```bash
+git submodule update --init python/4danyone_git
+cd python/4danyone_git
+git submodule update --init third_party/GVHMR
+# Python 3.11 venv + pip install -r requirements.txt, then:
+FDANYONE_LOW_VRAM=1 python inference.py \
+  --video_path /path/to/input.mp4 --views_per_layer 4 \
+  --data_dir /path/to/data --model_dir /path/to/models
+```
+
 The input must contain `videos/dense/*.mp4`. This is a prototype: ZipSplat
 does not estimate temporal motion, so the final motion is derived by the
 existing FreeTimeGS matcher. The released ZipSplat weights are CC BY-NC 4.0.
