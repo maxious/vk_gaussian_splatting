@@ -30,6 +30,31 @@ logging.getLogger("numba").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
+# Gated temporal opacity approximation (mined from FreeTimeGS++ gated
+# marginalization).  Gaussians whose track covers at least this fraction of the
+# clip get a PERSISTENT_SIGMA-wide temporal window so they stay visible.
+PERSISTENT_COVERAGE = 0.75
+PERSISTENT_SIGMA = 2.0
+# Gate value written for persistent Gaussians: opacity(t) = gate + (1-gate)*exp(...)
+# so gate=1 keeps the Gaussian at full opacity for the whole clip.
+PERSISTENT_GATE = 1.0
+
+
+def persistent_gate_from_time_scale(
+    time_scale_log: np.ndarray,
+    persistent_sigma: float = PERSISTENT_SIGMA,
+    rel_tol: float = 1e-3,
+) -> np.ndarray:
+    """Recover per-Gaussian gate values from fitted (log) time scales.
+
+    ``temporal_gating`` marks persistent trajectories by setting their time scale
+    to ``PERSISTENT_SIGMA``; this turns that signal into an explicit gate for the
+    faithful gated temporal opacity model in the renderer.
+    """
+    sigma = np.exp(np.asarray(time_scale_log, dtype=np.float32))
+    threshold = persistent_sigma * (1.0 - rel_tol)
+    return np.where(sigma >= threshold, PERSISTENT_GATE, 0.0).astype(np.float32)
+
 
 def check_faiss_available() -> bool:
     """Check if FAISS is available."""
@@ -54,6 +79,10 @@ class TrajectoryData:
     colors: np.ndarray  # (total_observations, 3)
     opacities: np.ndarray  # (total_observations,)
     n_trajectories: int
+    # Optional per-observation 3D scene flow (displacement from this frame to the
+    # next). Missing entries are NaN. Mined from FreeTimeGS++ flow-guided
+    # velocity initialization.
+    flows: np.ndarray | None = None
 
 
 @jit(nopython=True)
@@ -348,6 +377,8 @@ def build_trajectories(
     rotations = np.zeros((total_gaussians, 4), dtype=np.float32)
     colors = np.zeros((total_gaussians, 3), dtype=np.float32)
     opacities = np.zeros(total_gaussians, dtype=np.float32)
+    flows = np.full((total_gaussians, 3), np.nan, dtype=np.float32)
+    has_flow = False
 
     idx = 0
     for frame_idx, frame in enumerate(frames):
@@ -361,6 +392,10 @@ def build_trajectories(
         rotations[idx : idx + n] = frame.rotations
         colors[idx : idx + n] = frame.colors
         opacities[idx : idx + n] = frame.opacities
+        frame_flow = getattr(frame, "flow", None)
+        if frame_flow is not None and len(frame_flow) == n:
+            flows[idx : idx + n] = frame_flow
+            has_flow = True
         idx += n
 
     return TrajectoryData(
@@ -373,6 +408,7 @@ def build_trajectories(
         colors=colors,
         opacities=opacities,
         n_trajectories=n_trajectories,
+        flows=flows if has_flow else None,
     )
 
 
@@ -439,6 +475,8 @@ def smart_sample_trajectories(
 
 def _compute_trajectory_attributes(
     traj_data: TrajectoryData,
+    temporal_gating: bool = False,
+    flow_prior_weight: float = 0.0,
 ) -> tuple[
     np.ndarray,
     np.ndarray,
@@ -451,6 +489,15 @@ def _compute_trajectory_attributes(
 ]:
     """Compute trajectory attributes: center position, weighted scales/rotations/colors/opacities,
     velocity, time_center, time_scale_log.
+
+    Args:
+        temporal_gating: Emulate the FreeTimeGS++ gated marginalization by giving
+            Gaussians whose track covers most of the clip a near-flat temporal
+            window, so static/persistent content does not fade toward the clip
+            ends.  When False, the historical span-based duration is used.
+        flow_prior_weight: Blend weight in ``[0, 1]`` for a per-observation 3D
+            scene-flow velocity prior (``traj_data.flows``), mined from the
+            FreeTimeGS++ velocity distillation.  Requires ``traj_data.flows``.
 
     Returns 8 float32 arrays used by both fit_trajectories and
     fit_trajectories_delta_compression.
@@ -481,10 +528,14 @@ def _compute_trajectory_attributes(
 
     # Duration from track support (observation span)
     # Option A: Use observation span (max_t - min_t for this trajectory)
-    time_min = np.zeros(n_traj, dtype=np.float32)
-    time_max = np.zeros(n_traj, dtype=np.float32)
+    # Must initialise to +/-inf: seeding with 0 inflates the span of any track
+    # that does not start at t=0 (normalised time is always >= 0).
+    time_min = np.full(n_traj, np.inf, dtype=np.float32)
+    time_max = np.full(n_traj, -np.inf, dtype=np.float32)
     np.minimum.at(time_min, traj_ids, times)
     np.maximum.at(time_max, traj_ids, times)
+    time_min = np.where(np.isfinite(time_min), time_min, 0.0)
+    time_max = np.where(np.isfinite(time_max), time_max, 0.0)
     time_span = time_max - time_min
 
     # Duration = span * multiplier (for overlap), clamped
@@ -493,6 +544,21 @@ def _compute_trajectory_attributes(
 
     # This prevents splats from disappearing abruptly when time scale is too small
     time_scale = np.maximum(time_scale, 0.05)
+
+    if temporal_gating and n_obs > 0:
+        # Emulate FreeTimeGS++ gated marginalization (gate + (1-gate)*exp(...)):
+        # a Gaussian tracked across most of the clip is treated as persistent and
+        # given a near-flat window (large sigma) instead of fading to ~0.13 at the
+        # clip ends.  Only raises sigma; never shortens it.
+        num_frames = int(np.max(traj_data.frame_indices)) + 1
+        coverage = obs_count / max(num_frames, 1)
+        persistent = coverage >= PERSISTENT_COVERAGE
+        time_scale = np.where(
+            persistent & (time_scale < PERSISTENT_SIGMA),
+            PERSISTENT_SIGMA,
+            time_scale,
+        )
+
     time_scale_log = np.log(time_scale)
 
     dt = times - time_center[traj_ids]
@@ -522,6 +588,55 @@ def _compute_trajectory_attributes(
 
     single_obs_mask = obs_count <= 1
     velocity[single_obs_mask] = 0.0
+
+    # Flow-guided velocity prior (mined from FreeTimeGS++ velocity distillation).
+    # `traj_data.flows` holds the per-observation 3D displacement to the next
+    # frame; dividing by the frame's normalized dt yields a velocity estimate
+    # that is independent of matching quality.  Blend it with the least-squares
+    # velocity where flow support exists.
+    if flow_prior_weight > 0 and traj_data.flows is not None:
+        flows = np.asarray(traj_data.flows, dtype=np.float32)
+        if flows.shape == positions.shape:
+            flow_valid = np.isfinite(flows).all(axis=1)
+
+            num_frames = int(np.max(traj_data.frame_indices)) + 1 if n_obs else 0
+            frame_time = np.zeros(num_frames, dtype=np.float32)
+            if num_frames:
+                frame_time[traj_data.frame_indices] = times
+                dt_frame = np.zeros(num_frames, dtype=np.float32)
+                if num_frames > 1:
+                    dt_frame[:-1] = np.diff(frame_time)
+                    dt_frame[-1] = dt_frame[-2]
+                else:
+                    dt_frame[0] = 1.0
+            dt_obs = dt_frame[traj_data.frame_indices]
+            default_dt = 1.0 / max(num_frames - 1, 1)
+            dt_obs = np.where(dt_obs > 1e-8, dt_obs, default_dt)
+
+            flow_vel_obs = np.zeros_like(flows)
+            flow_vel_obs[flow_valid] = flows[flow_valid] / dt_obs[flow_valid, None]
+
+            flow_vel_sum = np.zeros((n_traj, 3), dtype=np.float64)
+            flow_vel_count = np.zeros(n_traj, dtype=np.int32)
+            np.add.at(flow_vel_sum, traj_ids, flow_vel_obs.astype(np.float64))
+            np.add.at(flow_vel_count, traj_ids, flow_valid.astype(np.int32))
+
+            has_flow = flow_vel_count > 0
+            flow_velocity = np.zeros((n_traj, 3), dtype=np.float32)
+            flow_velocity[has_flow] = (
+                flow_vel_sum[has_flow] / flow_vel_count[has_flow, None]
+            ).astype(np.float32)
+
+            w = float(np.clip(flow_prior_weight, 0.0, 1.0))
+            blended = (1.0 - w) * velocity + w * flow_velocity
+            velocity = np.where(has_flow[:, None], blended, velocity).astype(np.float32)
+
+            logger.info(
+                "Flow velocity prior: %d/%d trajectories covered (weight=%.2f)",
+                int(has_flow.sum()),
+                n_traj,
+                w,
+            )
 
     pos_center = pos_sum / obs_count_safe[:, None]
 
@@ -575,6 +690,8 @@ def fit_trajectories_delta_compression(
     traj_data: TrajectoryData,
     compression_ratio_target: float = 51.0,
     use_int8: bool = False,
+    temporal_gating: bool = False,
+    flow_prior_weight: float = 0.0,
 ) -> tuple[
     np.ndarray,
     np.ndarray,
@@ -600,7 +717,9 @@ def fit_trajectories_delta_compression(
             velocity = deltas.astype(float32) / compression_scale
     """
     pos_center, scales, rotations, colors, opacities, velocity, time_center, time_scale = (
-        _compute_trajectory_attributes(traj_data)
+        _compute_trajectory_attributes(
+            traj_data, temporal_gating=temporal_gating, flow_prior_weight=flow_prior_weight
+        )
     )
 
     dtype = np.int8 if use_int8 else np.int16
@@ -635,6 +754,8 @@ def fit_trajectories_delta_compression(
 
 def fit_trajectories(
     traj_data: TrajectoryData,
+    temporal_gating: bool = False,
+    flow_prior_weight: float = 0.0,
 ) -> tuple[
     np.ndarray,
     np.ndarray,
@@ -646,7 +767,9 @@ def fit_trajectories(
     np.ndarray,
 ]:
     """Fit trajectories to obtain float32 motion vectors. This is the non-delta-compression path."""
-    return _compute_trajectory_attributes(traj_data)
+    return _compute_trajectory_attributes(
+        traj_data, temporal_gating=temporal_gating, flow_prior_weight=flow_prior_weight
+    )
 
 
 def compute_motion_vectors(
@@ -656,6 +779,8 @@ def compute_motion_vectors(
     match_distance_ratio: float = 0.02,
     window_size: int = 3,
     color_correction: bool = False,
+    temporal_gating: bool = False,
+    flow_prior_weight: float = 0.0,
 ) -> tuple[
     np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray
 ]:
@@ -666,6 +791,10 @@ def compute_motion_vectors(
     Args:
         color_correction: Apply trajectory-consensus per-frame affine color
             correction (mined from FreeTimeGS++) before fitting attributes.
+        temporal_gating: Emulate FreeTimeGS++ gated marginalization so
+            persistent/static Gaussians do not fade at the clip ends.
+        flow_prior_weight: Blend weight for the 3D scene-flow velocity prior
+            (uses ``GaussianFrame.flow``).
     """
     if len(frames) < 2:
         frame = frames[0]
@@ -703,7 +832,11 @@ def compute_motion_vectors(
 
         traj_data = correct_trajectory_colors(traj_data)
 
-    return fit_trajectories(traj_data)
+    return fit_trajectories(
+        traj_data,
+        temporal_gating=temporal_gating,
+        flow_prior_weight=flow_prior_weight,
+    )
 
 
 if __name__ == "__main__":

@@ -164,6 +164,17 @@ def main():
         help="Apply trajectory-consensus per-frame affine color correction to reduce temporal flicker (mined from FreeTimeGS++)",
     )
     export_parser.add_argument(
+        "--temporal-gating",
+        action="store_true",
+        help="Keep persistent/static Gaussians visible across the whole clip instead of fading at the ends (FreeTimeGS++ gated marginalization approximation)",
+    )
+    export_parser.add_argument(
+        "--flow-velocity-weight",
+        type=float,
+        default=0.0,
+        help="Blend weight [0,1] for the 3D scene-flow velocity prior when available (mined from FreeTimeGS++ velocity distillation; 0 disables)",
+    )
+    export_parser.add_argument(
         "--device",
         type=str,
         default="auto",
@@ -220,6 +231,11 @@ def main():
         "--color-correct",
         action="store_true",
         help="Apply trajectory-consensus per-frame affine color correction to reduce temporal flicker (mined from FreeTimeGS++)",
+    )
+    postprocess_parser.add_argument(
+        "--temporal-gating",
+        action="store_true",
+        help="Keep persistent/static Gaussians visible across the whole clip instead of fading at the ends (FreeTimeGS++ gated marginalization approximation)",
     )
     postprocess_parser.add_argument("-v", "--verbose", action="store_true")
 
@@ -359,6 +375,17 @@ def main():
         help="Apply trajectory-consensus per-frame affine color correction to reduce temporal flicker (mined from FreeTimeGS++)",
     )
     images_parser.add_argument(
+        "--temporal-gating",
+        action="store_true",
+        help="Keep persistent/static Gaussians visible across the whole clip instead of fading at the ends (FreeTimeGS++ gated marginalization approximation)",
+    )
+    images_parser.add_argument(
+        "--flow-velocity-weight",
+        type=float,
+        default=0.0,
+        help="Blend weight [0,1] for the 3D scene-flow velocity prior when available (mined from FreeTimeGS++ velocity distillation; 0 disables)",
+    )
+    images_parser.add_argument(
         "--flip-y",
         action="store_true",
         help="Negate Y coordinates to flip the coordinate system (useful for SHARP models). If using postprocess afterward, don't flip there too.",
@@ -461,6 +488,8 @@ def main():
             resume_processing=getattr(args, "resume_processing", True),
             enable_skyseg=getattr(args, "enable_skyseg", False),
             color_correction=getattr(args, "color_correct", False),
+            temporal_gating=getattr(args, "temporal_gating", False),
+            flow_prior_weight=getattr(args, "flow_velocity_weight", 0.0),
         )
 
     elif args.command == "postprocess":
@@ -473,6 +502,7 @@ def main():
             flip_y=getattr(args, "flip_y", False),
             format=args.format,
             color_correction=getattr(args, "color_correct", False),
+            temporal_gating=getattr(args, "temporal_gating", False),
         )
 
     elif args.command == "zipsplat":
@@ -537,6 +567,8 @@ def main():
             boundary_min_angle=getattr(args, "boundary_min_angle", 3.0),
             enable_skyseg=getattr(args, "enable_skyseg", False),
             color_correction=getattr(args, "color_correct", False),
+            temporal_gating=getattr(args, "temporal_gating", False),
+            flow_prior_weight=getattr(args, "flow_velocity_weight", 0.0),
         )
 
 

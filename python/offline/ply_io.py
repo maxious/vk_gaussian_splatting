@@ -217,12 +217,13 @@ def write_freetimegs_ply(
     time_scale: np.ndarray,
     sh_rest: np.ndarray | None = None,
     flip_y: bool = False,
+    gate: np.ndarray | None = None,
 ) -> None:
     """Write a FreeTimeGS PLY file with temporal parameters using plyfile.
 
     The temporal model is:
         position(t) = mean + motion * (t - time_center)
-        opacity(t) = opacity * exp(-0.5 * ((t - time_center) / time_scale)^2)
+        opacity(t) = (gate + (1 - gate) * exp(-0.5 * ((t - time_center) / time_scale)^2)) * opacity
 
     Args:
         path: Output PLY file path
@@ -236,6 +237,9 @@ def write_freetimegs_ply(
         time_scale: (N,) float32 temporal width (log-space, will be exp'd by viewer)
         sh_rest: Optional (N, 45) float32 higher-order SH coefficients
         flip_y: If True, negate Y coordinates to flip the coordinate system
+        gate: Optional (N,) float32 marginal gates in [0, 1].  gate=1 keeps a
+            Gaussian at full opacity for the whole clip (mined from FreeTimeGS++
+            gated marginalization).  Written as a ``t_gate`` property.
     """
     n_points = len(means)
 
@@ -273,6 +277,9 @@ def write_freetimegs_ply(
         ]
     )
 
+    if gate is not None:
+        dtype_list.append(("t_gate", "f4"))
+
     elements = np.empty(n_points, dtype=dtype_list)
 
     elements["x"] = means[:, 0]
@@ -303,6 +310,9 @@ def write_freetimegs_ply(
     elements["t"] = time_center
     elements["t_scale"] = time_scale
 
+    if gate is not None:
+        elements["t_gate"] = gate
+
     el = PlyElement.describe(elements, "vertex")
     PlyData([el], text=False).write(str(path))
 
@@ -321,6 +331,7 @@ def write_delta_compressed_freetimegs_ply(
     use_int8: bool = False,
     sh_rest: np.ndarray | None = None,
     flip_y: bool = False,
+    gate: np.ndarray | None = None,
 ) -> None:
     """
     Write a delta-compressed FreeTimeGS PLY file.
@@ -328,7 +339,7 @@ def write_delta_compressed_freetimegs_ply(
     Instead of storing absolute motion vectors, stores compressed temporal deltas.
     The temporal model becomes:
         position(t) = mean + (deltas / compression_scale) * (t - time_center)
-        opacity(t) = opacity * exp(-0.5 * ((t - time_center) / time_scale)^2)
+        opacity(t) = (gate + (1 - gate) * exp(-0.5 * ((t - time_center) / time_scale)^2)) * opacity
 
     Args:
         path: Output PLY file path
@@ -344,6 +355,7 @@ def write_delta_compressed_freetimegs_ply(
         use_int8: Whether deltas are int8 (True) or int16 (False)
         sh_rest: Optional (N, 45) float32 higher-order SH coefficients
         flip_y: If True, negate Y coordinates to flip the coordinate system
+        gate: Optional (N,) float32 marginal gates in [0, 1] (``t_gate`` property).
     """
     n_points = len(means)
 
@@ -383,6 +395,9 @@ def write_delta_compressed_freetimegs_ply(
         ]
     )
 
+    if gate is not None:
+        dtype_list.append(("t_gate", "f4"))
+
     elements = np.empty(n_points, dtype=dtype_list)
 
     elements["x"] = means[:, 0]
@@ -413,6 +428,9 @@ def write_delta_compressed_freetimegs_ply(
     elements["motion_2"] = deltas[:, 2]
     elements["t"] = time_center
     elements["t_scale"] = time_scale
+
+    if gate is not None:
+        elements["t_gate"] = gate
 
     el = PlyElement.describe(elements, "vertex")
     compression_type = "int8" if use_int8 else "int16"

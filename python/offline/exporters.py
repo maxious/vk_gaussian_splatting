@@ -190,6 +190,8 @@ def export_video_to_gaussian_plys(
     resume_processing: bool = True,
     enable_skyseg: bool = False,
     color_correction: bool = False,
+    temporal_gating: bool = False,
+    flow_prior_weight: float = 0.0,
 ) -> None:
     """Convert video to Gaussian PLY files.
 
@@ -513,7 +515,12 @@ def export_video_to_gaussian_plys(
     logger.info("Computing motion vectors (GPU-accelerated with cuTile)...")
     (means, scales, rotations, colors, opacities, motion, time_center, time_scale) = (
         compute_motion_vectors_cuda(
-            all_frames, fps, all_flows=all_flows, color_correction=color_correction
+            all_frames,
+            fps,
+            all_flows=all_flows,
+            color_correction=color_correction,
+            temporal_gating=temporal_gating,
+            flow_prior_weight=flow_prior_weight,
         )
     )
 
@@ -553,6 +560,11 @@ def export_video_to_gaussian_plys(
             time_scale,
         )
     else:
+        gate = None
+        if temporal_gating:
+            from .motion_tracking_cpu import persistent_gate_from_time_scale
+
+            gate = persistent_gate_from_time_scale(time_scale)
         write_freetimegs_ply(
             output_path,
             means,
@@ -564,6 +576,7 @@ def export_video_to_gaussian_plys(
             time_center,
             time_scale,
             flip_y=flip_y,
+            gate=gate,
         )
 
     logger.info(f"Export complete: {output_path}")
@@ -578,6 +591,7 @@ def postprocess_plys_to_freetimegs(
     flip_y: bool = False,
     format: str = "ply",
     color_correction: bool = False,
+    temporal_gating: bool = False,
 ) -> None:
     """Postprocess existing per-frame PLY files to a single FreeTimeGS PLY.
 
@@ -618,6 +632,7 @@ def postprocess_plys_to_freetimegs(
             fps,
             max_match_distance=max_match_distance,
             color_correction=color_correction,
+            temporal_gating=temporal_gating,
         )
     )
 
@@ -648,6 +663,11 @@ def postprocess_plys_to_freetimegs(
             time_scale,
         )
     else:
+        gate = None
+        if temporal_gating:
+            from .motion_tracking_cpu import persistent_gate_from_time_scale
+
+            gate = persistent_gate_from_time_scale(time_scale)
         write_freetimegs_ply(
             output_path,
             means,
@@ -659,6 +679,7 @@ def postprocess_plys_to_freetimegs(
             time_center,
             time_scale,
             flip_y=flip_y,
+            gate=gate,
         )
 
     logger.info(f"Wrote FreeTimeGS Gaussians to {output_path}")
@@ -686,6 +707,8 @@ def export_images_to_gaussian_plys(
     boundary_min_angle: float = 3.0,
     enable_skyseg: bool = False,
     color_correction: bool = False,
+    temporal_gating: bool = False,
+    flow_prior_weight: float = 0.0,
 ) -> None:
     """Process images with DA3 and export to Gaussian PLY files.
 
@@ -930,6 +953,8 @@ def export_images_to_gaussian_plys(
             use_int8=use_int8,
             all_flows=all_flows,
             color_correction=color_correction,
+            temporal_gating=temporal_gating,
+            flow_prior_weight=flow_prior_weight,
         )
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -959,6 +984,11 @@ def export_images_to_gaussian_plys(
                 time_scale,
             )
         else:
+            gate = None
+            if temporal_gating:
+                from .motion_tracking_cpu import persistent_gate_from_time_scale
+
+                gate = persistent_gate_from_time_scale(time_scale)
             write_delta_compressed_freetimegs_ply(
                 output_path,
                 means,
@@ -972,6 +1002,7 @@ def export_images_to_gaussian_plys(
                 compression_scale=compression_scale,
                 use_int8=use_int8,
                 flip_y=flip_y,
+                gate=gate,
             )
 
         logger.info(f"Export complete: {output_path} (delta-compressed)")
@@ -981,7 +1012,13 @@ def export_images_to_gaussian_plys(
 
         logger.info("Computing motion vectors (GPU-accelerated with cuTile)...")
         (means, scales, rotations, colors, opacities, motion, time_center, time_scale) = (
-            compute_motion_vectors_cuda(frames, fps, color_correction=color_correction)
+            compute_motion_vectors_cuda(
+                frames,
+                fps,
+                color_correction=color_correction,
+                temporal_gating=temporal_gating,
+                flow_prior_weight=flow_prior_weight,
+            )
         )
 
     # Zero out motion for static splats (motion magnitude <= 0.001)
@@ -1019,6 +1056,11 @@ def export_images_to_gaussian_plys(
             time_scale,
         )
     else:
+        gate = None
+        if temporal_gating:
+            from .motion_tracking_cpu import persistent_gate_from_time_scale
+
+            gate = persistent_gate_from_time_scale(time_scale)
         write_freetimegs_ply(
             output_path,
             means,
@@ -1030,6 +1072,7 @@ def export_images_to_gaussian_plys(
             time_center,
             time_scale,
             flip_y=flip_y,
+            gate=gate,
         )
 
     logger.info(f"Wrote FreeTimeGS Gaussians to {output_path}")

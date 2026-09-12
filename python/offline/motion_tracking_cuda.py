@@ -358,6 +358,8 @@ def compute_motion_vectors_cuda(
     opacity_weight: float = 0.1,
     all_flows: Optional[List[np.ndarray]] = None,
     color_correction: bool = False,
+    temporal_gating: bool = False,
+    flow_prior_weight: float = 0.0,
 ):
     """
     Compute motion vectors using CUDA for matching.
@@ -372,6 +374,10 @@ def compute_motion_vectors_cuda(
         all_flows: Optional list of (N_i, 3) flow vectors per frame
         color_correction: Apply trajectory-consensus per-frame affine color
             correction (mined from FreeTimeGS++) before fitting attributes.
+        temporal_gating: Emulate FreeTimeGS++ gated marginalization so
+            persistent/static Gaussians do not fade at the clip ends.
+        flow_prior_weight: Blend weight for the 3D scene-flow velocity prior
+            (mined from FreeTimeGS++ velocity distillation).
     """
     if len(frames) < 2:
         # Fallback for single frame
@@ -433,6 +439,8 @@ def compute_motion_vectors_cuda(
     rotations = np.zeros((total_gaussians, 4), dtype=np.float32)
     colors = np.zeros((total_gaussians, 3), dtype=np.float32)
     opacities = np.zeros(total_gaussians, dtype=np.float32)
+    flows = np.full((total_gaussians, 3), np.nan, dtype=np.float32)
+    has_flow = all_flows is not None
 
     t_start = frames[0].timestamp_ms
     t_end = frames[-1].timestamp_ms
@@ -450,6 +458,10 @@ def compute_motion_vectors_cuda(
         rotations[idx : idx + n] = frame.rotations
         colors[idx : idx + n] = frame.colors
         opacities[idx : idx + n] = frame.opacities
+        if all_flows is not None:
+            frame_flow = all_flows[frame_idx]
+            if frame_flow is not None and len(frame_flow) == n:
+                flows[idx : idx + n] = frame_flow
         idx += n
 
     traj_data = TrajectoryData(
@@ -462,6 +474,7 @@ def compute_motion_vectors_cuda(
         colors=colors,
         opacities=opacities,
         n_trajectories=n_trajectories,
+        flows=flows if has_flow else None,
     )
 
     if color_correction:
@@ -469,7 +482,11 @@ def compute_motion_vectors_cuda(
 
         traj_data = correct_trajectory_colors(traj_data)
 
-    return fit_trajectories(traj_data)
+    return fit_trajectories(
+        traj_data,
+        temporal_gating=temporal_gating,
+        flow_prior_weight=flow_prior_weight,
+    )
 
 
 def compute_motion_vectors_delta_compression_cuda(
@@ -483,6 +500,8 @@ def compute_motion_vectors_delta_compression_cuda(
     opacity_weight: float = 0.1,
     all_flows: Optional[List[np.ndarray]] = None,
     color_correction: bool = False,
+    temporal_gating: bool = False,
+    flow_prior_weight: float = 0.0,
 ) -> tuple[
     np.ndarray,
     np.ndarray,
@@ -512,6 +531,8 @@ def compute_motion_vectors_delta_compression_cuda(
         all_flows: Optional list of (N_i, 3) flow vectors per frame
         color_correction: Apply trajectory-consensus per-frame affine color
             correction (mined from FreeTimeGS++) before fitting attributes.
+        temporal_gating: Emulate FreeTimeGS++ gated marginalization so
+            persistent/static Gaussians do not fade at the clip ends.
     """
     if len(frames) < 2:
         # Fallback for single frame
@@ -574,6 +595,8 @@ def compute_motion_vectors_delta_compression_cuda(
     rotations = np.zeros((total_gaussians, 4), dtype=np.float32)
     colors = np.zeros((total_gaussians, 3), dtype=np.float32)
     opacities = np.zeros(total_gaussians, dtype=np.float32)
+    flows = np.full((total_gaussians, 3), np.nan, dtype=np.float32)
+    has_flow = all_flows is not None
 
     t_start = frames[0].timestamp_ms
     t_end = frames[-1].timestamp_ms
@@ -591,6 +614,10 @@ def compute_motion_vectors_delta_compression_cuda(
         rotations[idx : idx + n] = frame.rotations
         colors[idx : idx + n] = frame.colors
         opacities[idx : idx + n] = frame.opacities
+        if all_flows is not None:
+            frame_flow = all_flows[frame_idx]
+            if frame_flow is not None and len(frame_flow) == n:
+                flows[idx : idx + n] = frame_flow
         idx += n
 
     traj_data = TrajectoryData(
@@ -603,6 +630,7 @@ def compute_motion_vectors_delta_compression_cuda(
         colors=colors,
         opacities=opacities,
         n_trajectories=n_trajectories,
+        flows=flows if has_flow else None,
     )
 
     from .motion_tracking_cpu import fit_trajectories_delta_compression
@@ -614,6 +642,10 @@ def compute_motion_vectors_delta_compression_cuda(
 
     logger.info("Computing delta-compressed temporal encoding...")
     results = fit_trajectories_delta_compression(
-        traj_data, compression_ratio_target=compression_ratio_target, use_int8=use_int8
+        traj_data,
+        compression_ratio_target=compression_ratio_target,
+        use_int8=use_int8,
+        temporal_gating=temporal_gating,
+        flow_prior_weight=flow_prior_weight,
     )
     return results  # Now includes compression_scale as 9th element
