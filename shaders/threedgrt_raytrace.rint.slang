@@ -37,17 +37,20 @@ bool particleDensityHitCustom(in float3   rayOrigin,
   float2 timeData = fetchTime(particleId);
   float t_scale = timeData.x; // JS Order: x = scale
   float t_center = timeData.y; // JS Order: y = center
+  float gate = clamp(fetchGate(particleId), 0.0, 1.0); // FreeTimeGS++ gated marginalization
   float dt = frameInfo.currentTime - t_center;
 
   if (frameInfo.temporalCulling != 0 && t_center > -5.0) {
+      // A gated Gaussian has an opacity floor of `gate`, so it is never
+      // negligibly transparent unless gate itself is negligible.
       if (t_scale > 1e-5) {
           float v = dt / t_scale;
-          if (v * v > 11.042922) {
+          if (gate < 0.004 && v * v > 11.042922) {
               hitDistance = 0.0;
               return false;
           }
       } else {
-          if (abs(dt) > 1e-5) {
+          if (gate < 0.004 && abs(dt) > 1e-5) {
               hitDistance = 0.0;
               return false;
           }

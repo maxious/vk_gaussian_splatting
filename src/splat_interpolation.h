@@ -200,6 +200,10 @@ inline bool interpolateSplatSet(SplatSet& out, const SplatSet& frame0, const Spl
         out.motion = frame0.motion;
         out.time = frame0.time;
         out.time_scale = frame0.time_scale;
+        if (frame0.has_gate) {
+            out.has_gate = true;
+            out.gate = frame0.gate;
+        }
         out.minTime = lerp(frame0.minTime, frame1.minTime, t);
         out.maxTime = lerp(frame0.maxTime, frame1.maxTime, t);
     }

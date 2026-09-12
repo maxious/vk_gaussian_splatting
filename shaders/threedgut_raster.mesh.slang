@@ -118,26 +118,24 @@ void main(
     float2 timeData = fetchTime(splatIndex);
     float t_scale = timeData.x; // JS Order: x = scale
     float t_center = timeData.y; // JS Order: y = center
+    float gate = clamp(fetchGate(splatIndex), 0.0, 1.0); // FreeTimeGS++ gated marginalization
     float dt = frameInfo.currentTime - t_center;
 
     if (frameInfo.temporalCulling != 0 && t_center > -5.0) {
-        // FreeTimeGS Gaussian opacity decay: sigma(t) = exp(-0.5 * ((t - mu) / s)^2)
+        // Gated FreeTimeGS opacity: gate + (1-gate) * exp(-0.5 * ((t - mu) / s)^2)
         if (t_scale > 1e-5) {
             float v = dt / t_scale;
-            float temporalOpacity = exp(-0.5 * v * v);
+            float temporalOpacity = gate + (1.0 - gate) * exp(-0.5 * v * v);
             splatColor.a *= temporalOpacity;
-
-            // Cull if opacity is negligible to improve performance
-            if (splatColor.a < 0.004) { // approx 1/255
-                emitDegeneratedQuad(localIndex, verts);
-                return;
-            }
         } else {
-            // Zero duration: only visible at exact time center
-            if (abs(dt) > 1e-5) {
-                emitDegeneratedQuad(localIndex, verts);
-                return;
-            }
+            // Zero duration: only visible at exact time center, or always when gated
+            splatColor.a *= (abs(dt) > 1e-5) ? gate : 1.0;
+        }
+
+        // Cull if opacity is negligible to improve performance
+        if (splatColor.a < 0.004) { // approx 1/255
+            emitDegeneratedQuad(localIndex, verts);
+            return;
         }
     }
 

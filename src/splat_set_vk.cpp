@@ -293,7 +293,7 @@ void SplatSetVk::initDataBuffers(SplatSet& splatSet)
 
   {
     const uint32_t count = splatSet.has_time_data ? splatCount : 1;
-    const uint32_t bufferSizeMotion = count * 3 * sizeof(float);
+    const uint32_t bufferSizeMotion = count * 4 * sizeof(float);
     const uint32_t bufferSizeTime   = count * 2 * sizeof(float);
 
     nvvk::Buffer hostBufferMotion;
@@ -311,10 +311,16 @@ void SplatSetVk::initDataBuffers(SplatSet& splatSet)
     NVVK_DBG_NAME(timeBuffer.buffer);
 
     if (splatSet.has_time_data) {
-        memcpy(hostBufferMotion.mapping, splatSet.motion.data(), bufferSizeMotion);
+        // motion is padded to 4 components; .w carries the temporal gate.
+        float* motionMapped = (float*)hostBufferMotion.mapping;
         float* timeMapped = (float*)hostBufferTime.mapping;
         START_PAR_LOOP(splatCount, i)
         {
+          motionMapped[i * 4 + 0] = splatSet.motion[i * 3 + 0];
+          motionMapped[i * 4 + 1] = splatSet.motion[i * 3 + 1];
+          motionMapped[i * 4 + 2] = splatSet.motion[i * 3 + 2];
+          motionMapped[i * 4 + 3] = splatSet.has_gate ? splatSet.gate[i] : 0.0f;
+
           // JS Order: x = scale, y = center
           timeMapped[i * 2 + 0] = splatSet.time_scale[i];
           timeMapped[i * 2 + 1] = splatSet.time[i];
@@ -747,6 +753,7 @@ void SplatSetVk::initDataTextures(SplatSet& splatSet)
           motion[i * 4 + 0] = splatSet.motion[i * 3 + 0];
           motion[i * 4 + 1] = splatSet.motion[i * 3 + 1];
           motion[i * 4 + 2] = splatSet.motion[i * 3 + 2];
+          motion[i * 4 + 3] = splatSet.has_gate ? splatSet.gate[i] : 0.0f;
           
           // JS Order: x = scale, y = center
           timeData[i * 2 + 0] = splatSet.time_scale[i];

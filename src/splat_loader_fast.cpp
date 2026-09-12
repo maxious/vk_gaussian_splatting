@@ -56,6 +56,7 @@ struct PropertyLayout
   size_t motionOffset[3] = {static_cast<size_t>(-1), static_cast<size_t>(-1), static_cast<size_t>(-1)};
   size_t timeOffset      = static_cast<size_t>(-1);
   size_t timeScaleOffset = static_cast<size_t>(-1);
+  size_t gateOffset      = static_cast<size_t>(-1);
   size_t basecolorOffset[3] = {static_cast<size_t>(-1), static_cast<size_t>(-1), static_cast<size_t>(-1)};
   size_t roughnessOffset = static_cast<size_t>(-1);
   size_t metallicOffset  = static_cast<size_t>(-1);
@@ -206,6 +207,7 @@ static bool parseHeader(const char* data, size_t size, size_t& headerSize, Prope
       }
       else if(name == "t") layout.timeOffset = layout.vertexStride;
       else if(name == "t_scale") layout.timeScaleOffset = layout.vertexStride;
+      else if(name == "t_gate") layout.gateOffset = layout.vertexStride;
       else if(name.starts_with("basecolor_"))
       {
         int idx = 0;
@@ -440,10 +442,18 @@ bool SplatLoaderFast::load(const std::filesystem::path& filename, SplatSet& outp
     reportProgress();
     extract_float(layout.timeScaleOffset, output.time_scale.data(), 1);
     reportProgress();
-    
+
     for(size_t i = 0; i < count; ++i)
     {
       output.time_scale[i] = std::exp(output.time_scale[i]);
+    }
+
+    if(layout.gateOffset != static_cast<size_t>(-1))
+    {
+      output.has_gate = true;
+      output.gate.resize(count);
+      extract_float(layout.gateOffset, output.gate.data(), 1);
+      reportProgress();
     }
   }
 

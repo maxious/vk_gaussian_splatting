@@ -440,6 +440,12 @@ bool LodScene::loadSelections(const std::filesystem::path&     basePath,
       subset.time.insert(subset.time.end(), src.time.begin() + srcOffset, src.time.begin() + srcOffset + srcCount);
       subset.time_scale.insert(subset.time_scale.end(), src.time_scale.begin() + srcOffset,
                                src.time_scale.begin() + srcOffset + srcCount);
+      if(src.has_gate)
+      {
+        subset.has_gate = true;
+        subset.gate.insert(subset.gate.end(), src.gate.begin() + srcOffset,
+                           src.gate.begin() + srcOffset + srcCount);
+      }
     }
 
     output.merge(subset);

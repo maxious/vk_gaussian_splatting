@@ -197,6 +197,10 @@ float2 fetchTime(in uint splatIndex)
 {
   return float2(0.0, 0.0);
 }
+float fetchGate(in uint splatIndex)
+{
+  return 0.0;
+}
 #elif DATA_STORAGE == STORAGE_TEXTURES
 // fetch motion value from texture map
 float3 fetchMotion(in uint splatIndex)
@@ -213,17 +217,31 @@ float2 fetchTime(in uint splatIndex)
   timeTexture.GetDimensions(texSize.x, texSize.y);
   return timeTexture.Load(int3(getDataPos(splatIndex, 1, 0, texSize), 0)).xy;
 }
+
+// fetch temporal gate from the motion texture's unused .w component
+float fetchGate(in uint splatIndex)
+{
+  int2 texSize;
+  motionTexture.GetDimensions(texSize.x, texSize.y);
+  return motionTexture.Load(int3(getDataPos(splatIndex, 1, 0, texSize), 0)).w;
+}
 #else
 // fetch motion value from data buffer
 float3 fetchMotion(in uint splatIndex)
 {
-  return float3(motionBuffer[splatIndex * 3 + 0], motionBuffer[splatIndex * 3 + 1], motionBuffer[splatIndex * 3 + 2]);
+  return float3(motionBuffer[splatIndex * 4 + 0], motionBuffer[splatIndex * 4 + 1], motionBuffer[splatIndex * 4 + 2]);
 }
 
 // fetch time value from data buffer
 float2 fetchTime(in uint splatIndex)
 {
   return float2(timeBuffer[splatIndex * 2 + 0], timeBuffer[splatIndex * 2 + 1]);
+}
+
+// fetch temporal gate from the padded motion buffer .w component
+float fetchGate(in uint splatIndex)
+{
+  return motionBuffer[splatIndex * 4 + 3];
 }
 #endif
 

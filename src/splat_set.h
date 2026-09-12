@@ -71,6 +71,10 @@ struct SplatSet
   std::vector<float> motion     = {};  // 3 components (Vx, Vy, Vz)
   std::vector<float> time       = {};  // 1 component (t_center)
   std::vector<float> time_scale = {};  // 1 component (t_extent/duration)
+  // Gated temporal opacity (FreeTimeGS++ gated marginalization):
+  // opacity(t) = gate + (1 - gate) * exp(-0.5 * ((t - t_center) / t_scale)^2)
+  bool has_gate = false;
+  std::vector<float> gate = {};         // 1 component (marginal gate in [0,1])
 
   // TRON PBR material attributes
   bool has_material_data = false;  // true when PLY contains basecolor/roughness/metallic
@@ -174,12 +178,14 @@ struct SplatSet
 
     constexpr float SH_C0 = 0.28209479177387814f;
 
-    std::vector<float> newMotion, newTime, newTimeScale;
+    std::vector<float> newMotion, newTime, newTimeScale, newGate;
     std::vector<float> newBasecolor, newRoughness, newMetallic;
     if(has_time_data) {
         newMotion.reserve(motion.size());
         newTime.reserve(time.size());
         newTimeScale.reserve(time_scale.size());
+        if(has_gate)
+          newGate.reserve(gate.size());
     }
     if(has_material_data) {
         newBasecolor.reserve(basecolor.size());
@@ -228,6 +234,8 @@ struct SplatSet
           newMotion.push_back(motion[i * 3 + 2]);
           newTime.push_back(time[i]);
           newTimeScale.push_back(time_scale[i]);
+          if(has_gate)
+            newGate.push_back(gate[i]);
         }
 
         if(has_material_data)
@@ -252,6 +260,8 @@ struct SplatSet
       motion     = std::move(newMotion);
       time       = std::move(newTime);
       time_scale = std::move(newTimeScale);
+      if(has_gate)
+        gate = std::move(newGate);
     }
     if(has_material_data) {
       basecolor = std::move(newBasecolor);
@@ -398,10 +408,20 @@ struct SplatSet
         motion.resize(offset * 3, 0.0f);
         time.resize(offset, 0.0f);
         time_scale.resize(offset, 0.0f);
-        
+
         motion.insert(motion.end(), other.motion.begin(), other.motion.end());
         time.insert(time.end(), other.time.begin(), other.time.end());
         time_scale.insert(time_scale.end(), other.time_scale.begin(), other.time_scale.end());
+    }
+
+    if (has_gate && other.has_gate) {
+        gate.insert(gate.end(), other.gate.begin(), other.gate.end());
+    } else if (has_gate && !other.has_gate) {
+        gate.insert(gate.end(), otherSize, 0.0f);
+    } else if (!has_gate && other.has_gate) {
+        has_gate = true;
+        gate.resize(offset, 0.0f);
+        gate.insert(gate.end(), other.gate.begin(), other.gate.end());
     }
 
     if (has_material_data && other.has_material_data) {
@@ -443,6 +463,8 @@ struct SplatSet
     metallic.clear();
     has_time_data = false;
     has_material_data = false;
+    gate.clear();
+    has_gate = false;
     minTime = 0.0f;
     maxTime = 1.0f;
   }
@@ -576,7 +598,9 @@ struct SplatSet
       reorderVec3(motion);
       reorderVec1(time);
       reorderVec1(time_scale);
-      
+      if(has_gate)
+        reorderVec1(gate);
+
       // Rebuild temporal bins after reordering since indices changed
       temporalBins.build(time, time_scale, minTime, maxTime);
     }

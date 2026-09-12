@@ -162,18 +162,19 @@ bool particleProcessHit(in FrameInfo frameInfo,
   float4  color           = fetchColor(splatId);
   float particleDensity = color.w;
 
-  // Apply Temporal Opacity modulation
+  // Apply gated temporal opacity modulation
   float2 timeData = fetchTime(splatId);
   float t_scale = timeData.x; // JS Order: x = scale
   float t_center = timeData.y; // JS Order: y = center
+  float gate = clamp(fetchGate(splatId), 0.0, 1.0); // FreeTimeGS++ gated marginalization
   float dt = frameInfo.currentTime - t_center;
 
   if (frameInfo.temporalCulling != 0) {
       if (t_scale > 1e-5) {
           float v = dt / t_scale;
-          particleDensity *= exp(-0.5 * v * v);
+          particleDensity *= gate + (1.0 - gate) * exp(-0.5 * v * v);
       } else {
-          if (abs(dt) > 1e-5) particleDensity = 0.0;
+          if (abs(dt) > 1e-5) particleDensity *= gate;
       }
   }
 
@@ -228,18 +229,19 @@ bool particleProcessHitGut(in FrameInfo frameInfo,
 
   float   particleDensity          = splatColor.w;
 
-  // Apply Temporal Opacity modulation
+  // Apply gated temporal opacity modulation
   float2 timeData = fetchTime(splatId);
   float t_scale = timeData.x; // JS Order: x = scale
   float t_center = timeData.y; // JS Order: y = center
+  float gate = clamp(fetchGate(splatId), 0.0, 1.0); // FreeTimeGS++ gated marginalization
   float dt = frameInfo.currentTime - t_center;
 
   if (frameInfo.temporalCulling != 0) {
       if (t_scale > 1e-5) {
           float v = dt / t_scale;
-          particleDensity *= exp(-0.5 * v * v);
+          particleDensity *= gate + (1.0 - gate) * exp(-0.5 * v * v);
       } else {
-          if (abs(dt) > 1e-5) particleDensity = 0.0;
+          if (abs(dt) > 1e-5) particleDensity *= gate;
       }
   }
 
@@ -290,19 +292,20 @@ bool particleProcessHitGbuffer(in FrameInfo    frameInfo,
   float4 color           = fetchColor(splatId);
   float  particleDensity = color.w;
 
-  // Apply Temporal Opacity modulation (same logic as particleProcessHit)
+  // Apply gated temporal opacity modulation (same logic as particleProcessHit)
   float2 timeData = fetchTime(splatId);
   float  t_scale  = timeData.x;  // JS Order: x = scale
   float  t_center = timeData.y;  // JS Order: y = center
+  float  gate     = clamp(fetchGate(splatId), 0.0, 1.0);  // FreeTimeGS++ gated marginalization
   float  dt       = frameInfo.currentTime - t_center;
 
   if (frameInfo.temporalCulling != 0) {
     if (t_scale > 1e-5) {
       float v = dt / t_scale;
-      particleDensity *= exp(-0.5 * v * v);
+      particleDensity *= gate + (1.0 - gate) * exp(-0.5 * v * v);
     }
     else {
-      if (abs(dt) > 1e-5) particleDensity = 0.0;
+      if (abs(dt) > 1e-5) particleDensity *= gate;
     }
   }
 
