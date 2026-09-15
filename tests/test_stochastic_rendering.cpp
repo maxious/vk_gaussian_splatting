@@ -147,6 +147,35 @@ inline void eval_sh_at_deg0(float dc_r, float dc_g, float dc_b,
 // unpack_fragment yields depth=0xFFFFFFFF, idx=0xFFFFFFFF ("no fragment")
 static constexpr uint64_t FRAMEBUFFER_CLEAR_VALUE = 0xFFFFFFFFFFFFFFFFull;
 
+// Mirrors shaders/stochasticgs.h.slang stochasticgs_alpha_mass.
+// Disc-area convention from supersplat PR #1048: opaque 2px splat (det = 1) -> pi.
+inline float alpha_mass(float opacity, float determinant)
+{
+    return opacity * 3.14159265358979323846f * std::sqrt(std::max(determinant, 0.0f));
+}
+
+// Mirrors stochasticgs_depth_sigma. cov3d and xform3 are row-major 3x3.
+// z is the third column of xform3 and variance is z^T * cov3d * z.
+inline float depth_sigma(const float cov3d[3][3], const float xform3[3][3])
+{
+    const float z[3] = {xform3[0][2], xform3[1][2], xform3[2][2]};
+    float       cz[3];
+    for(int i = 0; i < 3; ++i)
+        cz[i] = cov3d[i][0] * z[0] + cov3d[i][1] * z[1] + cov3d[i][2] * z[2];
+    const float var = z[0] * cz[0] + z[1] * cz[1] + z[2] * cz[2];
+    return std::sqrt(std::max(var, 0.0f));
+}
+
+// Mirrors the occlusion cull predicate from stochasticgs_accumulate.comp.slang.
+// Culls when the splat front (depth minus 2.83 sigma) is beyond max_block_depth.
+inline bool occlusion_culls(float prev_depth, float sigma, float max_block_depth)
+{
+    const float front = prev_depth - 2.83f * sigma;
+    if(front <= 0.0f)
+        return false;
+    return std::bit_cast<uint32_t>(front) > std::bit_cast<uint32_t>(max_block_depth);
+}
+
 /*-------------------------------------------------------------------------------------------------
  * Test cases
  *-----------------------------------------------------------------------------------------------*/
@@ -396,5 +425,47 @@ TEST_SUITE("Stochastic Rendering Helpers")
         CHECK(r >= 0.0f);
         CHECK(g >= 0.0f);
         CHECK(b >= 0.0f);
+    }
+
+    TEST_CASE("Alpha mass contribution cull")
+    {
+        // An opaque splat at the 2 px size cull has mass ~= pi (PR #1048).
+        CHECK(std::abs(alpha_mass(1.0f, 1.0f) - 3.14159265f) < 1e-4f);
+        // Mass scales linearly with opacity.
+        CHECK(std::abs(alpha_mass(0.5f, 1.0f) - 1.5707963f) < 1e-4f);
+        // Mass scales with sqrt(det): 4x area -> 2x mass.
+        CHECK(std::abs(alpha_mass(1.0f, 4.0f) - 6.2831853f) < 1e-3f);
+        // Negative determinant is clamped to zero mass.
+        CHECK(alpha_mass(1.0f, -1.0f) == 0.0f);
+
+        // A 3 px splat at alpha 0.14 (the PR's "thinned faint content") is culled at ceiling 1.
+        // det = (1.5)^2 = 2.25.
+        CHECK(alpha_mass(0.14f, 2.25f) < 1.0f);
+        // An opaque 1 px splat (det = 0.25) is kept.
+        CHECK_FALSE(alpha_mass(1.0f, 0.25f) < 1.0f);
+    }
+
+    TEST_CASE("Depth sigma from covariance")
+    {
+        const float identity[3][3] = {{1.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f, 1.0f}};
+        const float diag[3][3]     = {{4.0f, 0.0f, 0.0f}, {0.0f, 4.0f, 0.0f}, {0.0f, 0.0f, 9.0f}};
+
+        // View-space depth variance is the (2,2) entry.
+        CHECK(std::abs(depth_sigma(diag, identity) - 3.0f) < 1e-5f);
+
+        // Swap x and z: the view ray now maps to the object x axis, variance 4 -> sigma 2.
+        const float swap[3][3] = {{0.0f, 0.0f, 1.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f, 0.0f}};
+        CHECK(std::abs(depth_sigma(diag, swap) - 2.0f) < 1e-5f);
+    }
+
+    TEST_CASE("Occlusion front cull")
+    {
+        // Splat front at 5.0, farthest surviving block sample at 4.0 -> occluded.
+        CHECK(occlusion_culls(5.0f, 0.0f, 4.0f));
+        // Farthest sample at 6.0 -> not occluded.
+        CHECK_FALSE(occlusion_culls(5.0f, 0.0f, 6.0f));
+        // A large depth sigma moves the front forward and prevents over-culling.
+        CHECK_FALSE(occlusion_culls(5.0f, 1.0f, 4.0f));
+        CHECK(occlusion_culls(5.0f, 1.0f, 2.0f));
     }
 }

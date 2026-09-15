@@ -642,6 +642,7 @@ protected:
     VkShaderModule stochasticAccumulateShader{};
     VkShaderModule stochasticResolveShader{};
     VkShaderModule stochasticClearShader{};
+    VkShaderModule stochasticDepthReduceShader{};
     // VDZ depth mesh rendering
     VkShaderModule vdzMeshVertexShader{};
     VkShaderModule vdzMeshFragmentShader{};
@@ -891,6 +892,7 @@ protected:
     VkPipeline clearPipeline = VK_NULL_HANDLE;
     VkPipeline accumulatePipeline = VK_NULL_HANDLE;
     VkPipeline resolvePipeline = VK_NULL_HANDLE;
+    VkPipeline depthReducePipeline = VK_NULL_HANDLE;
     VkPipeline accumulateMultiviewPipeline = VK_NULL_HANDLE;
     VkPipeline resolveMultiviewPipeline = VK_NULL_HANDLE;
 
@@ -905,6 +907,21 @@ protected:
 
     // 32-bit index buffer (per-pixel winning gaussian index)
     nvvk::Buffer indexBuffer;
+
+    // Previous-frame block max-depth map (one uint per 8x8 pixel block)
+    nvvk::Buffer occlusionBuffer;
+    uint32_t     occlusionBlockCols = 0;
+    uint32_t     occlusionBlockRows = 0;
+    bool         occlusionMapValid  = false;
+
+    // Motion cull state (budget-driven contribution threshold + prev model-view)
+    bool       havePrevModelView  = false;
+    bool       moving             = true;
+    bool       motionCullEnabled  = false;  // mirrors prmStochastic.stochasticMotionCull
+    bool       occlusionActive    = false;  // used by this frame's accumulate pass
+    float      contributionThreshold = 0.0f;
+    float      measuredGpuMs      = 0.0f;
+    glm::mat4  prevModelViewMatrix{1.0f};
 
     // Output image (per-pixel color)
     nvvk::Image outputImage;
@@ -927,6 +944,8 @@ protected:
   void deinitStochasticPipelines();
   void renderStochasticFrame(VkCommandBuffer cmd, const FrameRenderContext& ctx);
   void updateStochasticFrameInfo(VkCommandBuffer cmd);
+  // Budget-driven motion cull: sets the contribution threshold and occlusion state.
+  void updateStochasticMotionCull();
 
   // PLY Sequence Animation
   std::shared_ptr<AnimationController> m_animationController;

@@ -19,6 +19,8 @@
 
 // This file is included from vk_viewer.cpp - do not compile separately
 
+#include <algorithm>
+#include <cmath>
 #include <vector>
 
 namespace vk_viewer {
@@ -64,6 +66,8 @@ void VkViewer::initStochasticPipelines()
   m_stochastic.descriptorBindings.addBinding(BINDING_STOCHASTIC_DEPTH_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
                                              VK_SHADER_STAGE_COMPUTE_BIT);
   m_stochastic.descriptorBindings.addBinding(BINDING_STOCHASTIC_INDEX_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
+                                             VK_SHADER_STAGE_COMPUTE_BIT);
+  m_stochastic.descriptorBindings.addBinding(BINDING_STOCHASTIC_OCCLUSION_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
                                              VK_SHADER_STAGE_COMPUTE_BIT);
   m_stochastic.descriptorBindings.addBinding(BINDING_STOCHASTIC_OUTPUT_IMAGE, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1,
                                              VK_SHADER_STAGE_COMPUTE_BIT);
@@ -118,10 +122,25 @@ void VkViewer::initStochasticPipelines()
                                   VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE));
   NVVK_DBG_NAME(m_stochastic.indexBuffer.buffer);
 
+  // Previous-frame block max-depth map (one uint per 8x8 pixel block)
+  const uint32_t blockCols = (width + 7u) / 8u;
+  const uint32_t blockRows = (height + 7u) / 8u;
+  m_stochastic.occlusionBlockCols = blockCols;
+  m_stochastic.occlusionBlockRows = blockRows;
+  const VkDeviceSize occlusionSize = sizeof(uint32_t) * blockCols * blockRows;
+  NVVK_CHECK(m_alloc.createBuffer(m_stochastic.occlusionBuffer, occlusionSize,
+                                  VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT,
+                                  VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE));
+  NVVK_DBG_NAME(m_stochastic.occlusionBuffer.buffer);
+  m_stochastic.occlusionMapValid = false;
+
   // Output image (matching display color format for blit compatibility)
   VkImageCreateInfo outputInfo{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
   outputInfo.imageType     = VK_IMAGE_TYPE_2D;
-  outputInfo.format        = m_colorFormat;
+  // Must match the R16G16B16A16_SFLOAT storage image view created below (and the
+  // float4 writes in the resolve shader); m_colorFormat is R8G8B8A8_UNORM, which
+  // is not a view-compatible aliasing.
+  outputInfo.format        = VK_FORMAT_R16G16B16A16_SFLOAT;
   outputInfo.extent        = {width, height, 1};
   outputInfo.mipLevels     = 1;
   outputInfo.arrayLayers   = 1;
@@ -144,7 +163,7 @@ void VkViewer::initStochasticPipelines()
 
   VkImageCreateInfo accumInfo{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
   accumInfo.imageType     = VK_IMAGE_TYPE_2D;
-  accumInfo.format        = m_colorFormat;
+  accumInfo.format        = VK_FORMAT_R16G16B16A16_SFLOAT;  // must match accumulationImageView
   accumInfo.extent        = {width, height, 1};
   accumInfo.mipLevels     = 1;
   accumInfo.arrayLayers   = 1;
@@ -170,6 +189,20 @@ void VkViewer::initStochasticPipelines()
                                       VK_IMAGE_LAYOUT_GENERAL, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}});
     nvvk::cmdImageMemoryBarrier(cmd, {m_stochastic.accumulationImage.image, VK_IMAGE_LAYOUT_UNDEFINED,
                                       VK_IMAGE_LAYOUT_GENERAL, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}});
+
+    // Zero the occlusion map so an accidental early read sees the invalid sentinel.
+    vkCmdFillBuffer(cmd, m_stochastic.occlusionBuffer.buffer, 0, occlusionSize, 0u);
+    VkBufferMemoryBarrier occBarrier{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};
+    occBarrier.srcAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT;
+    occBarrier.dstAccessMask       = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+    occBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    occBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    occBarrier.buffer              = m_stochastic.occlusionBuffer.buffer;
+    occBarrier.offset              = 0;
+    occBarrier.size                = occlusionSize;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 1,
+                         &occBarrier, 0, nullptr);
+
     m_app->submitAndWaitTempCmdBuffer(cmd);
   }
 
@@ -183,9 +216,10 @@ void VkViewer::initStochasticPipelines()
     return info;
   };
 
-  VkComputePipelineCreateInfo clearInfo      = makeComputePipeline(m_shaders.stochasticClearShader);
-  VkComputePipelineCreateInfo accumulateInfo = makeComputePipeline(m_shaders.stochasticAccumulateShader);
-  VkComputePipelineCreateInfo resolveInfo    = makeComputePipeline(m_shaders.stochasticResolveShader);
+  VkComputePipelineCreateInfo clearInfo       = makeComputePipeline(m_shaders.stochasticClearShader);
+  VkComputePipelineCreateInfo accumulateInfo  = makeComputePipeline(m_shaders.stochasticAccumulateShader);
+  VkComputePipelineCreateInfo resolveInfo     = makeComputePipeline(m_shaders.stochasticResolveShader);
+  VkComputePipelineCreateInfo depthReduceInfo = makeComputePipeline(m_shaders.stochasticDepthReduceShader);
 
   NVVK_CHECK(vkCreateComputePipelines(m_device, VK_NULL_HANDLE, 1, &clearInfo, nullptr, &m_stochastic.clearPipeline));
   NVVK_DBG_NAME(m_stochastic.clearPipeline);
@@ -198,6 +232,10 @@ void VkViewer::initStochasticPipelines()
       vkCreateComputePipelines(m_device, VK_NULL_HANDLE, 1, &resolveInfo, nullptr, &m_stochastic.resolvePipeline));
   NVVK_DBG_NAME(m_stochastic.resolvePipeline);
 
+  NVVK_CHECK(vkCreateComputePipelines(m_device, VK_NULL_HANDLE, 1, &depthReduceInfo, nullptr,
+                                      &m_stochastic.depthReducePipeline));
+  NVVK_DBG_NAME(m_stochastic.depthReducePipeline);
+
   nvvk::WriteSetContainer writeContainer;
   writeContainer.append(
       m_stochastic.descriptorBindings.getWriteSet(BINDING_STOCHASTIC_DEPTH_BUFFER, m_stochastic.descriptorSet),
@@ -205,6 +243,9 @@ void VkViewer::initStochasticPipelines()
   writeContainer.append(
       m_stochastic.descriptorBindings.getWriteSet(BINDING_STOCHASTIC_INDEX_BUFFER, m_stochastic.descriptorSet),
       m_stochastic.indexBuffer);
+  writeContainer.append(
+      m_stochastic.descriptorBindings.getWriteSet(BINDING_STOCHASTIC_OCCLUSION_BUFFER, m_stochastic.descriptorSet),
+      m_stochastic.occlusionBuffer);
   writeContainer.append(
       m_stochastic.descriptorBindings.getWriteSet(BINDING_STOCHASTIC_OUTPUT_IMAGE, m_stochastic.descriptorSet),
       m_stochastic.outputImageView, VK_IMAGE_LAYOUT_GENERAL);
@@ -224,7 +265,7 @@ void VkViewer::deinitStochasticPipelines()
 {
   if(!m_stochastic.initialized && m_stochastic.pipelineLayout == VK_NULL_HANDLE
      && m_stochastic.descriptorPool == VK_NULL_HANDLE && m_stochastic.depthBuffer.buffer == VK_NULL_HANDLE
-     && m_stochastic.indexBuffer.buffer == VK_NULL_HANDLE)
+     && m_stochastic.indexBuffer.buffer == VK_NULL_HANDLE && m_stochastic.occlusionBuffer.buffer == VK_NULL_HANDLE)
   {
     return;
   }
@@ -245,6 +286,11 @@ void VkViewer::deinitStochasticPipelines()
   {
     vkDestroyPipeline(m_device, m_stochastic.resolvePipeline, nullptr);
     m_stochastic.resolvePipeline = VK_NULL_HANDLE;
+  }
+  if(m_stochastic.depthReducePipeline != VK_NULL_HANDLE)
+  {
+    vkDestroyPipeline(m_device, m_stochastic.depthReducePipeline, nullptr);
+    m_stochastic.depthReducePipeline = VK_NULL_HANDLE;
   }
 
   if(m_stochastic.pipelineLayout != VK_NULL_HANDLE)
@@ -276,6 +322,15 @@ void VkViewer::deinitStochasticPipelines()
     m_alloc.destroyBuffer(m_stochastic.indexBuffer);
     m_stochastic.indexBuffer = {};
   }
+  if(m_stochastic.occlusionBuffer.buffer != VK_NULL_HANDLE)
+  {
+    m_alloc.destroyBuffer(m_stochastic.occlusionBuffer);
+    m_stochastic.occlusionBuffer = {};
+  }
+  m_stochastic.occlusionBlockCols = 0;
+  m_stochastic.occlusionBlockRows = 0;
+  m_stochastic.occlusionMapValid  = false;
+  m_stochastic.havePrevModelView  = false;
 
   if(m_stochastic.outputImageView != VK_NULL_HANDLE)
   {
@@ -314,6 +369,92 @@ void VkViewer::updateStochasticFrameInfo(VkCommandBuffer /*cmd*/)
   prmFrame.stochasticUseGps              = static_cast<int32_t>(prmStochastic.stochasticUseGps);
   prmFrame.stochasticWidth               = static_cast<int32_t>(m_viewSize.x);
   prmFrame.stochasticHeight              = static_cast<int32_t>(m_viewSize.y);
+
+  prmFrame.stochasticContributionThreshold = m_stochastic.contributionThreshold;
+  prmFrame.stochasticOcclusionActive       = m_stochastic.occlusionActive ? 1.0f : 0.0f;
+  prmFrame.stochasticOcclusionBlockCols    = static_cast<int32_t>(m_stochastic.occlusionBlockCols);
+  prmFrame.stochasticOcclusionBlockRows    = static_cast<int32_t>(m_stochastic.occlusionBlockRows);
+  prmFrame.stochasticPrevModelViewMatrix   = m_stochastic.prevModelViewMatrix;
+}
+
+//--------------------------------------------------------------------------------------------------
+// Budget-driven motion cull (ported from supersplat PR #1048).
+//
+// While the camera or the splat transform moves, the contribution threshold is
+// ramped toward a GPU budget (capped at 1.0 alpha mass). When the view settles the
+// threshold decays to zero so the progressively accumulated image is full quality.
+// The occlusion cull uses the previous stochastic frame's model-view and its block
+// max-depth map, so it is only active once that map exists.
+//
+void VkViewer::updateStochasticMotionCull()
+{
+  // object -> view for the current frame. Shaders use the row-vector convention
+  // (mul(v, M) == M^T v), so chaining model then view yields view * model in glm.
+  const glm::mat4 currentModelView = prmFrame.viewMatrix * m_splatSetVk.transform;
+
+  // Movement detection: max absolute element delta of the model-view matrix.
+  bool moving = true;
+  if(m_stochastic.havePrevModelView)
+  {
+    float delta = 0.0f;
+    for(int c = 0; c < 4; ++c)
+      for(int r = 0; r < 4; ++r)
+        delta = std::max(delta, std::fabs(currentModelView[c][r] - m_stochastic.prevModelViewMatrix[c][r]));
+    moving = delta > 1.0e-5f;
+  }
+
+  m_stochastic.motionCullEnabled = prmStochastic.stochasticMotionCull;
+  m_stochastic.moving            = moving;
+
+  if(!m_stochastic.motionCullEnabled)
+  {
+    m_stochastic.contributionThreshold = 0.0f;
+    m_stochastic.occlusionActive       = false;
+    m_stochastic.occlusionMapValid     = false;
+  }
+  else
+  {
+    // Occlusion is only valid when a previous stochastic frame wrote the map.
+    m_stochastic.occlusionActive = m_stochastic.havePrevModelView && m_stochastic.occlusionMapValid;
+
+    // Measure the stochastic pass GPU time (microseconds -> ms). The profiler result
+    // is delayed by a few frames but that is fine for a budget controller.
+    if(m_profilerTimeline)
+    {
+      nvutils::ProfilerTimeline::TimerInfo timerInfo;
+      std::string                          apiName;
+      if(m_profilerTimeline->getFrameTimerInfo("Stochastic GS", timerInfo, apiName) && timerInfo.numAveraged > 0)
+        m_stochastic.measuredGpuMs = static_cast<float>(timerInfo.gpu.last * 1.0e-3);
+    }
+
+    const float target  = std::max(prmStochastic.stochasticBudgetMs, 0.5f);
+    const float ceiling = std::min(prmStochastic.stochasticContributionCeiling, 1.0f);
+    const float step    = 0.05f;
+
+    if(moving)
+    {
+      if(m_stochastic.measuredGpuMs > target)
+        m_stochastic.contributionThreshold = std::min(ceiling, m_stochastic.contributionThreshold + step);
+      else if(m_stochastic.measuredGpuMs < target * 0.9f)
+        m_stochastic.contributionThreshold = std::max(0.0f, m_stochastic.contributionThreshold - step);
+    }
+    else
+    {
+      // Settled: converge to full quality.
+      m_stochastic.contributionThreshold = std::max(0.0f, m_stochastic.contributionThreshold * 0.5f - 0.01f);
+    }
+  }
+
+  // Remember the pose used to generate this frame's occlusion map.
+  m_stochastic.prevModelViewMatrix = currentModelView;
+  m_stochastic.havePrevModelView   = true;
+
+  if(m_stochastic.motionCullEnabled && (m_frameIndex % 60u) == 0u)
+  {
+    LOGI("Stochastic motion cull: %s gpu=%.2fms threshold=%.3f occlusion=%d\n",
+         m_stochastic.moving ? "moving" : "settled", m_stochastic.measuredGpuMs,
+         m_stochastic.contributionThreshold, m_stochastic.occlusionActive ? 1 : 0);
+  }
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -356,6 +497,10 @@ void VkViewer::renderStochasticFrame(VkCommandBuffer cmd, const FrameRenderConte
   // This is normally called by renderSingleView() but we bypass that for stochastic mode.
   updateAndUploadFrameInfoUBO(cmd, ctx.splatCount);
 
+  // Budget-driven motion cull must run after the camera UBO is current (view matrix)
+  // and before the FrameInfo fields it produces are uploaded.
+  updateStochasticMotionCull();
+
   updateStochasticFrameInfo(cmd);
   prmFrame.splatCount = static_cast<int32_t>(ctx.splatCount);
 
@@ -366,6 +511,22 @@ void VkViewer::renderStochasticFrame(VkCommandBuffer cmd, const FrameRenderConte
   uboBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
   vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &uboBarrier, 0,
                        nullptr, 0, nullptr);
+
+  // Make the previous frame's occlusion map writes visible to this frame's
+  // accumulate pass (barriers apply to earlier submissions in submission order).
+  if(m_stochastic.occlusionActive && m_stochastic.occlusionBuffer.buffer != VK_NULL_HANDLE)
+  {
+    VkBufferMemoryBarrier occBarrier{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};
+    occBarrier.srcAccessMask       = VK_ACCESS_SHADER_WRITE_BIT;
+    occBarrier.dstAccessMask       = VK_ACCESS_SHADER_READ_BIT;
+    occBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    occBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    occBarrier.buffer              = m_stochastic.occlusionBuffer.buffer;
+    occBarrier.offset              = 0;
+    occBarrier.size                = VK_WHOLE_SIZE;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0,
+                         nullptr, 1, &occBarrier, 0, nullptr);
+  }
 
   m_pcRaster.modelMatrix                = m_splatSetVk.transform;
   m_pcRaster.modelMatrixInverse         = m_splatSetVk.transformInverse;
@@ -408,6 +569,31 @@ void VkViewer::renderStochasticFrame(VkCommandBuffer cmd, const FrameRenderConte
   resolveBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
   vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1,
                        &resolveBarrier, 0, nullptr, 0, nullptr);
+
+  // Fold this frame's depth buffer into the block max-depth map used by the next frame.
+  if(m_stochastic.motionCullEnabled && m_stochastic.depthReducePipeline != VK_NULL_HANDLE
+     && m_stochastic.occlusionBlockCols > 0 && m_stochastic.occlusionBlockRows > 0)
+  {
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_stochastic.depthReducePipeline);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_stochastic.pipelineLayout, 0, 2, descSets, 2,
+                            dynamicOffsets);
+
+    const uint32_t numBlocks = m_stochastic.occlusionBlockCols * m_stochastic.occlusionBlockRows;
+    vkCmdDispatch(cmd, (numBlocks + 63u) / 64u, 1, 1);
+
+    VkBufferMemoryBarrier occWriteBarrier{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};
+    occWriteBarrier.srcAccessMask       = VK_ACCESS_SHADER_WRITE_BIT;
+    occWriteBarrier.dstAccessMask       = VK_ACCESS_SHADER_READ_BIT;
+    occWriteBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    occWriteBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    occWriteBarrier.buffer              = m_stochastic.occlusionBuffer.buffer;
+    occWriteBarrier.offset              = 0;
+    occWriteBarrier.size                = VK_WHOLE_SIZE;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0,
+                         nullptr, 1, &occWriteBarrier, 0, nullptr);
+
+    m_stochastic.occlusionMapValid = true;
+  }
 
   vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_stochastic.resolvePipeline);
   vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_stochastic.pipelineLayout, 0, 2, descSets, 2,

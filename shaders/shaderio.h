@@ -184,6 +184,7 @@
 #define BINDING_STOCHASTIC_ACCUMULATION_IMAGE 42 // RWTexture2D<float4> progressive accumulation
 #define BINDING_STOCHASTIC_DEPTH_BUFFER 43       // uint[] per-pixel depth for atomicMin
 #define BINDING_STOCHASTIC_INDEX_BUFFER 44       // uint[] per-pixel winning gaussian index
+#define BINDING_STOCHASTIC_OCCLUSION_BUFFER 51   // uint[] per-block max depth from previous stochastic frame
 
 // PBR IBL (Image-Based Lighting) bindings for environment map textures
 #define BINDING_PBR_ENVMAP 45         // HDR envmap (combined image sampler, cubemap)
@@ -376,6 +377,18 @@ struct FrameInfo
   int32_t stochasticWidth                  DEFAULT(0);       // SSAA-scaled width
   int32_t stochasticHeight                 DEFAULT(0);       // SSAA-scaled height
   int32_t stochasticReset                  DEFAULT(1);       // 1 = clear framebuffer, 0 = accumulate
+
+  // Stochastic motion cull (ported from supersplat PR #1048):
+  // - contribution cull: drop splats whose integrated alpha mass is below the
+  //   threshold, which is driven toward a GPU budget while the camera/player moves.
+  // - occlusion cull: reproject each splat through the previous stochastic frame's
+  //   model-view and drop it when its front lies beyond the farthest surviving
+  //   depth sample in a block max-depth map.
+  float    stochasticContributionThreshold DEFAULT(0.0f);  // alpha-mass cull threshold (0 = off, ceiling 1.0)
+  float    stochasticOcclusionActive       DEFAULT(0.0f);  // 1 = previous-frame depth map valid and used
+  int32_t  stochasticOcclusionBlockCols    DEFAULT(0);     // block max-depth map columns
+  int32_t  stochasticOcclusionBlockRows    DEFAULT(0);     // block max-depth map rows
+  float4x4 stochasticPrevModelViewMatrix;                  // object -> previous stochastic frame view (model * view)
 
   // PBR / IBL parameters
   float   envMapRotation     DEFAULT(0.0f);

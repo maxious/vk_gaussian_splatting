@@ -47,6 +47,9 @@ RWStructuredBuffer<uint> depthBuffer;
 [[vk::binding(BINDING_STOCHASTIC_INDEX_BUFFER, 1)]]
 RWStructuredBuffer<uint> indexBuffer;
 
+[[vk::binding(BINDING_STOCHASTIC_OCCLUSION_BUFFER, 1)]]
+StructuredBuffer<uint> occlusionBuffer;
+
 [[vk::binding(BINDING_FRAME_INFO_UBO, 0)]]
 ConstantBuffer<FrameInfo>      frameInfo;
 
@@ -60,6 +63,86 @@ ConstantBuffer<PushConstant>    pcRaster;
 static const uint STOCHASTIC_GS_WORKGROUP_SIZE       = 256u;
 static const uint STOCHASTIC_GS_MAX_FRAGMENTS_PER_SPLAT = 32u;
 static const uint STOCHASTIC_GS_N_SEQUENTIAL_THRESHOLD  = 4u;  // from CUDA reference (warp-level, informational)
+
+// Block size (in pixels) of the previous-frame max-depth occlusion map.
+static const uint STOCHASTIC_GS_OCCLUSION_BLOCK = 8u;
+// Invalid entry in the occlusion map (no surviving depth sample in the block).
+static const uint STOCHASTIC_GS_OCCLUSION_INVALID = 0xFFFFFFFFu;
+
+/*-------------------------------------------------------------------------------------------------
+ * Previous-frame depth occlusion cull (ported from supersplat PR #1048).
+ *
+ * A stochastic frame's depth buffer is a Monte Carlo sample of the visibility
+ * function: each pixel keeps the nearest fragment that passed its coverage test.
+ * The previous frame's depth buffer is folded into one max depth per 8 px block.
+ * We reproject the splat centre through the previous frame's model-view and cull
+ * it when its front (centre depth minus 2.83 sigma along the view ray) lies beyond
+ * the farthest surviving sample in the gathered block(s).
+ *-----------------------------------------------------------------------------------------------*/
+bool occlusionCull(float3 mean3d_obj,
+                   float3 variance,
+                   float4 raw_rotation,
+                   float3 cov2d,
+                   float  focal_x,
+                   float  focal_y,
+                   float  center_x,
+                   float  center_y,
+                   float  near_plane,
+                   float  far_plane)
+{
+    const float4 prevCenter = mul(float4(mean3d_obj, 1.0f), frameInfo.stochasticPrevModelViewMatrix);
+    if(prevCenter.z <= 0.0f)
+        return false;
+
+    const float prevDepth = prevCenter.z;
+    if(prevDepth < near_plane || prevDepth > far_plane)
+        return false;
+
+    const uint cols = uint(frameInfo.stochasticOcclusionBlockCols);
+    const uint rows = uint(frameInfo.stochasticOcclusionBlockRows);
+    if(cols == 0u || rows == 0u)
+        return false;
+
+    // Conservative front bound of the splat along the previous view ray.
+    const float3x3 cov3d  = stochasticgs_covariance3d(variance, raw_rotation);
+    const float3x3 xform3 = float3x3(frameInfo.stochasticPrevModelViewMatrix);
+    const float    front  = prevDepth - 2.83f * stochasticgs_depth_sigma(cov3d, xform3);
+    if(front <= 0.0f || front >= far_plane)
+        return false;
+
+    const float2 prevPixel = float2(prevCenter.x / prevDepth * focal_x + center_x,
+                                    prevCenter.y / prevDepth * focal_y + center_y);
+
+    const int bx = int(prevPixel.x) / int(STOCHASTIC_GS_OCCLUSION_BLOCK);
+    const int by = int(prevPixel.y) / int(STOCHASTIC_GS_OCCLUSION_BLOCK);
+
+    // Widen the gather for large footprints (one or two blocks around the centre).
+    const int radius = (max(cov2d.x, cov2d.z) > 64.0f) ? 1 : 0;
+
+    uint maxDepth = 0u;
+    bool any      = false;
+    for(int dy = -radius; dy <= radius; ++dy)
+    {
+        for(int dx = -radius; dx <= radius; ++dx)
+        {
+            const int cx = bx + dx;
+            const int cy = by + dy;
+            if(cx < 0 || cy < 0 || cx >= int(cols) || cy >= int(rows))
+                continue;
+            const uint d = occlusionBuffer[uint(cy) * cols + uint(cx)];
+            if(d == STOCHASTIC_GS_OCCLUSION_INVALID)
+                continue;
+            maxDepth = max(maxDepth, d);
+            any      = true;
+        }
+    }
+
+    if(!any)
+        return false;
+
+    // Positive depths sort as unsigned ints, so a bit compare is a depth compare.
+    return asuint(front) > maxDepth;
+}
 
 /*-------------------------------------------------------------------------------------------------
  * ST mode (Stochastic Testing)
@@ -251,6 +334,24 @@ void main(uint3 id : SV_DispatchThreadID)
 
     if(!visible)
         return;
+
+    // ---- Motion contribution cull (supersplat PR #1048) ----
+    // Drop faint/small content once the budget controller raises the threshold.
+    if(frameInfo.stochasticContributionThreshold > 0.0f)
+    {
+        const float mass = stochasticgs_alpha_mass(proj.opacity, proj.determinant);
+        if(mass < frameInfo.stochasticContributionThreshold)
+            return;
+    }
+
+    // ---- Previous-frame depth occlusion cull ----
+    if(frameInfo.stochasticOcclusionActive != 0.0f)
+    {
+        if(occlusionCull(mean3d_obj, variance, raw_rotation, proj.cov2d,
+                         focal_x, focal_y, center_x, center_y,
+                         frameInfo.nearFar.x, frameInfo.nearFar.y))
+            return;
+    }
 
     // ---- Depth bits for 32-bit atomicMin ----
     // For positive view-space depths, the raw float bit pattern sorts correctly

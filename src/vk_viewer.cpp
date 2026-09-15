@@ -921,6 +921,7 @@ void VkViewer::deinitAll()
   m_cameraSet.deinit();
   deinitShaders();
   deinitPipelines();
+  deinitStochasticPipelines();
   deinitRendererBuffers();
   deinitChunkCullingBuffers();
   if(m_kBufferDist.buffer != VK_NULL_HANDLE)

@@ -189,6 +189,14 @@ struct StochasticParameters
   uint32_t stochasticUseGps                   = 0;      // 0=Stochastic Transparency, 1=GPS
   bool     stochasticEnableDof                = false;  // Depth of field
   bool     stochasticEnableProgressive        = true;   // Progressive accumulation
+
+  // Motion cull (ported from supersplat PR #1048). While the camera/player moves,
+  // faint content is culled via a budget-driven contribution threshold and fully
+  // occluded splats are culled against the previous stochastic frame's depth map.
+  // When the view settles the threshold decays to zero for full quality.
+  bool  stochasticMotionCull          = false;  // enable the motion cull
+  float stochasticBudgetMs            = 12.0f;  // GPU budget for the stochastic pass (ms)
+  float stochasticContributionCeiling = 1.0f;   // max alpha-mass threshold (capped at 1.0)
 };
 
 // Parameters that control Compute Stochastic GS

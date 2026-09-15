@@ -134,6 +134,12 @@ void registerCommandLineParameters(nvutils::ParameterRegistry* parameterRegistry
                          &prmStochastic.stochasticUseGps);
   parameterRegistry->add({"stochasticEnableDof", "0=no DOF, 1=DOF enabled"},
                          &prmStochastic.stochasticEnableDof);
+  parameterRegistry->add({"stochasticMotionCull", "0=off (default), 1=cull contribution/occluded splats during camera or player motion"},
+                         &prmStochastic.stochasticMotionCull);
+  parameterRegistry->add({"stochasticBudgetMs", "GPU budget in milliseconds for the stochastic pass (motion cull target, default 12)"},
+                         &prmStochastic.stochasticBudgetMs);
+  parameterRegistry->add({"stochasticContributionCeiling", "maximum alpha-mass cull threshold (default 1.0, hard-capped at 1.0)"},
+                         &prmStochastic.stochasticContributionCeiling);
 
   // PBR / IBL
   parameterRegistry->add({"envmap", "path to HDR environment map file (.hdr, .exr)"},

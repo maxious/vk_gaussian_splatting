@@ -702,7 +702,22 @@ void VkViewerUI::guiDrawRendererProperties()
 
         PE::Checkbox("Progressive", &prmStochastic.stochasticEnableProgressive);
 
+        PE::Checkbox("Motion cull (contribution + occlusion)", &prmStochastic.stochasticMotionCull,
+                     "Cull faint and occluded splats while the camera or player moves, driving the "
+                     "stochastic pass toward a GPU budget; full quality returns when settled");
+
+        if(prmStochastic.stochasticMotionCull)
+        {
+          PE::SliderFloat("GPU budget (ms)", &prmStochastic.stochasticBudgetMs, 1.0f, 33.0f);
+          PE::SliderFloat("Contribution ceiling", &prmStochastic.stochasticContributionCeiling, 0.0f, 1.0f);
+        }
+
         PE::end();
+
+        // Live controller state (read-only)
+        ImGui::Text("Motion cull: %s | GPU %.2f ms | threshold %.3f | occlusion %s",
+                    m_stochastic.moving ? "moving" : "settled", m_stochastic.measuredGpuMs,
+                    m_stochastic.contributionThreshold, m_stochastic.occlusionActive ? "on" : "off");
 
         ImGui::EndTabItem();
       }
