@@ -382,9 +382,18 @@ bool project_gaussian(
     float supersampling_factor,
     out StochasticProjectedGaussian result)
 {
-    // Transform splat center to view space
+    // Transform splat center to view space. Cameras in this engine look down
+    // -Z, so points in front have negative view-space z. Use the positive
+    // forward depth instead: the [near, far] range check, the perspective
+    // division below and the atomicMin bit trick in the caller (which sorts
+    // raw float bits and requires depth > 0) all depend on it. Points behind
+    // the camera yield depth <= 0 and are culled by the range check.
+    // (The 2D covariance projection below is sign-insensitive: flipping the
+    // sign of the view-space z flips two Jacobian rows, which cancels out in
+    // the T * cov3d * T^T quadratic form, matching the mesh raster path that
+    // passes the unmodified view center.)
     const float4 viewCenter = mul(float4(mean3d, 1.0f), w2c);
-    result.depth = viewCenter.z;
+    result.depth = -viewCenter.z;
 
     // Z culling
     if(result.depth < near_plane || result.depth > far_plane)

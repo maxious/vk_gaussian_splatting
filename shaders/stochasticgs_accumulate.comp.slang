@@ -90,11 +90,14 @@ bool occlusionCull(float3 mean3d_obj,
                    float  near_plane,
                    float  far_plane)
 {
+    // Previous-frame view center. Cameras look down -Z, so negate to the
+    // positive forward depth (see project_gaussian): the range check, the
+    // front bound and the unsigned depth comparison below all require it.
     const float4 prevCenter = mul(float4(mean3d_obj, 1.0f), frameInfo.stochasticPrevModelViewMatrix);
-    if(prevCenter.z <= 0.0f)
+    const float  prevDepth  = -prevCenter.z;
+    if(prevDepth <= 0.0f)
         return false;
 
-    const float prevDepth = prevCenter.z;
     if(prevDepth < near_plane || prevDepth > far_plane)
         return false;
 
