@@ -17,9 +17,15 @@ the patches below are small and are kept here rather than in a private fork.
 
 ## What is included
 
-`src/`, `shaders/`, `LICENSE`, `NOTICE` and the text documentation. Excluded, because we neither build nor need
-them: `demo/` (Filament), `ports/` (the WebGPU/three.js port), `scripts/` (PowerShell tooling and the Python PTX
-generators), `third_party/`, and `docs/images/` plus the top-level `README.md`.
+`src/`, `shaders/`, `LICENSE`, `NOTICE`, the text documentation, and the NR integration reference from `demo/`
+(`nr_pass.h`, `nr_pass.cpp` and `demo/shaders/`). `nr_pass.cpp` is the upstream integration: it is the template
+for the viewer's wrapper (context adoption, image ownership, descriptor sets, history parity, the pre-recorded
+secondary command buffers and the exact barrier/command order). `demo/shaders/nr_common.glsl` holds
+`roundF16`/`truncateHalf`/`NrParams`/`historySample`, which the viewer's own passes reuse.
+
+Excluded, because we neither build nor need them: the rest of `demo/` (Filament), `ports/` (the WebGPU/three.js
+port), `scripts/` (PowerShell tooling and the Python PTX generators), `third_party/`, `docs/images/` and the
+top-level `README.md`.
 
 ## Patches
 
