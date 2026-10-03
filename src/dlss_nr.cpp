@@ -2,6 +2,7 @@
 
 #ifdef WITH_DLSS_NR
 
+#include <cstddef>
 #include <cstdlib>
 #include <cstring>
 #include <utility>
@@ -32,6 +33,17 @@ struct Params {
   uint32_t debugStage = 0, padDbg = 0;
 };
 static_assert(sizeof(Params) == 72, "Params must match the shader's std140 block");
+// std140 rules: scalars align to 4, vec2 to 8, and the struct size rounds up to its largest alignment (8).
+// Verified at compile time so a silent offset drift cannot reach the shaders.
+static_assert(offsetof(Params, fullWidth) == 0, "fullWidth offset");
+static_assert(offsetof(Params, validWidth) == 8, "validWidth offset");
+static_assert(offsetof(Params, historyValid) == 16, "historyValid offset");
+static_assert(offsetof(Params, seed) == 20, "seed offset");
+static_assert(offsetof(Params, blendScale) == 24, "blendScale offset");
+static_assert(offsetof(Params, style) == 44, "style offset");
+static_assert(offsetof(Params, motionScale) == 48, "motionScale must land on an 8-byte boundary");
+static_assert(offsetof(Params, motionBias) == 56, "motionBias must land on an 8-byte boundary");
+static_assert(offsetof(Params, debugStage) == 64, "debugStage offset");
 
 }  // namespace
 
