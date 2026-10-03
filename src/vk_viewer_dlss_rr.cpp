@@ -28,9 +28,19 @@ void VkViewer::initializeDlssRR()
   if(m_dlssRRInitialized)
     return;
 
-  // Check if DLSS-RR is available on this device
+  // Check if DLSS-RR is available on this device.
+  //
+  // NGX feature discovery (NVSDK_NGX_VULKAN_GetFeatureRequirements) is a Windows-only
+  // path: on Linux it returns NotImplemented even though the RR snippet initializes and
+  // runs (DLSS Super Resolution has no such gate, hence it works). Treat a missing
+  // probe as "unknown" and let the real initialization below decide, so a genuinely
+  // unsupported device is still rejected by initDlssRR().
   NVSDK_NGX_Result result = NgxContext::isDlssRRAvailable(m_app->getInstance(), m_app->getPhysicalDevice());
-  if(NVSDK_NGX_FAILED(result))
+  if(result == NVSDK_NGX_Result_FAIL_NotImplemented)
+  {
+    LOGI("DLSS-RR feature requirements query not implemented on this platform; attempting init\n");
+  }
+  else if(NVSDK_NGX_FAILED(result))
   {
     LOGW("DLSS-RR is not available on this device\n");
     m_dlssRREnabled = false;

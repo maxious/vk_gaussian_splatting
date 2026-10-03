@@ -63,6 +63,15 @@ option(ENABLE_DLSS_RR "Enable DLSS Ray Reconstruction denoiser" ON)
 option(DLSS_USE_DEVELOP_LIBRARIES "Use non-distributable DLSS libraries with debug overlay (Ctrl-Alt-F12 to enable, Ctrl-Alt-F11 to switch views)" OFF)
 
 if(ENABLE_DLSS_RR)
+  # DLSS SDK downloaded by nvpro_core2's FindNGX (its own default is older).
+  # Override with -DDLSS_SDK_VERSION=<x.y.z>; releases: https://github.com/NVIDIA/DLSS/tags
+  set(DLSS_SDK_VERSION "310.9.1" CACHE STRING "DLSS SDK version to download.")
+  set(DLSS_VERSION "${DLSS_SDK_VERSION}" CACHE STRING "DLSS version to download." FORCE)
+  # FindNGX caches NGX_INCLUDE_DIR without FORCE, so after changing DLSS_VERSION an
+  # existing build tree would keep including the headers of the previous SDK.
+  if(DEFINED NGX_INCLUDE_DIR AND NOT NGX_INCLUDE_DIR MATCHES "DLSS-${DLSS_VERSION}")
+    unset(NGX_INCLUDE_DIR CACHE)
+  endif()
   find_package(NGX REQUIRED)
 endif()
 

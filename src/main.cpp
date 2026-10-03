@@ -170,7 +170,14 @@ int main(int argc, char** argv)
   vkSetup.deviceExtensions.emplace_back(VK_NV_PARTITIONED_ACCELERATION_STRUCTURE_EXTENSION_NAME, &ptlasFeatures, false);
 
 #ifdef WITH_DLSS_RR
-  // Required for DLSS-RR CUDA-Vulkan interop
+  // Device extensions NGX (DLSS Super Resolution / Ray Reconstruction) requires to be
+  // enabled. NVSDK_NGX_VULKAN_RequiredExtensions() reports them and NVIDIA's own Linux
+  // sample (ngx_dlss_demo) enables exactly this set; without them feature creation fails
+  // with PlatformError (DLSS-RR) or OutOfGPUMemory (DLSS-SR).
+  //
+  // The buffer device address *feature* is already enabled by the Vulkan 1.2 feature
+  // chain, but NGX also checks that the extension name is in the device's enabled list.
+  vkSetup.deviceExtensions.emplace_back(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME, nullptr, false);
   vkSetup.deviceExtensions.emplace_back(VK_NVX_BINARY_IMPORT_EXTENSION_NAME, nullptr, false);
   vkSetup.deviceExtensions.emplace_back(VK_NVX_IMAGE_VIEW_HANDLE_EXTENSION_NAME, nullptr, false);
 #endif

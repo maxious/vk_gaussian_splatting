@@ -178,6 +178,8 @@ extern RtxParameters prmRtx;
 #ifdef WITH_DLSS_RR
 // Enables the Vulkan DLSS Super Resolution/DLAA contract used by the optional DLSS5 bridge.
 extern bool prmDlssEnabled;
+// Enables the DLSS Ray Reconstruction denoiser (mirrors the UI toggle, for headless runs).
+extern bool prmDlssRREnabled;
 #endif
 
 // Parameters that control Compute Stochastic GS rendering

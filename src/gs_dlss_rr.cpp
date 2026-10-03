@@ -128,6 +128,24 @@ NVSDK_NGX_Result NgxContext::init(const InitInfo& initInfo)
   }
 
   LOGI("NGX initialized successfully\n");
+
+  // Report what the driver thinks is available: DLSS silently falling back with a vague
+  // result (PlatformError / OutOfGPUMemory) is much easier to read next to these.
+  auto queryInt = [this](const char* name) -> int {
+    int value = -1;
+    m_ngxParams->Get(name, &value);
+    return value;
+  };
+  LOGI("NGX capabilities: SuperSampling.Available=%d (NeedsUpdatedDriver=%d, MinDriver=%d.%d), "
+       "SuperSamplingDenoising.Available=%d (NeedsUpdatedDriver=%d, MinDriver=%d.%d)\n",
+       queryInt(NVSDK_NGX_Parameter_SuperSampling_Available),
+       queryInt(NVSDK_NGX_Parameter_SuperSampling_NeedsUpdatedDriver),
+       queryInt(NVSDK_NGX_Parameter_SuperSampling_MinDriverVersionMajor),
+       queryInt(NVSDK_NGX_Parameter_SuperSampling_MinDriverVersionMinor),
+       queryInt(NVSDK_NGX_Parameter_SuperSamplingDenoising_Available),
+       queryInt(NVSDK_NGX_Parameter_SuperSamplingDenoising_NeedsUpdatedDriver),
+       queryInt(NVSDK_NGX_Parameter_SuperSamplingDenoising_MinDriverVersionMajor),
+       queryInt(NVSDK_NGX_Parameter_SuperSamplingDenoising_MinDriverVersionMinor));
   return NVSDK_NGX_Result_Success;
 }
 

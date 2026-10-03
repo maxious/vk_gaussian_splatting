@@ -748,6 +748,19 @@ void VkViewer::renderRtxFrame(FrameRenderContext& ctx)
     if(m_dlssInitialized)
       updateDlssDescriptorSet();
   }
+
+  // Headless equivalent of the UI's DLSS-RR checkbox (--dlssRR 1). SR and RR share
+  // the output image, so SR wins when both are requested from the command line.
+  if(prmDlssRREnabled && !m_dlssRRAttempted && !m_dlssRRInitialized && !m_dlssEnabled)
+  {
+    m_dlssRRAttempted = true;  // Single attempt: a failed init must not be retried every frame
+    m_dlssRREnabled = true;
+    initializeDlssRR();
+    if(m_dlssRRInitialized)
+      updateDlssRRDescriptorSet();
+    else
+      m_dlssRREnabled = false;
+  }
 #endif
 
   collectReadBackValuesIfNeeded();
@@ -816,6 +829,10 @@ void VkViewer::renderRtxFrame(FrameRenderContext& ctx)
 
       nvvk::cmdImageMemoryBarrier(ctx.cmd, {m_gBuffers.getColorImage(COLOR_MAIN),
                                             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL});
+    }
+    else
+    {
+      LOGW("DLSS-RR evaluate failed: %s\n", getNGXResultString(result).c_str());
     }
 
     m_dlssRRNeedsReset = false;

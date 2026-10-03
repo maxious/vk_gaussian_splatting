@@ -542,6 +542,7 @@ protected:
   std::unique_ptr<GsDlss>     m_dlss;
   bool                        m_dlssRREnabled     = false;  // User toggle
   bool                        m_dlssRRInitialized = false;
+  bool                        m_dlssRRAttempted   = false;  // One-shot guard for the --dlssRR request
   bool                        m_dlssEnabled       = false;  // DLSS Super Resolution / DLAA
   bool                        m_dlssInitialized   = false;
   bool                        m_dlssNeedsReinit   = false;
