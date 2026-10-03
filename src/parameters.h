@@ -218,6 +218,21 @@ struct PbrParameters
 // Parameters that control PBR/IBL
 extern PbrParameters prmPbr;
 
+// Native DLSS 5 Neural Rendering (OpenDLSS-NR). Independent of the NGX DLSS-RR integration (prmDlss below):
+// NR runs the 71-block network on the rendered frame instead of reconstructing rays. It needs a model directory
+// produced by tools/extract_dlssnr_model.py and an Ada-or-newer device with FP8 cooperative matrices.
+// Compiled unconditionally so the flags exist in every build; only WITH_DLSS_NR builds act on them.
+struct DlssNrParameters
+{
+  bool                  dlssNrEnabled  = false;                              // --dlssNR
+  std::filesystem::path dlssNrModel;                                         // --dlssNRModel <dir>
+  float                 dlssNrIntensity = 1.0f;                              // network strength, 1 = the network's own output
+  int                   dlssNrStyle     = 0;                                 // 0 off, 1 natural, 2 cinematic
+  bool                  dlssNrTemporal  = true;                              // blend with the reprojected history
+};
+
+extern DlssNrParameters prmDlssNr;
+
 // Parameters that control the Cloud (video -> point cloud streaming) integration.
 // The struct holds UI-friendly defaults; values are translated to a wire-format
 // CloudRequestOptions (from depth_server/protocol.h) at submit time. The struct

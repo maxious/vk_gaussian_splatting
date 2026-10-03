@@ -23,6 +23,10 @@
 #include "depth_stream_client.h"
 #include "depth_to_vk.h"
 #include "backend_process_manager.h"
+
+#ifdef WITH_DLSS_NR
+#include "dlss_nr.h"
+#endif
 #ifdef WITH_TCP_DEPTH
 #include "tcp_server_manager.h"
 #include "local_depth_server_manager.h"
@@ -389,6 +393,12 @@ private:
   void initPipelinePostProcessing();
   void postProcess(VkCommandBuffer cmd);
 
+#ifdef WITH_DLSS_NR
+  // Native DLSS 5 neural rendering: records the NR pass over COLOR_MAIN and returns true when it did. Lazily
+  // initializes (device adoption, model load, size fit) on the first enabled frame.
+  bool renderDlssNr(VkCommandBuffer cmd);
+#endif
+
 
 
 protected:
@@ -534,6 +544,12 @@ protected:
 
   // G-Buffers: 2 color buffers + 1 depth buffer (+ DLSS-RR buffers when enabled)
   nvvk::GBuffer m_gBuffers;
+
+#ifdef WITH_DLSS_NR
+  DlssNrPass m_dlssNr;                    // native DLSS 5 neural rendering (OpenDLSS-NR)
+  int        m_dlssNrState = 0;           // 0 = not tried, 1 = usable, -1 = failed (do not retry every frame)
+  uint32_t   m_dlssNrFrames = 0;          // frames the pass has produced since its history was last cleared
+#endif
 
 #ifdef WITH_DLSS_RR
   // DLSS-RR denoiser

@@ -245,6 +245,12 @@ void VkViewer::onDetach()
   shutdownOpenXR();
 #endif
 
+  // The device is still alive here; VkViewer itself is destroyed after nvvk::Context::deinit(), so the NR pass has
+  // to release its Vulkan objects now rather than from its destructor.
+#ifdef WITH_DLSS_NR
+  m_dlssNr.destroy();
+#endif
+
   // Wait for GPU to finish before cleanup
   vkDeviceWaitIdle(m_device);
   m_profilerGpuTimer.deinit();

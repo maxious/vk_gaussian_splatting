@@ -140,6 +140,36 @@ int main(int argc, char** argv)
   VkPhysicalDeviceShaderClockFeaturesKHR clockFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_CLOCK_FEATURES_KHR};
   vkSetup.deviceExtensions.emplace_back(VK_KHR_SHADER_CLOCK_EXTENSION_NAME, &clockFeatures);
 
+#ifdef WITH_DLSS_NR
+  // Native DLSS 5 Neural Rendering (OpenDLSS-NR). The network runs FP8 (E4M3) cooperative-matrix GEMMs with FP16
+  // accumulation, so the device has to expose both cooperative-matrix extensions, float8, and the SM builtins the
+  // sync counters read. All optional: a device without them still starts, and DLSS-NR reports itself unsupported
+  // at runtime instead of failing device creation. The features themselves are filled in by enableAllFeatures
+  // above, which queries every struct chained here.
+  static VkPhysicalDeviceCooperativeMatrixFeaturesKHR coopMatrixFeatures = {
+      .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_FEATURES_KHR};
+  vkSetup.deviceExtensions.emplace_back(VK_KHR_COOPERATIVE_MATRIX_EXTENSION_NAME, &coopMatrixFeatures, false);
+
+  static VkPhysicalDeviceCooperativeMatrix2FeaturesNV coopMatrix2Features = {
+      .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_2_FEATURES_NV};
+  vkSetup.deviceExtensions.emplace_back(VK_NV_COOPERATIVE_MATRIX_2_EXTENSION_NAME, &coopMatrix2Features, false);
+
+  static VkPhysicalDeviceShaderFloat8FeaturesEXT float8Features = {
+      .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT8_FEATURES_EXT};
+  vkSetup.deviceExtensions.emplace_back(VK_EXT_SHADER_FLOAT8_EXTENSION_NAME, &float8Features, false);
+
+  static VkPhysicalDeviceShaderSMBuiltinsFeaturesNV smBuiltinsFeatures = {
+      .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_SM_BUILTINS_FEATURES_NV};
+  vkSetup.deviceExtensions.emplace_back(VK_NV_SHADER_SM_BUILTINS_EXTENSION_NAME, &smBuiltinsFeatures, false);
+
+  // The kernels take their workgroup size from a specialization constant, which is LocalSizeId (maintenance4, part
+  // of the Vulkan 1.3 feature chain), and the graph can report per-pipeline register/spill statistics.
+  static VkPhysicalDevicePipelineExecutablePropertiesFeaturesKHR pipelineExecutableFeatures = {
+      .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_EXECUTABLE_PROPERTIES_FEATURES_KHR};
+  vkSetup.deviceExtensions.emplace_back(VK_KHR_PIPELINE_EXECUTABLE_PROPERTIES_EXTENSION_NAME, &pipelineExecutableFeatures,
+                                        false);
+#endif
+
   // 64-bit SSBO atomics for stochastic Gaussian splat rendering.
   // Enabled automatically by enableAllFeatures=true (Vulkan 1.2 core feature).
   // Only require the extension name for the driver to expose it.

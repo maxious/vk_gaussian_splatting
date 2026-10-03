@@ -510,8 +510,9 @@ const std::string& DlssNrPass::error() const { return m_impl->error; }
 
 bool DlssNrPass::resize(uint32_t width, uint32_t height) {
   Impl& impl = *m_impl;
-  if(!impl.graph || !impl.model)
-    return impl.fail("resize() needs the model");
+  // Needs the model and the kernels; the graph is built by createSized() below.
+  if(!impl.model || !impl.kernels)
+    return impl.fail("resize() needs the model: call loadModel() first");
   if(width == impl.width && height == impl.height)
     return true;
   impl.destroySized();

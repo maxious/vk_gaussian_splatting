@@ -350,7 +350,9 @@ void Graph::encodeFusedBlock(VkCommandBuffer commands, Temporaries& temps, const
       kernels_.expertFfnPtx(commands, ffn, fc);
       if (ffn.stateOut) capture(commands, "block-" + std::to_string(pendingProjection_.block), *ffn.stateOut);
     } else if (options_.fusedBlocks && !options_.captureIntermediates) {
-      static const bool ptxMlp = !getenv("DLSS5VK_NO_PTX_MLP");
+      // The PTX MLP has its own switch rather than going through ptxFfnEnabled(), so it needs the build guard too:
+      // mlpPtx() loads its .ptx without probing and throws when the file is absent.
+      static const bool ptxMlp = NR_HAS_CUDA_LAUNCH != 0 && !getenv("DLSS5VK_NO_PTX_MLP");
       Kernels::MlpArgs mlp;
       mlp.input = &state; mlp.broadcastInput = true;
       mlp.output = temps.ffnNarrow; mlp.rows = rows; mlp.K = channels; mlp.hidden = 128; mlp.nout = 32;

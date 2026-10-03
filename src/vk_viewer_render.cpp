@@ -140,6 +140,14 @@ void VkViewer::onRender(VkCommandBuffer cmd)
       postProcess(cmd);
     }
 
+#ifdef WITH_DLSS_NR
+    // Native DLSS 5 neural rendering, on the final display-referred COLOR_MAIN. This has to run after
+    // postProcess: that pass is what applies the linear -> sRGB conversion, and the NR passes assume the scene
+    // input is already display-referred. Running here also means NR owns the presented content outright instead
+    // of racing the host temporal blender for frameSampleId ownership.
+    renderDlssNr(cmd);
+#endif
+
     updateDepthRendering(cmd);
 
     readBackIndirectParametersIfNeeded(cmd);

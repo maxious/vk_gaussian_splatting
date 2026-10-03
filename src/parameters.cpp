@@ -41,6 +41,7 @@ bool                    prmDlssRREnabled = false;
 #endif
 StochasticParameters   prmStochastic{};
 PbrParameters          prmPbr{};
+DlssNrParameters       prmDlssNr{};
 CloudParameters        prmCloud{};
 
 // Storage for respective default values
@@ -158,6 +159,18 @@ void registerCommandLineParameters(nvutils::ParameterRegistry* parameterRegistry
                          &prmPbr.irradianceEnabled);
   parameterRegistry->add({"toneMapEnabled", "0=disabled, 1=enabled tone mapping"},
                          &prmPbr.toneMapEnabled);
+
+  // Native DLSS 5 Neural Rendering (OpenDLSS-NR), independent of DLSS-RR above.
+  parameterRegistry->add({"dlssNR", "0=disabled, 1=enabled native DLSS 5 neural rendering"},
+                         &prmDlssNr.dlssNrEnabled);
+  parameterRegistry->add({"dlssNRModel", "OpenDLSS-NR model directory (manifest.json + stage files)"},
+                         &prmDlssNr.dlssNrModel);
+  parameterRegistry->add({"dlssNRIntensity", "NR strength: 1 = the network's own output, 0 = the rendered frame"},
+                         &prmDlssNr.dlssNrIntensity);
+  parameterRegistry->add({"dlssNRStyle", "NR style: 0 off, 1 natural, 2 cinematic"},
+                         &prmDlssNr.dlssNrStyle);
+  parameterRegistry->add({"dlssNRTemporal", "0=no temporal blending, 1=blend with the reprojected history"},
+                         &prmDlssNr.dlssNrTemporal);
 
   // Cloud (video -> point cloud streaming) integration
   parameterRegistry->add({"cloudPort", "Cloud server port (depth_server --mode cloud)"},
