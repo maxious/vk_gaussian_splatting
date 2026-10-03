@@ -27,8 +27,11 @@ struct Params {
   float    autoMask = 1.0F, localTone = 1.0F, localStructure = 1.0F, skinStructure = -1.0F, style = 0.0F;
   float    motionScale[2] = {-0.5F, -0.5F};
   float    motionBias[2] = {0.0F, 0.0F};
+  // DLSS5NR_DEBUG=1 writes the sampled proxy code straight out, skipping the network's head. It separates a
+  // defect in the viewer's own two passes from one in the network output.
+  uint32_t debugStage = 0, padDbg = 0;
 };
-static_assert(sizeof(Params) == 64, "Params must match the shader's std140 block");
+static_assert(sizeof(Params) == 72, "Params must match the shader's std140 block");
 
 }  // namespace
 
@@ -293,7 +296,12 @@ struct DlssNrPass::Impl {
     try
     {
       geometry = nr::Geometry::fromValid(width, height);
-      graph = std::make_unique<nr::Graph>(*context, *model, *kernels, geometry, nr::Graph::Options{});
+      // DLSS5NR_UNFUSED=1 selects the unfused reference kernels instead of the fused 32-channel block. The fused
+      // GLSL block is the one that works on 8x8 windows with four phase offsets, so this isolates window-phase
+      // artifacts from the rest of the network.
+      nr::Graph::Options options;
+      options.fusedBlocks = std::getenv("DLSS5NR_UNFUSED") == nullptr;
+      graph = std::make_unique<nr::Graph>(*context, *model, *kernels, geometry, options);
       features = graph->allocate("input features", geometry.fullWidth * geometry.fullHeight, 16, nr::Format::F32);
       // The graph allocates its other activations at the first record; do it now so the first visible frame does
       // not pay for it (and so the driver compiles the pipelines up front).
@@ -569,6 +577,8 @@ bool DlssNrPass::record(VkCommandBuffer cmd, const Frame& frame, const GpuImage&
   params.motionScale[1] = frame.motionScale[1];
   params.motionBias[0] = frame.motionBias[0];
   params.motionBias[1] = frame.motionBias[1];
+  static const uint32_t debugStage = std::getenv("DLSS5NR_DEBUG") ? uint32_t(atoi(std::getenv("DLSS5NR_DEBUG"))) : 0U;
+  params.debugStage = debugStage;
   vkCmdUpdateBuffer(cmd, impl.params.buffer, 0, sizeof(Params), &params);
   VkMemoryBarrier paramsBarrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
   paramsBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
