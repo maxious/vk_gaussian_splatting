@@ -329,6 +329,14 @@ if(ENABLE_TCP_DEPTH)
 endif()
 
 #####################################################################################
+# Native OpenDLSS-NR (DLSS 5 neural rendering) integration
+#
+# Compiles 3rdparty/OpenDLSS-NR into a static library and its 13 GLSL compute kernels into SPIR-V next to the
+# runtime binary. Gated independently of the NGX DLSS-RR integration; see cmake/BuildOpenDLSSNR.cmake.
+#
+include(cmake/BuildOpenDLSSNR.cmake)
+
+#####################################################################################
 # Source files for this project
 #
 # Note: GLOB is used here, so if you add new files, you must re-run CMake or touch this file.
@@ -459,6 +467,12 @@ target_include_directories(${PROJECT_NAME} PRIVATE ${ixwebsocket_SOURCE_DIR})
 if(ENABLE_DLSS_RR AND NGX_FOUND)
   target_compile_definitions(${PROJECT_NAME} PRIVATE WITH_DLSS_RR)
   target_link_libraries(${PROJECT_NAME} PRIVATE ngx)
+endif()
+
+# Native OpenDLSS-NR linkage (DLSS 5 neural rendering). Independent of DLSS-RR above.
+if(OPEN_DLSS_NR_AVAILABLE)
+  target_compile_definitions(${PROJECT_NAME} PRIVATE WITH_DLSS_NR)
+  target_link_libraries(${PROJECT_NAME} PRIVATE opendlss_nr)
 endif()
 
 # FFmpeg linkage for video decoder
