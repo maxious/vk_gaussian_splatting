@@ -28,8 +28,8 @@ struct Params {
   float    autoMask = 1.0F, localTone = 1.0F, localStructure = 1.0F, skinStructure = -1.0F, style = 0.0F;
   float    motionScale[2] = {-0.5F, -0.5F};
   float    motionBias[2] = {0.0F, 0.0F};
-  // DLSS5NR_DEBUG=1 writes the sampled proxy code straight out, skipping the network's head. It separates a
-  // defect in the viewer's own two passes from one in the network output.
+  // DLSS5NR_DEBUG: 1 publishes the sampled proxy code, 2 publishes the network residual, 3 forces a constant
+  // field, 4 keeps the scene but zeroes the noise lane. See shaders/dlss_nr/.
   uint32_t debugStage = 0, padDbg = 0;
 };
 static_assert(sizeof(Params) == 72, "Params must match the shader's std140 block");
@@ -88,7 +88,9 @@ struct DlssNrPass::Impl {
   VkPipeline            preprocessPipeline = VK_NULL_HANDLE;
   VkPipeline            compositePipeline = VK_NULL_HANDLE;
   VkDescriptorPool      pool = VK_NULL_HANDLE;
-  VkDescriptorSet       sets[2]{};   // [history parity]
+  // [history parity][0 preprocess, 1 composite]. They must be separate sets: binding 3 is the Features buffer for
+  // the preprocess (writeonly) and the Head buffer for the composite (readonly).
+  VkDescriptorSet       sets[2][2]{};
   VkCommandPool         commandPool = VK_NULL_HANDLE;
   VkCommandBuffer       commands[2]{};   // [history parity], pre-recorded
 
@@ -222,37 +224,42 @@ struct DlssNrPass::Impl {
   void updateSets() {
     for(uint32_t h = 0; h < 2; ++h)
     {
-      VkDescriptorImageInfo colorInfo{nearestSampler, color.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-      VkDescriptorImageInfo prevInfo{linearSampler, history[h].view, VK_IMAGE_LAYOUT_GENERAL};
-      VkDescriptorImageInfo motionInfo{nearestSampler, motion.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-      VkDescriptorBufferInfo bufferInfo{features->buffer.buffer, 0, VK_WHOLE_SIZE};
-      VkDescriptorBufferInfo paramsInfo{params.buffer, 0, sizeof(Params)};
-      VkDescriptorImageInfo outInfo{VK_NULL_HANDLE, output.view, VK_IMAGE_LAYOUT_GENERAL};
-      VkDescriptorImageInfo nextInfo{VK_NULL_HANDLE, history[1 - h].view, VK_IMAGE_LAYOUT_GENERAL};
-
-      VkWriteDescriptorSet writes[7]{};
-      for(int i = 0; i < 7; ++i)
+      for(uint32_t k = 0; k < 2; ++k)
       {
-        writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[i].dstSet = sets[h];
-        writes[i].dstBinding = uint32_t(i);
-        writes[i].descriptorCount = 1;
+        VkDescriptorImageInfo colorInfo{nearestSampler, color.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkDescriptorImageInfo prevInfo{linearSampler, history[h].view, VK_IMAGE_LAYOUT_GENERAL};
+        VkDescriptorImageInfo motionInfo{nearestSampler, motion.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        // Binding 3 is the one that differs: the preprocess writes the features, the composite reads the head.
+        VkDescriptorBufferInfo bufferInfo{k == 0 ? features->buffer.buffer : graph->head().buffer.buffer, 0,
+                                          VK_WHOLE_SIZE};
+        VkDescriptorBufferInfo paramsInfo{params.buffer, 0, sizeof(Params)};
+        VkDescriptorImageInfo outInfo{VK_NULL_HANDLE, output.view, VK_IMAGE_LAYOUT_GENERAL};
+        VkDescriptorImageInfo nextInfo{VK_NULL_HANDLE, history[1 - h].view, VK_IMAGE_LAYOUT_GENERAL};
+
+        VkWriteDescriptorSet writes[7]{};
+        for(int i = 0; i < 7; ++i)
+        {
+          writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+          writes[i].dstSet = sets[h][k];
+          writes[i].dstBinding = uint32_t(i);
+          writes[i].descriptorCount = 1;
+        }
+        writes[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[0].pImageInfo = &colorInfo;
+        writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[1].pImageInfo = &prevInfo;
+        writes[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[2].pImageInfo = &motionInfo;
+        writes[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writes[3].pBufferInfo = &bufferInfo;
+        writes[4].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        writes[4].pBufferInfo = &paramsInfo;
+        writes[5].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        writes[5].pImageInfo = &outInfo;
+        writes[6].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        writes[6].pImageInfo = &nextInfo;
+        vkUpdateDescriptorSets(device, 7, writes, 0, nullptr);
       }
-      writes[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-      writes[0].pImageInfo = &colorInfo;
-      writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-      writes[1].pImageInfo = &prevInfo;
-      writes[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-      writes[2].pImageInfo = &motionInfo;
-      writes[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-      writes[3].pBufferInfo = &bufferInfo;
-      writes[4].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-      writes[4].pBufferInfo = &paramsInfo;
-      writes[5].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-      writes[5].pImageInfo = &outInfo;
-      writes[6].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-      writes[6].pImageInfo = &nextInfo;
-      vkUpdateDescriptorSets(device, 7, writes, 0, nullptr);
     }
   }
 
@@ -277,14 +284,14 @@ struct DlssNrPass::Impl {
       VK_CHECK(vkBeginCommandBuffer(cmd, &begin));
 
       vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, preprocessPipeline);
-      vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &sets[h], 0, nullptr);
+      vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &sets[h][0], 0, nullptr);
       vkCmdDispatch(cmd, (geometry.fullWidth + 7) / 8, (geometry.fullHeight + 7) / 8, 1);
       context->computeBarrier(cmd);
 
       graph->record(cmd, *features);
 
       vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, compositePipeline);
-      vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &sets[h], 0, nullptr);
+      vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &sets[h][1], 0, nullptr);
       vkCmdDispatch(cmd, (width + 7) / 8, (height + 7) / 8, 1);
 
       // The composite's storage writes have to be visible to the copy below and to the next frame's sampling of
@@ -445,12 +452,12 @@ bool DlssNrPass::init(VkInstance instance, VkPhysicalDevice physicalDevice, VkDe
                                  "executable?): ") + e.what());
   }
 
-  VkDescriptorPoolSize poolSizes[4] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 6},
-                                       {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2},
-                                       {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 2},
-                                       {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 4}};
+  VkDescriptorPoolSize poolSizes[4] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 12},
+                                       {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4},
+                                       {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 4},
+                                       {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 8}};
   VkDescriptorPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-  poolInfo.maxSets = 2;
+  poolInfo.maxSets = 4;
   poolInfo.poolSizeCount = 4;
   poolInfo.pPoolSizes = poolSizes;
   if(!impl.check(vkCreateDescriptorPool(device, &poolInfo, nullptr, &impl.pool), "vkCreateDescriptorPool"))
@@ -460,10 +467,13 @@ bool DlssNrPass::init(VkInstance instance, VkPhysicalDevice physicalDevice, VkDe
   alloc.descriptorPool = impl.pool;
   alloc.descriptorSetCount = 1;
   alloc.pSetLayouts = &impl.setLayout;
-  for(VkDescriptorSet& set : impl.sets)
+  for(auto& pair : impl.sets)
   {
-    if(!impl.check(vkAllocateDescriptorSets(device, &alloc, &set), "vkAllocateDescriptorSets"))
-      return false;
+    for(VkDescriptorSet& set : pair)
+    {
+      if(!impl.check(vkAllocateDescriptorSets(device, &alloc, &set), "vkAllocateDescriptorSets"))
+        return false;
+    }
   }
 
   VkCommandPoolCreateInfo cmdPoolInfo{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};

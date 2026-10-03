@@ -94,9 +94,9 @@ void main() {
 
   uint feature = (uint(id.y) * params.fullWidth + uint(id.x)) * 4u;
 
-  // DLSS5NR_DEBUG=2: publish the network's own residual (head.xyz) so a comb in the head can be told apart from a
-  // comb introduced by applying it.
-  if(params.debugStage == 2u) {
+  // DLSS5NR_DEBUG=2/3/4: publish the network's own residual (head.xyz) so a comb in the head can be told apart
+  // from a comb introduced by applying it. 3 and 4 additionally force a constant field / zero noise upstream.
+  if(params.debugStage == 2u || params.debugStage == 3u || params.debugStage == 4u) {
     vec3 residual = vec3(head[feature], head[feature + 1u], head[feature + 2u]) * 0.25;
     imageStore(historyNext, id, vec4(residual, 1.0));
     imageStore(outputImage, id, vec4(clamp(residual * 4.0 + 0.5, vec3(0.0), vec3(1.0)), 1.0));

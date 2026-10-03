@@ -31,6 +31,7 @@ layout(std140, set = 0, binding = 4) uniform Params {
   float blendScale;
   float autoMask, localTone, localStructure, skinStructure, style;
   vec2 motionScale, motionBias;
+  uint debugStage, padDbg;
 } params;
 
 float hashUniform(uint value) {
@@ -119,10 +120,21 @@ void main() {
   vec4 raw = texelFetch(sceneColor, source, 0);
   // Display-referred RGBA8: rgb is the proxy code as it stands. Only clamp away NaN / out-of-range values.
   vec3 proxy = vec3(finiteNonnegative(raw.r), finiteNonnegative(raw.g), finiteNonnegative(raw.b));
+  vec3 noise = gaussian3(uint(id.x), uint(id.y), params.seed);
+
+  // Diagnostics. The window attention is shift invariant, so a spatially constant field must come back constant:
+  // any structure that is a function of (x & 3) after this points at the natural-vs-physical token order, which
+  // tiledToken() tiles 4x4. Zeroing the noise separately says whether the comb needs the noise lane at all.
+  if(params.debugStage == 3u) {
+    proxy = vec3(0.5);
+    noise = vec3(0.0);
+  } else if(params.debugStage == 4u) {
+    noise = vec3(0.0);
+  }
   vec3 centered = centerProxy(proxy);
 
   uint base = (uint(id.y) * params.fullWidth + uint(id.x)) * 4u;
-  features[base + 0u] = vec4(gaussian3(uint(id.x), uint(id.y), params.seed), 1.0);
+  features[base + 0u] = vec4(noise, 1.0);
 
   // lanes 7-9: the reprojected previous output, centred like the proxy; without a history (a reset, or a pixel
   // whose previous position was off screen) the current proxy stands in, as on the first frame
