@@ -111,6 +111,40 @@ add_custom_target(opendlss_nr_kernels ALL DEPENDS ${OPEN_DLSS_NR_SPV_FILES})
 set_property(TARGET opendlss_nr_kernels PROPERTY FOLDER "ThirdParty")
 add_dependencies(opendlss_nr opendlss_nr_kernels)
 
+# ---------------------------------------------------------------------------------------
+# The viewer's own NR passes.
+#
+# These are the two passes the viewer needs instead of the demo's three: display-referred proxy space (no HDR
+# decode or display encode) and a motion texture that derives history validity from the reprojected uv. They
+# include nr_common.glsl for the bit-exact roundF16/truncateHalf, so the demo shader directory is an include path.
+# ---------------------------------------------------------------------------------------
+set(OPEN_DLSS_NR_VIEWER_KERNELS dlss_nr_preprocess dlss_nr_composite)
+set(OPEN_DLSS_NR_VIEWER_SHADER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/shaders/dlss_nr")
+set(OPEN_DLSS_NR_COMMON_INCLUDE "${OPEN_DLSS_NR_DIR}/demo/shaders")
+
+set(OPEN_DLSS_NR_VIEWER_SPV_FILES "")
+foreach(kernel IN LISTS OPEN_DLSS_NR_VIEWER_KERNELS)
+  set(_src "${OPEN_DLSS_NR_VIEWER_SHADER_DIR}/${kernel}.comp")
+  set(_spv "${OPEN_DLSS_NR_SHADER_OUTPUT_DIR}/${kernel}.spv")
+  if(NOT EXISTS "${_src}")
+    message(WARNING "OpenDLSS-NR: missing viewer kernel ${_src}")
+    continue()
+  endif()
+  add_custom_command(
+    OUTPUT "${_spv}"
+    COMMAND "${OPEN_DLSS_NR_GLSLANG}" -V --target-env vulkan1.3
+            "-I${OPEN_DLSS_NR_COMMON_INCLUDE}" "${_src}" -o "${_spv}"
+    DEPENDS "${_src}" "${OPEN_DLSS_NR_COMMON_INCLUDE}/nr_common.glsl"
+    COMMENT "OpenDLSS-NR: glslang ${kernel}.comp (viewer)"
+    VERBATIM
+  )
+  list(APPEND OPEN_DLSS_NR_VIEWER_SPV_FILES "${_spv}")
+endforeach()
+
+add_custom_target(opendlss_nr_viewer_kernels ALL DEPENDS ${OPEN_DLSS_NR_VIEWER_SPV_FILES})
+set_property(TARGET opendlss_nr_viewer_kernels PROPERTY FOLDER "ThirdParty")
+add_dependencies(opendlss_nr opendlss_nr_viewer_kernels)
+
 message(STATUS "OpenDLSS-NR: enabled (GLSL/SPIR-V route, no PTX)")
 message(STATUS "  kernels: ${OPEN_DLSS_NR_SHADER_OUTPUT_DIR}")
 
