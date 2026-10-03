@@ -16,9 +16,22 @@ namespace vk_viewer {
 bool VkViewer::renderDlssNr(VkCommandBuffer cmd)
 {
   if(!prmDlssNr.dlssNrEnabled || prmDlssNr.dlssNrModel.empty())
+  {
+    m_dlssNrWasEnabled = false;
     return false;
+  }
   if(m_viewSize.x <= 0 || m_viewSize.y <= 0)
     return false;
+
+  // The UI can enable this at any time. A fresh off -> on transition retries a failed initialization and throws
+  // the history away, so the first frame after enabling does not blend against a stale result.
+  if(!m_dlssNrWasEnabled)
+  {
+    m_dlssNrWasEnabled = true;
+    m_dlssNrState = 0;
+    m_dlssNrFrames = 0;
+    LOGI("DLSS-NR: enabled\n");
+  }
   if(m_dlssNrState < 0)
     return false;
 

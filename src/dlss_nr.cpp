@@ -31,8 +31,11 @@ struct Params {
   // DLSS5NR_DEBUG: 1 publishes the sampled proxy code, 2 publishes the network residual, 3 forces a constant
   // field, 4 keeps the scene but zeroes the noise lane. See shaders/dlss_nr/.
   uint32_t debugStage = 0, padDbg = 0;
+  // 1 is the network's own output, 0 the rendered frame.
+  float    intensity = 1.0F;
+  uint32_t pad2 = 0;
 };
-static_assert(sizeof(Params) == 72, "Params must match the shader's std140 block");
+static_assert(sizeof(Params) == 80, "Params must match the shader's std140 block");
 // std140 rules: scalars align to 4, vec2 to 8, and the struct size rounds up to its largest alignment (8).
 // Verified at compile time so a silent offset drift cannot reach the shaders.
 static_assert(offsetof(Params, fullWidth) == 0, "fullWidth offset");
@@ -44,6 +47,7 @@ static_assert(offsetof(Params, style) == 44, "style offset");
 static_assert(offsetof(Params, motionScale) == 48, "motionScale must land on an 8-byte boundary");
 static_assert(offsetof(Params, motionBias) == 56, "motionBias must land on an 8-byte boundary");
 static_assert(offsetof(Params, debugStage) == 64, "debugStage offset");
+static_assert(offsetof(Params, intensity) == 72, "intensity offset");
 
 }  // namespace
 
@@ -601,6 +605,7 @@ bool DlssNrPass::record(VkCommandBuffer cmd, const Frame& frame, const GpuImage&
   params.motionBias[1] = frame.motionBias[1];
   static const uint32_t debugStage = std::getenv("DLSS5NR_DEBUG") ? uint32_t(atoi(std::getenv("DLSS5NR_DEBUG"))) : 0U;
   params.debugStage = debugStage;
+  params.intensity = frame.intensity;
   vkCmdUpdateBuffer(cmd, impl.params.buffer, 0, sizeof(Params), &params);
   VkMemoryBarrier paramsBarrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
   paramsBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;

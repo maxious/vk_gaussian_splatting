@@ -32,6 +32,8 @@ layout(std140, set = 0, binding = 4) uniform Params {
   float autoMask, localTone, localStructure, skinStructure, style;
   vec2 motionScale, motionBias;
   uint debugStage, padDbg;
+  float intensity;
+  uint pad2;
 } params;
 
 float hashUniform(uint value) {

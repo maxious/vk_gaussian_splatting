@@ -109,6 +109,29 @@ void VkViewerUI::guiDrawRendererProperties()
 
   PE::end();
 
+#ifdef WITH_DLSS_NR
+  // Native DLSS 5 neural rendering. The pass reads prmDlssNr every frame, so these take effect immediately;
+  // renderDlssNr re-initializes and clears the history on an off -> on transition.
+  PE::begin("## DLSS 5 Neural Rendering");
+  PE::Checkbox("Enable", &prmDlssNr.dlssNrEnabled,
+               "Runs NVIDIA's DLSS 5 neural rendering network over the rendered frame (RTX pipeline only).\n"
+               "Built from OpenDLSS-NR; the model directory comes from --dlssNRModel.");
+  if(prmDlssNr.dlssNrModel.empty())
+  {
+    ImGui::TextDisabled("No model directory: pass --dlssNRModel <dir>");
+  }
+  else
+  {
+    ImGui::TextDisabled("Model: %s", prmDlssNr.dlssNrModel.filename().string().c_str());
+  }
+  PE::SliderFloat("Intensity", &prmDlssNr.dlssNrIntensity, 0.0f, 1.0f,
+                  "1 = the network's own output, 0 = the rendered frame");
+  ImGui::SliderInt("Style", &prmDlssNr.dlssNrStyle, 0, 2);
+  PE::Checkbox("Temporal", &prmDlssNr.dlssNrTemporal,
+               "Blend with the reprojected history. Off makes every frame independent.");
+  PE::end();
+#endif
+
   if(m_splatSet.has_time_data)
   {
     PE::begin("## 4D Controls");

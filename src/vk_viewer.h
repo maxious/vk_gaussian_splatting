@@ -549,6 +549,7 @@ protected:
   DlssNrPass m_dlssNr;                    // native DLSS 5 neural rendering (OpenDLSS-NR)
   int        m_dlssNrState = 0;           // 0 = not tried, 1 = usable, -1 = failed (do not retry every frame)
   uint32_t   m_dlssNrFrames = 0;          // frames the pass has produced since its history was last cleared
+  bool       m_dlssNrWasEnabled = false;  // a fresh off -> on transition retries initialization and clears history
 #endif
 
 #ifdef WITH_DLSS_RR
